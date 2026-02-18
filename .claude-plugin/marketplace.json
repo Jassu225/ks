@@ -1,0 +1,22 @@
+{
+  "name": "karmasuite",
+  "owner": {
+    "name": "Jaswanth Sai Sattenapalli"
+  },
+  "metadata": {
+    "description": "KarmaSuite development plugins"
+  },
+  "plugins": [
+    {
+      "name": "ks",
+      "source": "./",
+      "description": "KarmaSuite development tools and workflows",
+      "version": "1.0.0",
+      "author": {
+        "name": "Jaswanth Sai Sattenapalli"
+      },
+      "repository": "https://github.com/karmasuite/ks",
+      "keywords": ["karmasuite", "linear", "workflow", "project-management"]
+    }
+  ]
+}
