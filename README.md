@@ -2,7 +2,7 @@
 
 Private Claude Code plugin for KarmaSuite development workflows.
 
-## Installation
+## Installation (only for production usage, skip this for plugin development)
 
 Install the plugin from within Claude Code:
 
