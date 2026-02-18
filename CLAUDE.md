@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Claude Code plugin (`ks`) for KarmaSuite development workflows. It orchestrates a 10-phase software project lifecycle — from problem statement through implementation — using slash commands, specialized agents, and Linear integration.
 
-Load with: `claude --plugin-dir ~/.claude/plugins/ks`
+## Setup
+
+Run `./init` to install dependencies, build CLI tools, configure the `claude-ks` shell alias, and add `c-scripts/` to `PATH`. After init, use `claude-ks` to launch Claude Code with this plugin.
 
 ## Plugin Structure
 

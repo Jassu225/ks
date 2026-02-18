@@ -152,7 +152,10 @@ async function getProject(idOrSlug: string, options: { json?: boolean }): Promis
     console.log(`Progress: ${Math.round((data.progress || 0) * 100)}%`);
     console.log(`Start: ${formatDate(data.startDate)} | Target: ${formatDate(data.targetDate)}`);
     if (data.description) {
-      console.log(`\nDescription:\n${data.description}`);
+      console.log(`\nSummary:\n${data.description}`);
+    }
+    if (data.content) {
+      console.log(`\nDescription:\n${data.content}`);
     }
   }
 }
@@ -310,6 +313,87 @@ async function createProjectUpdate(projectIdOrSlug: string, options: {
     console.log(chalk.green(`\n✓ Created project update for ${data.projectName}`));
     console.log(`  Health: ${healthIcon} ${data.health || 'Not set'}`);
     console.log(`  URL: ${data.url}`);
+  }
+}
+
+async function editProject(projectIdOrSlug: string, options: {
+  name?: string;
+  description?: string;
+  content?: string;
+  lead?: string;
+  priority?: number;
+  startDate?: string;
+  targetDate?: string;
+  color?: string;
+  icon?: string;
+  json?: boolean;
+}): Promise<void> {
+  const client = getClient();
+
+  let projectId: string;
+  try {
+    projectId = await resolveProjectId(client, projectIdOrSlug);
+  } catch (e) {
+    console.error(chalk.red((e as Error).message));
+    process.exit(1);
+  }
+
+  const updateInput: Record<string, unknown> = {};
+  if (options.name) updateInput.name = options.name;
+  if (options.description !== undefined) updateInput.description = options.description.replace(/\\n/g, '\n');
+  if (options.content !== undefined) updateInput.content = options.content.replace(/\\n/g, '\n');
+  if (options.priority !== undefined) updateInput.priority = options.priority;
+  if (options.startDate) updateInput.startDate = options.startDate;
+  if (options.targetDate) updateInput.targetDate = options.targetDate;
+  if (options.color) updateInput.color = options.color;
+  if (options.icon) updateInput.icon = options.icon;
+
+  if (options.lead) {
+    if (options.lead === 'me') {
+      const me = await client.viewer;
+      updateInput.leadId = me.id;
+    } else if (options.lead === 'none') {
+      updateInput.leadId = null;
+    } else {
+      updateInput.leadId = options.lead;
+    }
+  }
+
+  if (Object.keys(updateInput).length === 0) {
+    console.error(chalk.red('No update fields provided'));
+    process.exit(1);
+  }
+
+  try {
+    // Use raw GraphQL because the SDK types don't expose the 'content' field
+    // on ProjectUpdateInput, even though the API accepts it
+    await client.client.rawRequest(
+      `mutation ProjectUpdate($id: String!, $input: ProjectUpdateInput!) {
+        projectUpdate(id: $id, input: $input) {
+          success
+        }
+      }`,
+      { id: projectId, input: updateInput }
+    );
+  } catch (e: unknown) {
+    const err = e as Error & { errors?: Array<{ message: string }> };
+    console.error(chalk.red('Failed to update project:'));
+    console.error(chalk.red(err.message));
+    if (err.errors) {
+      err.errors.forEach((error) => {
+        console.error(chalk.red(`  - ${error.message}`));
+      });
+    }
+    process.exit(1);
+  }
+
+  const project = await client.project(projectId);
+
+  if (options.json) {
+    output({ success: true, id: projectId, name: project.name }, true);
+  } else {
+    console.log(chalk.green(`✓ Updated project: ${project.name}`));
+    console.log(`  URL: ${project.url}`);
   }
 }
 
@@ -1186,6 +1270,21 @@ projectCmd
   )
   .option('-j, --json', 'Output as JSON')
   .action((project, opts) => createProjectUpdate(project, opts));
+
+projectCmd
+  .command('edit <project>')
+  .description('Edit project properties (accepts ID, slug, or URL)')
+  .option('--name <name>', 'New project name')
+  .option('--description <text>', 'Short summary shown under project title')
+  .option('--content <text>', 'Full project description in markdown (the "Description" section)')
+  .option('--lead <id>', 'Project lead (user ID, "me", or "none")')
+  .option('--priority <number>', 'Priority (0=None, 1=Urgent, 2=High, 3=Normal, 4=Low)')
+  .option('--start-date <date>', 'Start date (YYYY-MM-DD)')
+  .option('--target-date <date>', 'Target date (YYYY-MM-DD)')
+  .option('--color <color>', 'Project color')
+  .option('--icon <icon>', 'Project icon')
+  .option('-j, --json', 'Output as JSON')
+  .action((project, opts) => editProject(project, { ...opts, priority: opts.priority !== undefined ? parseInt(opts.priority) : undefined }));
 
 // Issue commands
 const issueCmd = program.command('issue').description('Issue operations');
