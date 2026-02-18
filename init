@@ -1,6 +1,15 @@
 #!/bin/bash
 set -e
 
+DEV_MODE=false
+while [[ "$#" -gt 0 ]]; do
+  case $1 in
+    --dev) DEV_MODE=true ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
+  esac
+  shift
+done
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CSCRIPTS_DIR="$SCRIPT_DIR/c-scripts"
 
@@ -16,15 +25,17 @@ echo ""
 echo "=== Configuring shell ==="
 ZSHRC="$HOME/.zshrc"
 
-# Add claude-ks alias
-ALIAS_LINE="alias claude-ks='claude --plugin-dir $SCRIPT_DIR'"
-if grep -qF "alias claude-ks=" "$ZSHRC" 2>/dev/null; then
-  echo "claude-ks alias already exists in $ZSHRC, skipping"
-else
-  echo "" >> "$ZSHRC"
-  echo "# KarmaSuite Claude Code plugin" >> "$ZSHRC"
-  echo "$ALIAS_LINE" >> "$ZSHRC"
-  echo "Added claude-ks alias to $ZSHRC"
+# Add claude-ks alias (dev mode only)
+if [ "$DEV_MODE" = true ]; then
+  ALIAS_LINE="alias claude-ks='claude --plugin-dir $SCRIPT_DIR'"
+  if grep -qF "alias claude-ks=" "$ZSHRC" 2>/dev/null; then
+    echo "claude-ks alias already exists in $ZSHRC, skipping"
+  else
+    echo "" >> "$ZSHRC"
+    echo "# KarmaSuite Claude Code plugin (dev)" >> "$ZSHRC"
+    echo "$ALIAS_LINE" >> "$ZSHRC"
+    echo "Added claude-ks alias to $ZSHRC"
+  fi
 fi
 
 # Add c-scripts to PATH

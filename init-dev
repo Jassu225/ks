@@ -1,0 +1,4 @@
+#!/bin/bash
+# Development setup — runs init with the claude-ks alias enabled
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$SCRIPT_DIR/init" --dev
