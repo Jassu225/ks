@@ -354,7 +354,7 @@ async function generateWorkflowState(
 // Worktree Creation
 // ============================================================================
 
-function createWorktreeAndLaunchClaude(projectSlug: string): void {
+function createWorktreeAndLaunchClaude(projectSlug: string, workflowRelPath: string): void {
   const scriptDir = path.dirname(new URL(import.meta.url).pathname);
   const createWorktreeScript = path.join(scriptDir, 'create-worktree');
 
@@ -381,6 +381,8 @@ function createWorktreeAndLaunchClaude(projectSlug: string): void {
 
     // Launch claude with KS plugin in the worktree
     console.log(chalk.blue('\nLaunching Claude with KS plugin in worktree...'));
+    console.log(chalk.yellow(`\n💡 Start your conversation with:`));
+    console.log(chalk.bold(`   /ks:project-manager Let's work on ./${workflowRelPath}/ project\n`));
     process.chdir(worktreePath);
 
     // Launch claude-ks (dev: load plugin from repo) or plain claude (production)
@@ -595,7 +597,7 @@ ${chalk.cyan('Example:')}
     console.log(chalk.cyan(`\n  Workflow: ./${workflowRelPath}/`));
 
     // Create worktree and launch Claude-KS
-    createWorktreeAndLaunchClaude(projectSlug);
+    createWorktreeAndLaunchClaude(projectSlug, workflowRelPath);
 
   } catch (error) {
     console.error(chalk.red(`\n✗ Error: ${error instanceof Error ? error.message : String(error)}`));

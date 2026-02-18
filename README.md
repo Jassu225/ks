@@ -75,6 +75,6 @@ The following scripts run automatically on Stop and SubagentStop events:
 - `quality-lint.sh` — ESLint validation
 - `quality-typecheck.sh` — TypeScript type checking (can be slow; disable via `/hooks` if needed)
 
-## Recommended CLAUDE.md Instructions
+<!-- ## Recommended CLAUDE.md Instructions
 
-For better workflow results during long-running sessions, copy the contents of [`COMPACT-INSTRUCTIONS.md`](COMPACT-INSTRUCTIONS.md) into your project's `CLAUDE.md` file. These rules help the agent maintain reliable behavior when context compression occurs during multi-phase workflows.
+For better workflow results during long-running sessions, copy the contents of [`COMPACT-INSTRUCTIONS.md`](COMPACT-INSTRUCTIONS.md) into your project's `CLAUDE.md` file. These rules help the agent maintain reliable behavior when context compression occurs during multi-phase workflows. -->
