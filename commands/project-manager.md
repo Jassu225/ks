@@ -109,6 +109,7 @@ workflow/{username}/{project-slug}/
 
 ## Critical Rules
 
+- **MANDATORY: Before marking any phase as COMPLETED, re-read its phase file and verify ALL execution steps were performed.**
 - **Detect workflow type first** — ticket vs project determines which phases to run
 - **Phases 3-7 (project workflow):** Remind user to write project updates in Linear
 - **Phase 9:** Planning only — do NOT create todos or start implementation
