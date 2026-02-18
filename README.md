@@ -7,7 +7,8 @@ Private Claude Code plugin for KarmaSuite development workflows.
 Install the plugin from within Claude Code:
 
 ```
-/plugin install --marketplace https://github.com/karmasuite/ks
+/plugin marketplace add karmasuite/ks
+/plugin install ks@karmasuite-ks
 ```
 
 ## Setup
