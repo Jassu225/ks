@@ -16,6 +16,12 @@ This will:
 - Add a `claude-ks` alias to `~/.zshrc`
 - Add `c-scripts/` to your `PATH`
 
+After running init, restart your terminal (or `source ~/.zshrc`) and use:
+
+```bash
+claude-ks
+```
+
 ## Structure
 
 ```
