@@ -5,7 +5,7 @@ set -euo pipefail
 INVOKE_DIR="$(pwd)"
 
 # Script to remove git worktrees for KarmaSuite project
-# Usage: ./remove_worktree.sh [-D] <worktree-path>
+# Usage: ./remove_worktree [-D] <worktree-path>
 # Removes the worktree and optionally deletes the underlying branch
 
 # Colors for output

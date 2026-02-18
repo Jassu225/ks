@@ -5,7 +5,7 @@ set -euo pipefail
 INVOKE_DIR="$(pwd)"
 
 # Script to create git worktrees for KarmaSuite project
-# Usage: ./create-worktree.sh <worktree-name> [base-branch] [-b new-branch-name]
+# Usage: ./create-worktree <worktree-name> [base-branch] [-b new-branch-name]
 # Creates a new branch based on the specified branch (or current branch)
 
 # Colors for output
@@ -118,7 +118,7 @@ if [[ -d "$WORKTREE_PATH" ]]; then
     error "Worktree already exists at: ${WORKTREE_PATH}"
     echo "" >&2
     echo "To remove an existing worktree, run:" >&2
-    echo "  git worktree remove ${WORKTREE_PATH}" >&2
+    echo "  remove_worktree -D ${WORKTREE_PATH}" >&2
     exit 1
 fi
 
@@ -307,7 +307,7 @@ success "Worktree setup complete!"
 echo "" >&2
 info "Worktree location: ${WORKTREE_PATH}"
 info "To remove this worktree later:"
-echo "  git worktree remove ${WORKTREE_PATH} && git branch -D ${NEW_BRANCH_NAME}" >&2
+echo "  remove_worktree -D ${WORKTREE_PATH}" >&2
 echo "" >&2
 
 # Output the worktree path for the caller to use (stdout only)

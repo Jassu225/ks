@@ -356,12 +356,12 @@ async function generateWorkflowState(
 
 function createWorktreeAndLaunchClaude(projectSlug: string): void {
   const scriptDir = path.dirname(new URL(import.meta.url).pathname);
-  const createWorktreeScript = path.join(scriptDir, 'create-worktree.sh');
+  const createWorktreeScript = path.join(scriptDir, 'create-worktree');
 
   console.log(chalk.blue('\nCreating git worktree...'));
 
   try {
-    // Run create-worktree.sh and capture output
+    // Run create-worktree and capture output
     // Use KS_ORIGINAL_DIR as cwd so the script operates on the correct repo
     // Logs go to stderr (inherited), only WORKTREE_PATH goes to stdout (captured)
     const targetDir = process.env.KS_ORIGINAL_DIR || process.cwd();
@@ -374,7 +374,7 @@ function createWorktreeAndLaunchClaude(projectSlug: string): void {
     // Parse the WORKTREE_PATH from output
     const worktreePathMatch = output.match(/WORKTREE_PATH=(.+)/);
     if (!worktreePathMatch) {
-      throw new Error('Could not determine worktree path from create-worktree.sh output');
+      throw new Error('Could not determine worktree path from create-worktree output');
     }
 
     const worktreePath = worktreePathMatch[1].trim();

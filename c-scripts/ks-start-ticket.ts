@@ -289,12 +289,12 @@ function formatYaml(state: TicketWorkflowState): string {
 
 function createWorktreeAndLaunchClaude(branchName: string): void {
   const scriptDir = path.dirname(new URL(import.meta.url).pathname);
-  const createWorktreeScript = path.join(scriptDir, 'create-worktree.sh');
+  const createWorktreeScript = path.join(scriptDir, 'create-worktree');
 
   console.log(chalk.blue('\nCreating git worktree...'));
 
   try {
-    // Run create-worktree.sh and capture output
+    // Run create-worktree and capture output
     const targetDir = process.env.KS_ORIGINAL_DIR || process.cwd();
     const output = execSync(`"${createWorktreeScript}" "${branchName}"`, {
       encoding: 'utf-8',
@@ -305,7 +305,7 @@ function createWorktreeAndLaunchClaude(branchName: string): void {
     // Parse the WORKTREE_PATH from output
     const worktreePathMatch = output.match(/WORKTREE_PATH=(.+)/);
     if (!worktreePathMatch) {
-      throw new Error('Could not determine worktree path from create-worktree.sh output');
+      throw new Error('Could not determine worktree path from create-worktree output');
     }
 
     const worktreePath = worktreePathMatch[1].trim();
