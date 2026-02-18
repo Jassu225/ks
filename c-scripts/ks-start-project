@@ -1,0 +1,9 @@
+#!/bin/bash
+# KS Start Project wrapper
+# Usage: ./ks-start-project <project-url> [output-path]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ORIGINAL_DIR="$(pwd)"
+cd "$SCRIPT_DIR"
+
+KS_ORIGINAL_DIR="$ORIGINAL_DIR" npx tsx ks-start-project.ts "$@"

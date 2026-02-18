@@ -1,0 +1,29 @@
+{
+  "name": "ks-scripts",
+  "version": "1.0.0",
+  "description": "KarmaSuite CLI scripts for Linear integration and workflow management",
+  "type": "module",
+  "scripts": {
+    "linear": "npx tsx linear-cli.ts",
+    "start-project": "npx tsx ks-start-project.ts",
+    "build": "tsc"
+  },
+  "bin": {
+    "linear-cli": "./dist/linear-cli.js",
+    "ks-start-project": "./dist/ks-start-project.js"
+  },
+  "dependencies": {
+    "@linear/sdk": "^29.0.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "dotenv": "^17.2.3",
+    "inquirer": "^9.2.15",
+    "yaml": "^2.4.1"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,8 @@
+#!/bin/bash
+# Linear CLI wrapper
+# Usage: ./linear <command> [options]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+npx tsx linear-cli.ts "$@"

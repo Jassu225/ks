@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://karmasuite.com/schemas/ticket-state.schema.json",
+  "title": "KarmaSuite Ticket Workflow State",
+  "description": "Schema for KarmaSuite single ticket workflow state files",
+  "type": "object",
+  "required": ["ticket", "phases"],
+  "additionalProperties": false,
+  "properties": {
+    "ticket": {
+      "type": "object",
+      "description": "Linear ticket/issue information",
+      "required": ["id", "identifier", "name", "url", "dates", "priority"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Linear issue UUID"
+        },
+        "identifier": {
+          "type": "string",
+          "pattern": "^[A-Z]+-\\d+$",
+          "description": "Linear issue identifier (e.g., 'KAR-123')"
+        },
+        "name": {
+          "type": "string",
+          "description": "Issue title"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Linear issue URL"
+        },
+        "summary": {
+          "type": ["string", "null"],
+          "description": "Issue description/details"
+        },
+        "dates": {
+          "type": "object",
+          "required": ["created_at", "updated_at"],
+          "additionalProperties": false,
+          "properties": {
+            "created_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Issue creation timestamp (ISO 8601)"
+            },
+            "updated_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Last update timestamp (ISO 8601)"
+            },
+            "due_date": {
+              "type": ["string", "null"],
+              "format": "date",
+              "description": "Due date (YYYY-MM-DD)"
+            }
+          }
+        },
+        "priority": {
+          "type": "object",
+          "required": ["value", "name"],
+          "additionalProperties": false,
+          "properties": {
+            "value": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "maximum": 4,
+              "description": "Priority level (0=None, 1=Urgent, 2=High, 3=Medium, 4=Low)"
+            },
+            "name": {
+              "type": "string",
+              "enum": ["None", "Urgent", "High", "Medium", "Low"],
+              "description": "Priority name"
+            }
+          }
+        },
+        "status": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "State UUID"
+            },
+            "name": {
+              "type": "string",
+              "description": "State name (e.g., 'In Progress', 'Todo', 'Done')"
+            }
+          },
+          "required": ["id", "name"]
+        },
+        "labels": {
+          "type": "array",
+          "description": "Issue labels",
+          "items": {
+            "type": "object",
+            "required": ["id", "name"],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "assignee": {
+          "type": ["object", "null"],
+          "description": "Issue assignee",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": ["id", "name"]
+        },
+        "whoami": {
+          "type": ["object", "null"],
+          "description": "The Linear user who owns the API key used to create this state",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "User UUID"
+            },
+            "name": {
+              "type": "string",
+              "description": "User full name"
+            },
+            "username": {
+              "type": "string",
+              "description": "User's Linear username/handle"
+            },
+            "email": {
+              "type": "string",
+              "format": "email",
+              "description": "User email address"
+            }
+          },
+          "required": ["id", "name", "username", "email"]
+        },
+        "estimate": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Story points estimate"
+        },
+        "parent_project": {
+          "type": ["object", "null"],
+          "description": "Parent project (if any)",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Project UUID"
+            },
+            "name": {
+              "type": "string",
+              "description": "Project name"
+            },
+            "url": {
+              "type": "string",
+              "format": "uri",
+              "description": "Project URL"
+            }
+          },
+          "required": ["id", "name", "url"]
+        }
+      }
+    },
+    "phases": {
+      "type": "array",
+      "description": "Workflow phases tracking",
+      "items": {
+        "$ref": "#/$defs/phase"
+      }
+    }
+  },
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "description": "A workflow phase",
+      "required": ["number", "name", "status", "started_at", "ended_at"],
+      "additionalProperties": false,
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Phase number (0 = initialization, then sequential)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Phase name (e.g., 'ticket-initialization', 'research', 'implementation')"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "SKIPPED"],
+          "description": "Current phase status"
+        },
+        "started_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "When the phase was started (ISO 8601)"
+        },
+        "ended_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "When the phase was completed/skipped (ISO 8601)"
+        }
+      }
+    }
+  }
+}

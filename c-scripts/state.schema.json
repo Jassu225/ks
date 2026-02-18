@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://karmasuite.com/schemas/state.schema.json",
+  "title": "KarmaSuite Workflow State",
+  "description": "Schema for KarmaSuite project workflow state files",
+  "type": "object",
+  "required": ["project", "phases"],
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "object",
+      "description": "Linear project information and ticket references",
+      "required": ["id", "name", "url", "dates", "priority"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Linear project UUID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Project name"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Linear project URL"
+        },
+        "summary": {
+          "type": ["string", "null"],
+          "description": "Project description/summary"
+        },
+        "dates": {
+          "type": "object",
+          "required": ["created_at", "updated_at"],
+          "additionalProperties": false,
+          "properties": {
+            "created_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Project creation timestamp (ISO 8601)"
+            },
+            "updated_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Last update timestamp (ISO 8601)"
+            },
+            "start_date": {
+              "type": ["string", "null"],
+              "format": "date",
+              "description": "Planned start date (YYYY-MM-DD)"
+            }
+          }
+        },
+        "priority": {
+          "type": "object",
+          "required": ["value", "name"],
+          "additionalProperties": false,
+          "properties": {
+            "value": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "maximum": 4,
+              "description": "Priority level (0=None, 1=Urgent, 2=High, 3=Medium, 4=Low)"
+            },
+            "name": {
+              "type": "string",
+              "enum": ["None", "Urgent", "High", "Medium", "Low"],
+              "description": "Priority name"
+            }
+          }
+        },
+        "status": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Status UUID"
+            },
+            "name": {
+              "type": "string",
+              "description": "Status name (e.g., 'In Progress', 'Backlog')"
+            }
+          },
+          "required": ["id", "name"]
+        },
+        "labels": {
+          "type": "array",
+          "description": "Project labels",
+          "items": {
+            "type": "object",
+            "required": ["id", "name"],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "initiatives": {
+          "type": "array",
+          "description": "Linked initiatives/roadmap items",
+          "items": {
+            "type": "object",
+            "required": ["id", "name"],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "lead": {
+          "type": ["object", "null"],
+          "description": "Project lead",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": ["id", "name"]
+        },
+        "whoami": {
+          "type": ["object", "null"],
+          "description": "The Linear user who owns the API key used to create this state",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "User UUID"
+            },
+            "name": {
+              "type": "string",
+              "description": "User full name"
+            },
+            "username": {
+              "type": "string",
+              "description": "User's Linear username/handle"
+            },
+            "email": {
+              "type": "string",
+              "format": "email",
+              "description": "User email address"
+            }
+          },
+          "required": ["id", "name", "username", "email"]
+        },
+        "prd_ticket_id": {
+          "type": ["string", "null"],
+          "description": "Linear ticket identifier for PRD (e.g., 'KAR-123')"
+        },
+        "prototype_ticket_id": {
+          "type": ["string", "null"],
+          "description": "Linear ticket identifier for Prototype"
+        },
+        "tad_ticket_id": {
+          "type": ["string", "null"],
+          "description": "Linear ticket identifier for TAD (Technical Architecture Document)"
+        },
+        "implementation_plan_ticket_id": {
+          "type": ["string", "null"],
+          "description": "Linear ticket identifier for Implementation Plan"
+        }
+      }
+    },
+    "phases": {
+      "type": "array",
+      "description": "Workflow phases tracking",
+      "items": {
+        "$ref": "#/$defs/phase"
+      }
+    }
+  },
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "description": "A workflow phase",
+      "required": ["number", "name", "status", "started_at", "ended_at"],
+      "additionalProperties": false,
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Phase number (0 = initialization, then sequential)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Phase name (e.g., 'customer-problem', 'prd', 'tad', 'dev-tests')"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "SKIPPED"],
+          "description": "Current phase status"
+        },
+        "started_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "When the phase was started (ISO 8601)"
+        },
+        "ended_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "When the phase was completed/skipped (ISO 8601)"
+        }
+      }
+    }
+  }
+}
