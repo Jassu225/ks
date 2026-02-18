@@ -52,3 +52,8 @@ Edit `hooks/hooks.json` to add event handlers. Available events:
 - `SessionStart` / `SessionEnd`
 - `UserPromptSubmit`
 - etc.
+
+The following scripts run automatically on Stop and SubagentStop events:
+- `quality-format.sh` — Prettier formatting
+- `quality-lint.sh` — ESLint validation
+- `quality-typecheck.sh` — TypeScript type checking (can be slow; disable via `/hooks` if needed)

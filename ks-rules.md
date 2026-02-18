@@ -23,3 +23,7 @@ Use the `/ks:research_codebase` command for documenting and understanding existi
 ## Planning
 
 Use the `/ks:create_plan` command for implementation planning. Plans should be approved before writing code.
+
+## Code Quality
+
+Do not run ESLint, Prettier, or TypeScript type checking manually — hooks handle formatting, linting, and type checking automatically on every Stop and SubagentStop event.
