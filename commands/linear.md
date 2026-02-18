@@ -45,6 +45,12 @@ linear project get <id-or-slug>
 # List projects
 linear project list --team KAR --limit 10
 
+# Edit project properties (accepts ID, slug, or URL)
+linear project edit <id-or-slug-or-url> --description "Short summary"
+linear project edit <id-or-slug-or-url> --content "Full markdown description"
+linear project edit <id-or-slug-or-url> --name "New Name" --lead me --priority 2
+linear project edit <id-or-slug-or-url> --start-date 2026-03-01 --target-date 2026-06-01
+
 # List project updates (status posts)
 linear project updates <id-or-slug-or-url> --limit 5
 
@@ -53,6 +59,10 @@ linear project update <id-or-slug-or-url> --body "Update text" --health onTrack
 ```
 
 Health options: `onTrack`, `atRisk`, `offTrack`
+
+Note on project text fields:
+- `--description` = short summary shown under the project title
+- `--content` = full project description in markdown (the "Description" section in the UI)
 
 ### Comments
 
@@ -72,6 +82,15 @@ linear document list --project <project-id>
 
 # Get a specific document
 linear document get <document-id>
+
+# Create a document
+linear document create --title "Doc Title" --content "Markdown content" --project <project-id>
+
+# Update a document
+linear document update <document-id> --title "New Title" --content "Updated content"
+
+# Delete (trash) a document
+linear document delete <document-id>
 ```
 
 ### Teams, Users, Labels, Cycles, Initiatives
@@ -104,7 +123,9 @@ When the user asks to interact with Linear:
 3. **Finding issues**: Use appropriate filters — `--assignee me`, `--state`, `--team`, `--project`
 4. **Creating issues**: Always require `--title` and `--team`. Ask the user for missing details before creating
 5. **Updating issues**: Use `linear issue update KAR-XXX` with the fields to change
-6. **Commenting**: Use `linear comment create KAR-XXX "body"` — supports markdown
+6. **Editing projects**: Use `linear project edit <id>` with `--description` (summary) or `--content` (full description)
+7. **Commenting**: Use `linear comment create KAR-XXX "body"` — supports markdown
+8. **Managing documents**: Create with `linear document create`, update with `linear document update`, delete with `linear document delete`
 
 ## Notes
 
