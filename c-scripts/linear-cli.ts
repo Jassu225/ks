@@ -802,6 +802,155 @@ async function getDocument(idOrSlug: string, options: { json?: boolean }): Promi
   }
 }
 
+async function createDocument(options: {
+  title: string;
+  content?: string;
+  project?: string;
+  icon?: string;
+  color?: string;
+  json?: boolean;
+}): Promise<void> {
+  const client = getClient();
+
+  const input: Record<string, unknown> = {
+    title: options.title,
+  };
+  if (options.content) input.content = options.content.replace(/\\n/g, '\n');
+  if (options.project) input.projectId = options.project;
+  if (options.icon) input.icon = options.icon;
+  if (options.color) input.color = options.color;
+
+  let result;
+  try {
+    result = await client.createDocument(input as Parameters<typeof client.createDocument>[0]);
+  } catch (e: unknown) {
+    const err = e as Error & { errors?: Array<{ message: string }> };
+    console.error(chalk.red('Failed to create document:'));
+    console.error(chalk.red(err.message));
+    if (err.errors) {
+      err.errors.forEach((error) => {
+        console.error(chalk.red(`  - ${error.message}`));
+      });
+    }
+    process.exit(1);
+  }
+
+  const document = await result.document;
+
+  if (!document) {
+    console.error(chalk.red('Failed to create document'));
+    process.exit(1);
+  }
+
+  const project = await document.project;
+
+  const data = {
+    id: document.id,
+    title: document.title,
+    slugId: document.slugId,
+    url: document.url,
+    project: project ? { id: project.id, name: project.name } : null,
+    createdAt: document.createdAt,
+  };
+
+  if (options.json) {
+    output(data, true);
+  } else {
+    console.log(chalk.green(`\n✓ Created document: ${data.title}`));
+    console.log(`  ID: ${data.id}`);
+    if (data.project) {
+      console.log(`  Project: ${data.project.name}`);
+    }
+    console.log(`  URL: ${data.url}`);
+  }
+}
+
+async function updateDocument(idOrSlug: string, options: {
+  title?: string;
+  content?: string;
+  project?: string;
+  icon?: string;
+  color?: string;
+  json?: boolean;
+}): Promise<void> {
+  const client = getClient();
+
+  let document: Document | undefined;
+  try {
+    document = await client.document(idOrSlug);
+  } catch {
+    console.error(chalk.red(`Document not found: ${idOrSlug}`));
+    process.exit(1);
+  }
+
+  const updateInput: Record<string, unknown> = {};
+  if (options.title) updateInput.title = options.title;
+  if (options.content) updateInput.content = options.content.replace(/\\n/g, '\n');
+  if (options.project) updateInput.projectId = options.project;
+  if (options.icon) updateInput.icon = options.icon;
+  if (options.color) updateInput.color = options.color;
+
+  if (Object.keys(updateInput).length === 0) {
+    console.error(chalk.red('No update fields provided'));
+    process.exit(1);
+  }
+
+  try {
+    await client.updateDocument(document.id, updateInput as Parameters<typeof client.updateDocument>[1]);
+  } catch (e: unknown) {
+    const err = e as Error & { errors?: Array<{ message: string }> };
+    console.error(chalk.red('Failed to update document:'));
+    console.error(chalk.red(err.message));
+    if (err.errors) {
+      err.errors.forEach((error) => {
+        console.error(chalk.red(`  - ${error.message}`));
+      });
+    }
+    process.exit(1);
+  }
+
+  if (options.json) {
+    output({ success: true, id: document.id, title: document.title }, true);
+  } else {
+    console.log(chalk.green(`✓ Updated document: ${document.title}`));
+    console.log(`  URL: ${document.url}`);
+  }
+}
+
+async function deleteDocument(id: string, options: { json?: boolean }): Promise<void> {
+  const client = getClient();
+
+  let document: Document | undefined;
+  try {
+    document = await client.document(id);
+  } catch {
+    console.error(chalk.red(`Document not found: ${id}`));
+    process.exit(1);
+  }
+
+  const title = document.title;
+
+  try {
+    await client.deleteDocument(id);
+  } catch (e: unknown) {
+    const err = e as Error & { errors?: Array<{ message: string }> };
+    console.error(chalk.red('Failed to delete document:'));
+    console.error(chalk.red(err.message));
+    if (err.errors) {
+      err.errors.forEach((error) => {
+        console.error(chalk.red(`  - ${error.message}`));
+      });
+    }
+    process.exit(1);
+  }
+
+  if (options.json) {
+    output({ success: true, id, title }, true);
+  } else {
+    console.log(chalk.green(`✓ Deleted document: ${title}`));
+  }
+}
+
 // ============================================================================
 // Label Commands
 // ============================================================================
@@ -1132,6 +1281,34 @@ docCmd
   .description('Get document by ID')
   .option('-j, --json', 'Output as JSON')
   .action(getDocument);
+
+docCmd
+  .command('create')
+  .description('Create a new document')
+  .requiredOption('--title <title>', 'Document title')
+  .option('--content <content>', 'Document content (markdown)')
+  .option('--project <id>', 'Project ID to associate with')
+  .option('--icon <icon>', 'Document icon')
+  .option('--color <color>', 'Icon color')
+  .option('-j, --json', 'Output as JSON')
+  .action(createDocument);
+
+docCmd
+  .command('update <id>')
+  .description('Update a document')
+  .option('--title <title>', 'New title')
+  .option('--content <content>', 'New content (markdown)')
+  .option('--project <id>', 'New project ID')
+  .option('--icon <icon>', 'New icon')
+  .option('--color <color>', 'New icon color')
+  .option('-j, --json', 'Output as JSON')
+  .action(updateDocument);
+
+docCmd
+  .command('delete <id>')
+  .description('Delete (trash) a document')
+  .option('-j, --json', 'Output as JSON')
+  .action(deleteDocument);
 
 // Label commands
 const labelCmd = program.command('label').description('Label operations');
