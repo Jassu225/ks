@@ -27,6 +27,20 @@ ZSHRC="$HOME/.zshrc"
 
 # Add claude-ks alias (dev mode only)
 if [ "$DEV_MODE" = true ]; then
+  # Set dev=true in c-scripts/.env
+  ENV_FILE="$CSCRIPTS_DIR/.env"
+  if [ -f "$ENV_FILE" ]; then
+    if grep -q "^DEV=" "$ENV_FILE" 2>/dev/null; then
+      sed -i '' 's/^DEV=.*/DEV=true/' "$ENV_FILE"
+    else
+      echo "" >> "$ENV_FILE"
+      echo "DEV=true" >> "$ENV_FILE"
+    fi
+  else
+    echo "DEV=true" > "$ENV_FILE"
+  fi
+  echo "Set DEV=true in $ENV_FILE"
+
   ALIAS_LINE="alias claude-ks='claude --plugin-dir $SCRIPT_DIR'"
   if grep -qF "alias claude-ks=" "$ZSHRC" 2>/dev/null; then
     echo "claude-ks alias already exists in $ZSHRC, skipping"

@@ -314,7 +314,13 @@ function createWorktreeAndLaunchClaude(branchName: string): void {
     console.log(chalk.blue('\nLaunching Claude with KS plugin in worktree...'));
     process.chdir(worktreePath);
 
-    const claude = spawn('claude', ['--plugin-dir', `${process.env.HOME}/.claude/plugins/ks`], {
+    // Launch claude-ks (dev: load plugin from repo) or plain claude (production)
+    const claudeArgs: string[] = [];
+    if (process.env.DEV === 'true') {
+      const repoRoot = execSync('git rev-parse --show-toplevel', { cwd: scriptDir, encoding: 'utf-8' }).trim();
+      claudeArgs.push('--plugin-dir', repoRoot);
+    }
+    const claude = spawn('claude', claudeArgs, {
       stdio: 'inherit',
       shell: true
     });
