@@ -2,19 +2,19 @@
 
 Private Claude Code plugin for KarmaSuite development workflows.
 
-## Usage
+## Setup
 
-Load the plugin when starting Claude Code:
-
-```bash
-claude --plugin-dir /path/to/plugin-dir
-```
-
-Or add an alias to your shell config (`~/.zshrc` or `~/.bashrc`):
+Run the init script to install dependencies, build CLI tools, and configure your shell:
 
 ```bash
-alias claude='claude --plugin-dir /path/to/plugin-dir'
+./init
 ```
+
+This will:
+- Install npm dependencies in `c-scripts/`
+- Build the TypeScript CLI tools
+- Add a `claude-ks` alias to `~/.zshrc`
+- Add `c-scripts/` to your `PATH`
 
 ## Structure
 
