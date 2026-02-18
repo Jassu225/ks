@@ -32,10 +32,6 @@ ks/
 └── README.md
 ```
 
-## Available Commands
-
-- `/ks:hello` - Verify plugin is loaded
-
 ## Adding New Components
 
 ### Commands
