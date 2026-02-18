@@ -1,7 +1,7 @@
 ---
 description: Convert PRD user stories into Linear tickets
 argument-hint: [project-directory-path]
-allowed-tools: Read, Write, mcp__linear-server__get_project, mcp__linear-server__create_issue, AskUserQuestion
+allowed-tools: Read, Write, Bash(linear:*), AskUserQuestion
 ---
 
 # Convert PRD User Stories to Linear Tickets
@@ -60,7 +60,7 @@ Example invocation:
    - Each Feature will become one Linear ticket
 
 4. **Fetch project context**:
-   - Use `mcp__linear-server__get_project` with the project ID from state.yaml
+   - Run `linear project get <project-id> --json` (project ID from state.yaml)
    - If the project ID is invalid or not found, use `AskUserQuestion` to ask the user for the correct project ID, then retry
 
 5. **Create markdown preview**:
@@ -138,7 +138,7 @@ For each Feature, use this format:
       - User Stories: Concise list of all user stories with their acceptance criteria
       - Context: Reference the project name and list of user story IDs
     - Assign story points based on feature estimate
-    - Create the ticket using `mcp__linear-server__create_issue`
+    - Create the ticket using `linear issue create --title "<title>" --team KAR --description "<description>" --project <project-id> --priority 3`
 11. Report back to the user with a summary of created tickets (Feature names, IDs, and points)
 
 ## Important Notes

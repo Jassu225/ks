@@ -1,7 +1,7 @@
 ---
 description: Add prioritized product requirements to Linear project from prototype
 argument-hint: [project-directory-path]
-allowed-tools: Read, Write, Edit, WebFetch, mcp__linear-server__*
+allowed-tools: Read, Write, Edit, WebFetch, Bash(linear:*)
 model: opus
 ---
 
@@ -59,16 +59,14 @@ Example invocation:
 
 6. **Update Linear Project**
    - When user explicitly approves, fetch the current project description:
-     - Use `mcp__linear-server__get_project` with `id`: project ID from state.yaml
-     - Extract the current `description` field (contains the problem statement from Phase 3)
+     - Run `linear project get <project-id> --json` (project ID from state.yaml)
+     - Extract the current `content` field (contains the problem statement from Phase 3)
    - Combine the existing description with the new Product Requirements section:
      - Keep all existing content intact
      - Add a blank line after existing content
      - Append the full content of `resources/product_requirements.md`
    - Update the Linear project:
-     - Use `mcp__linear-server__update_project` with:
-       - `id`: project ID from state.yaml
-       - `description`: the combined content (existing + product requirements)
+     - Run `linear project edit <project-id> --content "<combined content>"`
 
 ## Error Handling
 

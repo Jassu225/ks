@@ -67,9 +67,7 @@ Example invocation:
 4. Present the draft to the user and ask for feedback
 5. Iterate: Update the prd.md file based on user feedback, continue until user is satisfied
 6. When the user explicitly approves the PRD:
-   - Use `mcp__linear-server__update_project` with:
-     - `id`: project ID from state.yaml
-     - `description`: the full content of prd.md (Markdown format)
+   - Run `linear project edit <project-id> --content "<full content of prd.md>"` (Markdown format)
 
 ---
 

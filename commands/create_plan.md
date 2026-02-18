@@ -1,7 +1,7 @@
 ---
 description: Create detailed implementation plans from PRDs for KarmaSuite features through interactive research
 argument-hint: [project-directory-path]
-allowed-tools: Read, Write, Edit, Glob, Grep, Task, AskUserQuestion, ExitPlanMode, mcp__linear-server__get_project, mcp__linear-server__create_document
+allowed-tools: Read, Write, Edit, Glob, Grep, Task, AskUserQuestion, ExitPlanMode, Bash(linear:*)
 model: opus
 plan-mode: true
 ---

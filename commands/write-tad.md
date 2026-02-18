@@ -1,7 +1,7 @@
 ---
 description: Create a Technical Architecture Document (TAD) and attach it to a Linear project
 argument-hint: [project-directory-path]
-allowed-tools: Read, Write, Edit, mcp__linear-server__get_user, mcp__linear-server__get_project, mcp__linear-server__list_projects, mcp__linear-server__create_document
+allowed-tools: Read, Write, Edit, Bash(linear:*)
 model: opus
 ---
 
@@ -39,14 +39,14 @@ Read `{project-directory-path}/state.yaml` to get:
 
 ### 2. Get Current User
 
-Use `mcp__linear-server__get_user` with query "me" to get the current user's displayName for the Author field.
+Run `linear user me --json` to get the current user's displayName for the Author field.
 
 ### 3. Fetch Project Details
 
-Use `mcp__linear-server__get_project` with the project ID from state.yaml to retrieve the project description from the Linear overview page.
+Run `linear project get <project-id> --json` (project ID from state.yaml) to retrieve the project description from the Linear overview page.
 
-**Important**: If `get_project` fails:
-- Use `mcp__linear-server__list_projects` with a search query to find the project
+**Important**: If `project get` fails:
+- Run `linear project list --json` and search the results to find the project
 - Extract the project ID from the results
 - Use the project ID for subsequent steps
 
@@ -133,11 +133,11 @@ Approved?: No
 
 ### 8. Create Linear Document
 
-When user explicitly approves, use `mcp__linear-server__create_document` to create and attach the TAD to the Linear project:
-- **title**: "Technical Approach Document (TAD)"
-- **content**: The approved TAD markdown from `resources/tad.md`
-- **project**: Use the project ID from state.yaml (the UUID format, e.g., "e132d028-b252-4104-a325-992a39a1d963")
-- **icon**: `:page_facing_up:`
+When user explicitly approves, create a Linear document and attach it to the project:
+
+```bash
+linear document create --title "Technical Approach Document (TAD)" --content "<approved TAD markdown from resources/tad.md>" --project <project-id> --icon ":page_facing_up:"
+```
 
 ### 9. Confirm Success
 
