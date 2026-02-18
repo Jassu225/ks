@@ -8,7 +8,8 @@ A Claude Code plugin (`ks`) for KarmaSuite development workflows. It orchestrate
 
 ## Setup
 
-Run `./init` to install dependencies, build CLI tools, configure the `claude-ks` shell alias, and add `c-scripts/` to `PATH`. After init, use `claude-ks` to launch Claude Code with this plugin.
+- **Production**: Run `./init` to install dependencies, build CLI tools, and add `c-scripts/` to `PATH`.
+- **Development**: Run `./init-dev` to do everything `init` does plus add a `claude-ks` alias to `~/.zshrc`. Use `claude-ks` to launch Claude Code with the plugin loaded from the local repo.
 
 ## Plugin Structure
 
