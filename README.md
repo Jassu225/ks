@@ -2,9 +2,17 @@
 
 Private Claude Code plugin for KarmaSuite development workflows.
 
+## Installation
+
+Install the plugin from within Claude Code:
+
+```
+/plugin install --marketplace https://github.com/karmasuite/ks
+```
+
 ## Setup
 
-Run the init script to install dependencies, build CLI tools, and configure your shell:
+After installing, run the init script to install dependencies, build CLI tools, and configure your shell:
 
 ```bash
 ./init
@@ -21,6 +29,8 @@ After running init, restart your terminal (or `source ~/.zshrc`) and use:
 ```bash
 claude-ks
 ```
+
+The `claude-ks` alias is for development purposes only — it loads the plugin directly from the local repo.
 
 ## Structure
 
