@@ -6,11 +6,13 @@
   "scripts": {
     "linear": "npx tsx linear-cli.ts",
     "start-project": "npx tsx ks-start-project.ts",
+    "slack": "npx tsx slack-cli.ts",
     "build": "tsc"
   },
   "bin": {
     "linear-cli": "./dist/linear-cli.js",
-    "ks-start-project": "./dist/ks-start-project.js"
+    "ks-start-project": "./dist/ks-start-project.js",
+    "slack-cli": "./dist/slack-cli.js"
   },
   "dependencies": {
     "@linear/sdk": "^29.0.0",
@@ -18,6 +20,7 @@
     "commander": "^12.1.0",
     "dotenv": "^17.2.3",
     "inquirer": "^9.2.15",
+    "@slack/web-api": "^7.8.0",
     "yaml": "^2.4.1"
   },
   "devDependencies": {
