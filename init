@@ -62,6 +62,36 @@ else
 fi
 
 echo ""
+echo "=== Configuring project root ==="
+CONFIG_FILE="$SCRIPT_DIR/.config"
+CURRENT_ROOT=""
+if [ -f "$CONFIG_FILE" ] && grep -q "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" 2>/dev/null; then
+  CURRENT_ROOT=$(grep "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" | cut -d'=' -f2-)
+fi
+
+if [ -n "$CURRENT_ROOT" ]; then
+  read -rp "Project root path [$CURRENT_ROOT]: " PROJECT_ROOT
+  PROJECT_ROOT="${PROJECT_ROOT:-$CURRENT_ROOT}"
+else
+  read -rp "Project root path (absolute path to KarmaSuite repo): " PROJECT_ROOT
+fi
+
+if [ -z "$PROJECT_ROOT" ]; then
+  echo "Warning: No project root path provided. You can set it later in $CONFIG_FILE"
+elif [ ! -d "$PROJECT_ROOT" ]; then
+  echo "Warning: Directory '$PROJECT_ROOT' does not exist. Saving anyway."
+fi
+
+if [ -n "$PROJECT_ROOT" ]; then
+  if [ -f "$CONFIG_FILE" ] && grep -q "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" 2>/dev/null; then
+    sed -i '' "s|^PROJECT_ROOT_PATH=.*|PROJECT_ROOT_PATH=$PROJECT_ROOT|" "$CONFIG_FILE"
+  else
+    echo "PROJECT_ROOT_PATH=$PROJECT_ROOT" >> "$CONFIG_FILE"
+  fi
+  echo "Saved PROJECT_ROOT_PATH=$PROJECT_ROOT to $CONFIG_FILE"
+fi
+
+echo ""
 echo "=== Done ==="
 echo "Run 'source ~/.zshrc' to apply changes."
 echo ""
