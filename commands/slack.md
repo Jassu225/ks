@@ -143,8 +143,8 @@ When the user asks to interact with Slack:
 
 1. **Reading channels**: Use `slack channel list` to find channels, `slack channel info <name>` for details
 2. **Reading messages**: Use `slack channel history <channel>` to get recent messages
-3. **Sending messages**: Use `slack message send <channel> "text"` — supports Block Kit via `--blocks`
-4. **Threading**: Use `slack message reply <channel> <ts> "text"` to reply in a thread
+3. **Sending messages**: **Always show the user the target channel and full message content, then ask for explicit confirmation before sending.** Once confirmed, use `slack message send <channel> "text"` — supports Block Kit via `--blocks`
+4. **Threading**: **Always show the user the target channel, thread, and full reply content, then ask for explicit confirmation before sending.** Once confirmed, use `slack message reply <channel> <ts> "text"`
 5. **Finding users**: Use `slack user list` or `slack user info <name/email/ID>`
 6. **Uploading files**: Use `slack file upload <channel> <path>` with optional `--title`
 7. **Searching**: Use `slack search messages "query"` (requires user token)
