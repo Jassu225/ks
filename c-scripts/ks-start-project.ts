@@ -26,6 +26,12 @@ import { execSync, spawn } from 'child_process';
 // Types
 // ============================================================================
 
+interface SlackThread {
+  channel: string;
+  ts: string;
+  url: string | null;
+}
+
 interface TicketSelection {
   prd_ticket_id: string | null;
   prototype_ticket_id: string | null;
@@ -76,6 +82,11 @@ interface WorkflowState {
     prototype_ticket_id: string | null;
     tad_ticket_id: string | null;
     implementation_plan_ticket_id: string | null;
+  };
+  slack: {
+    project_thread: SlackThread | null;
+    pr_review_threads: Array<{ channel: string; ts: string; url: string | null; pr_url: string | null }>;
+    release_thread: SlackThread | null;
   };
   phases: Phase[];
 }
@@ -189,6 +200,34 @@ function getPriorityName(priority: number | null | undefined): string {
 }
 
 // ============================================================================
+// Slack URL Parsing
+// ============================================================================
+
+function parseSlackMessageUrl(url: string): SlackThread {
+  // Format: https://{workspace}.slack.com/archives/{channel_id}/p{timestamp}
+  const match = url.match(/slack\.com\/archives\/([A-Z0-9]+)\/p(\d+)/i);
+  if (!match) {
+    throw new Error('Invalid Slack message URL. Expected format: https://{workspace}.slack.com/archives/{channel}/p{timestamp}');
+  }
+  const channel = match[1];
+  const rawTs = match[2];
+  // Insert dot before last 6 digits: 1234567890123456 → 1234567890.123456
+  const ts = rawTs.slice(0, -6) + '.' + rawTs.slice(-6);
+  return { channel, ts, url };
+}
+
+async function promptForProjectThread(): Promise<SlackThread | null> {
+  const { slackUrl } = await inquirer.prompt([{
+    type: 'input',
+    name: 'slackUrl',
+    message: chalk.cyan('Paste Slack message URL for project thread (Enter to skip):'),
+  }]);
+
+  if (!slackUrl || slackUrl.trim() === '') return null;
+  return parseSlackMessageUrl(slackUrl.trim());
+}
+
+// ============================================================================
 // User Prompts
 // ============================================================================
 
@@ -296,7 +335,8 @@ async function selectTickets(issues: Issue[]): Promise<TicketSelection> {
 async function generateWorkflowState(
   project: Project,
   viewer: User,
-  ticketSelection: TicketSelection
+  ticketSelection: TicketSelection,
+  projectThread: SlackThread | null
 ): Promise<WorkflowState> {
   const lead = await project.lead;
   const status = await project.status;
@@ -337,6 +377,11 @@ async function generateWorkflowState(
       prototype_ticket_id: ticketSelection.prototype_ticket_id,
       tad_ticket_id: ticketSelection.tad_ticket_id,
       implementation_plan_ticket_id: ticketSelection.implementation_plan_ticket_id
+    },
+    slack: {
+      project_thread: projectThread,
+      pr_review_threads: [],
+      release_thread: null
     },
     phases: [
       {
@@ -479,6 +524,10 @@ function formatYaml(state: WorkflowState): string {
       formattedLines.push('');
       formattedLines.push('  # Important tickets of the Project');
       formattedLines.push(line);
+    } else if (line.startsWith('slack:')) {
+      formattedLines.push('');
+      formattedLines.push('# Slack thread references');
+      formattedLines.push(line);
     } else if (line.startsWith('phases:')) {
       formattedLines.push('');
       formattedLines.push('# Phases tracking');
@@ -564,9 +613,12 @@ ${chalk.cyan('Example:')}
       ? await selectTickets(issues)
       : { prd_ticket_id: null, prototype_ticket_id: null, tad_ticket_id: null, implementation_plan_ticket_id: null };
 
+    // Prompt for Slack project thread
+    const projectThread = await promptForProjectThread();
+
     // Generate workflow state
     console.log(chalk.blue('\nGenerating workflow state...'));
-    const workflowState = await generateWorkflowState(project, viewer, ticketSelection);
+    const workflowState = await generateWorkflowState(project, viewer, ticketSelection, projectThread);
 
     // Format and write YAML
     const yamlContent = formatYaml(workflowState);

@@ -14,6 +14,7 @@
 
 import 'dotenv/config';
 import { LinearClient, Issue, User } from '@linear/sdk';
+import inquirer from 'inquirer';
 import * as yaml from 'yaml';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -23,6 +24,12 @@ import { execSync, spawn } from 'child_process';
 // ============================================================================
 // Types
 // ============================================================================
+
+interface SlackThread {
+  channel: string;
+  ts: string;
+  url: string | null;
+}
 
 interface TicketWorkflowState {
   ticket: {
@@ -61,6 +68,11 @@ interface TicketWorkflowState {
       name: string;
       url: string;
     } | null;
+  };
+  slack: {
+    project_thread: SlackThread | null;
+    pr_review_threads: Array<{ channel: string; ts: string; url: string | null; pr_url: string | null }>;
+    release_thread: SlackThread | null;
   };
   phases: Array<{
     number: number;
@@ -145,12 +157,41 @@ function getPriorityName(priority: number | null | undefined): string {
 }
 
 // ============================================================================
+// Slack URL Parsing
+// ============================================================================
+
+function parseSlackMessageUrl(url: string): SlackThread {
+  // Format: https://{workspace}.slack.com/archives/{channel_id}/p{timestamp}
+  const match = url.match(/slack\.com\/archives\/([A-Z0-9]+)\/p(\d+)/i);
+  if (!match) {
+    throw new Error('Invalid Slack message URL. Expected format: https://{workspace}.slack.com/archives/{channel}/p{timestamp}');
+  }
+  const channel = match[1];
+  const rawTs = match[2];
+  // Insert dot before last 6 digits: 1234567890123456 → 1234567890.123456
+  const ts = rawTs.slice(0, -6) + '.' + rawTs.slice(-6);
+  return { channel, ts, url };
+}
+
+async function promptForProjectThread(): Promise<SlackThread | null> {
+  const { slackUrl } = await inquirer.prompt([{
+    type: 'input',
+    name: 'slackUrl',
+    message: chalk.cyan('Paste Slack message URL for project thread (Enter to skip):'),
+  }]);
+
+  if (!slackUrl || slackUrl.trim() === '') return null;
+  return parseSlackMessageUrl(slackUrl.trim());
+}
+
+// ============================================================================
 // Workflow State Generation
 // ============================================================================
 
 async function generateTicketWorkflowState(
   issue: Issue,
-  viewer: User
+  viewer: User,
+  projectThread: SlackThread | null
 ): Promise<TicketWorkflowState> {
   const state = await issue.state;
   const project = await issue.project;
@@ -194,6 +235,11 @@ async function generateTicketWorkflowState(
         name: project.name,
         url: project.url
       } : null
+    },
+    slack: {
+      project_thread: projectThread,
+      pr_review_threads: [],
+      release_thread: null
     },
     phases: [
       {
@@ -270,6 +316,10 @@ function formatYaml(state: TicketWorkflowState): string {
     } else if (line.match(/^\s{2}parent_project:/)) {
       formattedLines.push('');
       formattedLines.push('  # Parent project (if any)');
+      formattedLines.push(line);
+    } else if (line.startsWith('slack:')) {
+      formattedLines.push('');
+      formattedLines.push('# Slack thread references');
       formattedLines.push(line);
     } else if (line.startsWith('phases:')) {
       formattedLines.push('');
@@ -407,9 +457,12 @@ ${chalk.cyan('Example:')}
     const branchName = issue.branchName || identifier.toLowerCase();
     console.log(chalk.gray(`Branch name: ${branchName}`));
 
+    // Prompt for Slack project thread
+    const projectThread = await promptForProjectThread();
+
     // Generate workflow state
     console.log(chalk.blue('\nGenerating workflow state...'));
-    const workflowState = await generateTicketWorkflowState(issue, viewer);
+    const workflowState = await generateTicketWorkflowState(issue, viewer, projectThread);
 
     // Format and write YAML
     const yamlContent = formatYaml(workflowState);

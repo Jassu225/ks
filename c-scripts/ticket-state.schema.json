@@ -180,9 +180,51 @@
       "items": {
         "$ref": "#/$defs/phase"
       }
+    },
+    "slack": {
+      "type": "object",
+      "description": "Slack thread references for communication tracking",
+      "additionalProperties": false,
+      "properties": {
+        "project_thread": {
+          "$ref": "#/$defs/slack_thread",
+          "description": "General project/task communication thread"
+        },
+        "pr_review_threads": {
+          "type": "array",
+          "description": "PR review request threads (latest appended at end)",
+          "items": { "$ref": "#/$defs/slack_pr_review_thread" }
+        },
+        "release_thread": {
+          "$ref": "#/$defs/slack_thread",
+          "description": "Release announcement thread (stored for reference)"
+        }
+      },
+      "required": ["project_thread", "pr_review_threads", "release_thread"]
     }
   },
   "$defs": {
+    "slack_thread": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "channel": { "type": "string", "description": "Slack channel name or ID" },
+        "ts": { "type": "string", "description": "Slack message timestamp (e.g., '1234567890.123456')" },
+        "url": { "type": ["string", "null"], "format": "uri", "description": "Slack message permalink" }
+      },
+      "required": ["channel", "ts"]
+    },
+    "slack_pr_review_thread": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "channel": { "type": "string" },
+        "ts": { "type": "string" },
+        "url": { "type": ["string", "null"], "format": "uri" },
+        "pr_url": { "type": ["string", "null"], "format": "uri", "description": "GitHub PR URL" }
+      },
+      "required": ["channel", "ts"]
+    },
     "phase": {
       "type": "object",
       "description": "A workflow phase",
