@@ -34,7 +34,7 @@ After creating a PR via `/ks:create_pr`, run `/code-review:code-review` for auto
 
 ## Semantic Code Analysis (Serena)
 
-The research agents (codebase-locator, codebase-analyzer, codebase-pattern-finder) have access to Serena MCP semantic tools when Serena is running:
+When Serena is running, **all agents must prefer Serena tools over text-based alternatives** (Grep, Glob) for symbol navigation, reference tracing, and file structure inspection. Serena produces more accurate results with fewer tokens. Fall back to text-based tools only when Serena does not cover the specific need (e.g., searching for string literals or config values). Serena provides:
 - `find_symbol` — Jump to symbol definitions by name
 - `find_referencing_symbols` — Trace all callers/references to a symbol
 - `get_symbols_overview` — Get file structure without reading full contents

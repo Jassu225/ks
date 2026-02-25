@@ -1,0 +1,39 @@
+#!/bin/bash
+# Usage: resolve-plugin-dir <plugin-name>
+# Prints the installPath for the latest version of the named plugin.
+PLUGIN_NAME="$1"
+INSTALLED_PLUGINS="$HOME/.claude/plugins/installed_plugins.json"
+
+if [ -z "$PLUGIN_NAME" ]; then
+  echo "Usage: resolve-plugin-dir <plugin-name>" >&2
+  exit 1
+fi
+
+if [ ! -f "$INSTALLED_PLUGINS" ]; then
+  echo "Error: $INSTALLED_PLUGINS not found. Install the plugin first:" >&2
+  echo "  claude plugin install $PLUGIN_NAME" >&2
+  exit 1
+fi
+
+DIR=$(jq -r --arg name "$PLUGIN_NAME" '
+  .plugins[$name]
+  | if . == null then null
+    else sort_by(.lastUpdated) | last | .installPath
+    end
+' "$INSTALLED_PLUGINS")
+
+if [ -z "$DIR" ] || [ "$DIR" = "null" ]; then
+  echo "Error: $PLUGIN_NAME not found in installed plugins." >&2
+  echo "Install it first:" >&2
+  echo "  claude plugin install $PLUGIN_NAME" >&2
+  exit 1
+fi
+
+if [ ! -d "$DIR" ]; then
+  echo "Error: Plugin directory not found at $DIR" >&2
+  echo "Reinstall the plugin:" >&2
+  echo "  claude plugin install $PLUGIN_NAME" >&2
+  exit 1
+fi
+
+echo "$DIR"

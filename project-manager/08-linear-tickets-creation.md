@@ -21,7 +21,7 @@ This phase creates Linear tickets from the user stories. This phase is optional 
 5. **Verify the tickets were created in Linear**
 6. Ask user confirmation #1: "Phase 8 (Linear Tickets Creation) is complete. Should I mark it as COMPLETED?"
 7. Update phases array: Set phase 8 `status: "COMPLETED"` and `ended_at: {timestamp}`
-8. Tell the user: "Phase 9 (Implementation Plan Creation) uses semantic code analysis and plannotator. Please start a new session with `claude-ks-serena-plannotator` to proceed."
+8. Tell the user: "Phase 9 (Implementation Plan Creation) uses semantic code analysis and plannotator. Please start a new session with `claude-ks-serena --plugin plannotator@plannotator` to proceed."
 
 ## Example Command
 ```
@@ -37,4 +37,4 @@ This phase creates Linear tickets from the user stories. This phase is optional 
 - The command will show a preview and ask for approval before creating tickets
 
 ## Next Phase
-Phase 9: Implementation Plan Creation — user should launch with `claude-ks-serena-plannotator`.
+Phase 9: Implementation Plan Creation — user should launch with `claude-ks-serena --plugin plannotator@plannotator`.

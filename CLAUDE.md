@@ -19,7 +19,7 @@ Enable automated code review for PRs:
 
 ### Optional: Serena MCP (Semantic Code Analysis)
 
-Serena is included automatically when launching via `claude-ks-serena` or `claude-ks-review-serena`. It runs only for that session — no persistent MCP registration.
+Serena is included automatically when launching via `claude-ks-serena`. It runs only for that session — no persistent MCP registration. Additional plugins can be loaded with `--plugin <name>`, e.g. `claude-ks-serena --plugin code-review@claude-plugins-official`.
 
 ## Plugin Structure
 

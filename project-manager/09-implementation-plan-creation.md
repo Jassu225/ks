@@ -30,7 +30,7 @@ The actual implementation happens in Phase 10, not here.
 4. After user approves the plan, run `/create_handoff {project-directory-path}`
 5. Ask user confirmation #1: "Phase 9 (Implementation Plan Creation) is complete. Should I mark it as COMPLETED?"
 6. Update phases array: Set phase 9 `status: "COMPLETED"` and `ended_at: {timestamp}`
-7. Tell the user: "Phase 10 (Implementation) uses semantic code analysis and automated PR review. Please start a new session with `claude-ks-review-serena` to proceed."
+7. Tell the user: "Phase 10 (Implementation) uses semantic code analysis and automated PR review. Please start a new session with `claude-ks-serena --plugin code-review@claude-plugins-official` to proceed."
 
 ## Example Command
 ```
@@ -46,4 +46,4 @@ The actual implementation happens in Phase 10, not here.
 - Plan must be approved before moving to Phase 10
 
 ## Next Phase
-Phase 10: Implementation — user should launch with `claude-ks-review-serena`.
+Phase 10: Implementation — user should launch with `claude-ks-serena --plugin code-review@claude-plugins-official`.
