@@ -10,4 +10,22 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
   set +a
 fi
 
-exec claude --plugin-dir "$PLUGIN_DIR" "$@"
+# Parse --plugin flags, resolve to --plugin-dir args
+EXTRA_PLUGIN_DIRS=()
+PASSTHROUGH_ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --plugin)
+      shift
+      RESOLVED=$("$SCRIPT_DIR/resolve-plugin-dir" "$1") || exit 1
+      EXTRA_PLUGIN_DIRS+=("--plugin-dir" "$RESOLVED")
+      shift
+      ;;
+    *)
+      PASSTHROUGH_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+exec claude --plugin-dir "$PLUGIN_DIR" "${EXTRA_PLUGIN_DIRS[@]}" "${PASSTHROUGH_ARGS[@]}"
