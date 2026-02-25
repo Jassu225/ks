@@ -137,13 +137,28 @@ slack status clear
 slack emoji list
 ```
 
+### Templates
+
+```bash
+# List available message templates (shows name, description, filename)
+slack template list
+
+# View a specific template (with or without .md extension)
+slack template view pr-review-request
+```
+
 ## Workflow
 
 When the user asks to interact with Slack:
 
 1. **Reading channels**: Use `slack channel list` to find channels, `slack channel info <name>` for details
 2. **Reading messages**: Use `slack channel history <channel>` to get recent messages
-3. **Sending messages**: **Always show the user the target channel and full message content, then ask for explicit confirmation before sending.** Once confirmed, use `slack message send <channel> "text"` — supports Block Kit via `--blocks`
+3. **Sending messages**:
+   - First, run `slack template list` to check for a relevant template
+   - If a matching template exists, run `slack template view <filename>` to get its content, then fill in the template variables with the actual values from context
+   - If no template matches, compose the message from scratch
+   - **Always show the user the target channel and full message content, then ask for explicit confirmation before sending.**
+   - Once confirmed, use `slack message send <channel> "text"` — supports Block Kit via `--blocks`
 4. **Threading**: **Always show the user the target channel, thread, and full reply content, then ask for explicit confirmation before sending.** Once confirmed, use `slack message reply <channel> <ts> "text"`
 5. **Finding users**: Use `slack user list` or `slack user info <name/email/ID>`
 6. **Uploading files**: Use `slack file upload <channel> <path>` with optional `--title`

@@ -12,8 +12,9 @@ import 'dotenv/config';
 import { WebClient } from '@slack/web-api';
 import { Command, Option } from 'commander';
 import chalk from 'chalk';
-import { createReadStream } from 'fs';
-import { basename } from 'path';
+import { createReadStream, readFileSync, readdirSync } from 'fs';
+import { basename, join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 // ============================================================================
 // Client Initialization
@@ -1356,6 +1357,115 @@ async function listEmoji(options: { json?: boolean }): Promise<void> {
 }
 
 // ============================================================================
+// Template Helpers
+// ============================================================================
+
+interface TemplateFrontMatter {
+  name: string;
+  description: string;
+}
+
+function getTemplatesDir(): string {
+  const currentDir = dirname(fileURLToPath(import.meta.url));
+  // When running from dist/, templates are one level up
+  const candidates = [
+    join(currentDir, 'slack-templates'),
+    join(currentDir, '..', 'slack-templates'),
+  ];
+  for (const dir of candidates) {
+    try {
+      readdirSync(dir);
+      return dir;
+    } catch {
+      // try next
+    }
+  }
+  return candidates[0]; // fall through to error in caller
+}
+
+function parseFrontMatter(content: string): { frontMatter: TemplateFrontMatter | null; body: string } {
+  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) return { frontMatter: null, body: content };
+
+  const yamlBlock = match[1];
+  const body = match[2];
+
+  const frontMatter: Record<string, string> = {};
+  for (const line of yamlBlock.split('\n')) {
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).trim();
+    const value = line.slice(colonIdx + 1).trim();
+    frontMatter[key] = value;
+  }
+
+  if (!frontMatter.name || !frontMatter.description) return { frontMatter: null, body: content };
+
+  return {
+    frontMatter: { name: frontMatter.name, description: frontMatter.description },
+    body,
+  };
+}
+
+function listTemplates(): void {
+  const dir = getTemplatesDir();
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter(f => f.endsWith('.md'));
+  } catch {
+    console.error(chalk.red('No templates directory found'));
+    process.exit(1);
+  }
+
+  if (files.length === 0) {
+    console.log(chalk.yellow('No templates found'));
+    return;
+  }
+
+  console.log(chalk.bold('\nSlack Templates\n'));
+
+  for (const file of files) {
+    const content = readFileSync(join(dir, file), 'utf-8');
+    const { frontMatter } = parseFrontMatter(content);
+
+    if (frontMatter) {
+      console.log(`  ${chalk.cyan(frontMatter.name)}`);
+      console.log(`  ${chalk.dim(frontMatter.description)}`);
+      console.log(`  ${chalk.dim('File:')} ${file}`);
+    } else {
+      console.log(`  ${chalk.cyan(file)}`);
+      console.log(`  ${chalk.dim('(no front matter)')}`);
+    }
+    console.log();
+  }
+}
+
+function viewTemplate(filename: string): void {
+  const dir = getTemplatesDir();
+  const filePath = join(dir, filename.endsWith('.md') ? filename : `${filename}.md`);
+
+  let content: string;
+  try {
+    content = readFileSync(filePath, 'utf-8');
+  } catch {
+    console.error(chalk.red(`Template not found: ${filename}`));
+    console.error(chalk.yellow('Run "slack-cli template list" to see available templates'));
+    process.exit(1);
+  }
+
+  const { frontMatter, body } = parseFrontMatter(content);
+
+  if (frontMatter) {
+    console.log(chalk.bold(`\n${frontMatter.name}`));
+    console.log(chalk.dim(frontMatter.description));
+    console.log();
+  }
+
+  console.log(body.trim());
+  console.log();
+}
+
+// ============================================================================
 // CLI Setup
 // ============================================================================
 
@@ -1630,5 +1740,18 @@ emojiCmd
   .description('List custom emoji')
   .option('-j, --json', 'Output as JSON')
   .action(listEmoji);
+
+// Template commands
+const templateCmd = program.command('template').description('Slack message template operations');
+
+templateCmd
+  .command('list')
+  .description('List available Slack message templates')
+  .action(listTemplates);
+
+templateCmd
+  .command('view <filename>')
+  .description('View a Slack message template')
+  .action(viewTemplate);
 
 program.parse();
