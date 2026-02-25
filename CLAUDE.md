@@ -11,6 +11,16 @@ A Claude Code plugin (`ks`) for KarmaSuite development workflows. It orchestrate
 - **Production**: Run `./init` to install dependencies, build CLI tools, and add `c-scripts/` to `PATH`.
 - **Development**: Run `./init-dev` to do everything `init` does plus add a `claude-ks` alias to `~/.zshrc`. Use `claude-ks` to launch Claude Code with the plugin loaded from the local repo.
 
+### Optional: Code Review Plugin
+
+Enable automated code review for PRs:
+1. Open `~/.claude/settings.json`
+2. Move `code-review@claude-plugins-official` from `disabledPlugins` to `enabledPlugins`
+
+### Optional: Serena MCP (Semantic Code Analysis)
+
+Serena is included automatically when launching via `claude-ks-serena` or `claude-ks-review-serena`. It runs only for that session — no persistent MCP registration.
+
 ## Plugin Structure
 
 - **`.claude-plugin/plugin.json`** — Plugin manifest
@@ -59,6 +69,7 @@ c-scripts/quality-typecheck.sh
 | `/ks:build-prototype` | Build React prototype from PRD |
 | `/ks:write-tad` | Write Technical Architecture Document |
 | `/ks:prd-to-linear-tickets` | Convert PRD into Linear tickets |
+| `/code-review:code-review` | Automated PR code review (requires plugin) |
 
 ## Agents
 
@@ -95,6 +106,16 @@ workflow/{username}/{project-slug}/
     ├── implementation-plan.md # Phase 9
     └── handoffs/           # Between-phase documentation
 ```
+
+## External Plugin Integrations
+
+### Code Review (`code-review@claude-plugins-official`)
+
+Automated PR code review that checks for bugs, logic errors, and CLAUDE.md compliance. Run `/code-review:code-review` after creating a PR via `/ks:create_pr`. Only issues with 80+ confidence are posted as comments.
+
+### Serena MCP (Semantic Code Analysis)
+
+Provides LSP-powered semantic tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`) to the research agents (codebase-locator, codebase-analyzer, codebase-pattern-finder). Replaces noisy text-based grep for symbol navigation and import-tracing. Agents fall back to Grep/Glob/Read automatically when Serena is not running.
 
 ## Critical Rules
 

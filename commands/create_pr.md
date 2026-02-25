@@ -128,6 +128,10 @@ After creating the PR:
 - Show the generated title
 - Summarize what was included in the changelog
 
+### 10. Automated Code Review
+
+After the PR is created, suggest running `/code-review:code-review` to get automated review feedback before requesting human review. The code review checks for bugs, logic errors, and CLAUDE.md compliance.
+
 ## Important Notes
 
 - Always verify the Linear ticket was extracted or provided before creating the PR

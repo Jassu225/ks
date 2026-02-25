@@ -79,6 +79,8 @@ When this command is invoked:
    - Use **codebase-analyzer** agent to understand how current implementations work
    - Use **codebase-pattern-finder** agent to find similar features to model after
 
+   **Serena MCP**: When Serena MCP is running, all three codebase agents have access to semantic tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`). Agents use semantic tools first for symbol-based queries and fall back to text-based tools automatically when Serena is unavailable.
+
    These agents will:
    - Find relevant source files, configs, and tests
    - Identify the specific directories to focus on

@@ -40,17 +40,21 @@ if [ "$DEV_MODE" = true ]; then
     echo "DEV=true" > "$ENV_FILE"
   fi
   echo "Set DEV=true in $ENV_FILE"
-
-  ALIAS_LINE="alias claude-ks='claude --plugin-dir $SCRIPT_DIR'"
-  if grep -qF "alias claude-ks=" "$ZSHRC" 2>/dev/null; then
-    echo "claude-ks alias already exists in $ZSHRC, skipping"
-  else
-    echo "" >> "$ZSHRC"
-    echo "# KarmaSuite Claude Code plugin (dev)" >> "$ZSHRC"
-    echo "$ALIAS_LINE" >> "$ZSHRC"
-    echo "Added claude-ks alias to $ZSHRC"
-  fi
+  PHASE_FILES_PATH="$SCRIPT_DIR/project-manager"
+else
+  PHASE_FILES_PATH="$HOME/.claude/plugins/ks/project-manager"
 fi
+
+# Set KS_PHASE_FILES_DIR in c-scripts/.env
+ENV_FILE="${ENV_FILE:-$CSCRIPTS_DIR/.env}"
+if [ -f "$ENV_FILE" ] && grep -q "^KS_PHASE_FILES_DIR=" "$ENV_FILE" 2>/dev/null; then
+  sed -i '' "s|^KS_PHASE_FILES_DIR=.*|KS_PHASE_FILES_DIR=$PHASE_FILES_PATH|" "$ENV_FILE"
+else
+  # Ensure trailing newline before appending
+  [ -s "$ENV_FILE" ] && [ -n "$(tail -c 1 "$ENV_FILE")" ] && echo "" >> "$ENV_FILE"
+  echo "KS_PHASE_FILES_DIR=$PHASE_FILES_PATH" >> "$ENV_FILE"
+fi
+echo "Set KS_PHASE_FILES_DIR=$PHASE_FILES_PATH in $ENV_FILE"
 
 # Add c-scripts to PATH
 PATH_LINE="export PATH=\"$CSCRIPTS_DIR:\$PATH\""

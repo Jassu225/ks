@@ -16,10 +16,10 @@ This phase creates the user context file. The state.yaml already exists in the p
 4. **Read and understand the context file**
 5. Ask user confirmation #1: "Phase 1 (Context Creation) is complete. Should I mark it as COMPLETED?"
 6. Update phases array: Set phase 1 `status: "COMPLETED"` and `ended_at: {timestamp}`
-7. Ask user confirmation #2: "Ready to proceed to Phase 2 (Codebase Research)?"
+7. Tell the user: "Phase 2 (Codebase Research) uses semantic code analysis. Please start a new session with `claude-ks-serena` to proceed."
 
 ## Output Files
 - `{project-dir}/resources/user-context.md` - User context document
 
 ## Next Phase
-Phase 2: Codebase Research
+Phase 2: Codebase Research — user should launch with `claude-ks-serena`.
