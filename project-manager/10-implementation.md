@@ -19,10 +19,16 @@ This phase implements the approved plan from Phase 9. The `/implement-plan` comm
    - Pause for human manual verification between phases
    - Update plan checkboxes as work is completed
    - Create commits after each verified phase
-4. After all plan phases are complete, run `/create_handoff {project-directory-path}`
-5. Ask user confirmation #1: "Phase 10 (Implementation) is complete. Should I mark it as COMPLETED?"
-6. Update phases array: Set phase 10 `status: "COMPLETED"` and `ended_at: {timestamp}`
-7. **Congratulate the user**: "Project implementation complete! All 10 phases have been successfully executed."
+4. After all plan phases are complete, create a PR using `/create_pr`
+5. **Code review**: After the PR is created, spawn a sub-agent to run the automated code review:
+   ```
+   Task(subagent_type: "general-purpose", prompt: "Run /code-review:code-review to review all changes in the current PR. Report back with any issues found.")
+   ```
+   Address any high-confidence issues the sub-agent reports before finalizing.
+6. Run `/create_handoff {project-directory-path}`
+7. Ask user confirmation #1: "Phase 10 (Implementation) is complete. Should I mark it as COMPLETED?"
+8. Update phases array: Set phase 10 `status: "COMPLETED"` and `ended_at: {timestamp}`
+9. **Congratulate the user**: "Project implementation complete! All 10 phases have been successfully executed."
 
 ## Example Command
 ```

@@ -27,3 +27,16 @@ Use the `/ks:create_plan` command for implementation planning. Plans should be a
 ## Code Quality
 
 Do not run ESLint, Prettier, or TypeScript type checking manually — hooks handle formatting, linting, and type checking automatically on every Stop and SubagentStop event.
+
+## Code Review
+
+After creating a PR via `/ks:create_pr`, run `/code-review:code-review` for automated code review. The review checks for bugs, logic errors, and CLAUDE.md compliance. Only issues with 80+ confidence are posted as PR comments.
+
+## Semantic Code Analysis (Serena)
+
+The research agents (codebase-locator, codebase-analyzer, codebase-pattern-finder) have access to Serena MCP semantic tools when Serena is running:
+- `find_symbol` — Jump to symbol definitions by name
+- `find_referencing_symbols` — Trace all callers/references to a symbol
+- `get_symbols_overview` — Get file structure without reading full contents
+
+Agents fall back to text-based tools (Grep, Glob, Read) automatically when Serena is not available.

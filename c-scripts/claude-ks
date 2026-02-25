@@ -1,0 +1,13 @@
+#!/bin/bash
+# Launch Claude Code with ks plugin
+PLUGIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Load env vars (KS_PHASE_FILES_DIR, etc.) from c-scripts/.env
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  set -a
+  source "$SCRIPT_DIR/.env"
+  set +a
+fi
+
+exec claude --plugin-dir "$PLUGIN_DIR" "$@"

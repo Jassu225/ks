@@ -26,7 +26,7 @@ When invoked:
 
 ## Phases
 
-**Phase files location:** `~/.claude/plugins/ks/project-manager/`
+**Phase files location:** Read the `$KS_PHASE_FILES_DIR` environment variable (run `echo $KS_PHASE_FILES_DIR` via Bash). Phase files are in that directory (e.g., `$KS_PHASE_FILES_DIR/01-context-creation.md`).
 
 | # | Name | state.yaml name | Command | Phase File | Ticket |
 |---|------|-----------------|---------|------------|:------:|

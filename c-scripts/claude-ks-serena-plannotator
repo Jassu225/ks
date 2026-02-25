@@ -1,0 +1,34 @@
+#!/bin/bash
+# Launch Claude Code with ks plugin, Serena MCP (session-only), and plannotator plugin
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Get plannotator plugin directory (latest version by lastUpdated)
+INSTALLED_PLUGINS="$HOME/.claude/plugins/installed_plugins.json"
+if [ ! -f "$INSTALLED_PLUGINS" ]; then
+  echo "Error: $INSTALLED_PLUGINS not found. Install the plannotator plugin first:"
+  echo "  claude plugin install plannotator@plannotator"
+  exit 1
+fi
+
+PLANNOTATOR_DIR=$(jq -r '
+  .plugins["plannotator@plannotator"]
+  | sort_by(.lastUpdated)
+  | last
+  | .installPath
+' "$INSTALLED_PLUGINS")
+
+if [ -z "$PLANNOTATOR_DIR" ] || [ "$PLANNOTATOR_DIR" = "null" ]; then
+  echo "Error: plannotator@plannotator not found in installed plugins."
+  echo "Install it first:"
+  echo "  claude plugin install plannotator@plannotator"
+  exit 1
+fi
+
+if [ ! -d "$PLANNOTATOR_DIR" ]; then
+  echo "Error: Plannotator plugin directory not found at $PLANNOTATOR_DIR"
+  echo "Reinstall the plugin:"
+  echo "  claude plugin install plannotator@plannotator"
+  exit 1
+fi
+
+exec "$SCRIPT_DIR/claude-ks-serena" --plugin-dir "$PLANNOTATOR_DIR" "$@"

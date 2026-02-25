@@ -156,6 +156,13 @@ info "  New branch: ${NEW_BRANCH_NAME}"
 info "  Based on: ${BASE_BRANCH}"
 echo "" >&2
 
+# Remove .claude folder from main repo to prevent it from being copied into the worktree
+if [[ -d "${MAIN_REPO_DIR}/.claude" ]]; then
+    info "Removing .claude folder from main repo before worktree creation..."
+    rm -rf "${MAIN_REPO_DIR}/.claude"
+    success "Removed .claude folder from main repo"
+fi
+
 # Create the worktrees base directory if it doesn't exist
 if [[ ! -d "$WORKTREES_BASE_DIR" ]]; then
     info "Creating worktrees base directory: ${WORKTREES_BASE_DIR}"
