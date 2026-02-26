@@ -10,25 +10,24 @@ This phase implements the approved plan from Phase 9. The `/implement-plan` comm
 
 ## Execution Steps
 
-1. Update phases array: Add `{number: 10, name: "implementation", status: "IN_PROGRESS", started_at: {timestamp}, ended_at: null}`
-2. Run `/implement-plan {project-directory-path}`
-3. The command will:
+1. Run `/implement-plan {project-directory-path}`
+2. The command will:
    - Read the implementation plan at `{project-directory-path}/resources/implementation-plan.md`
    - Execute each phase in the plan sequentially
    - Run automated verification (lint, type check, tests) after each phase
    - Pause for human manual verification between phases
    - Update plan checkboxes as work is completed
    - Create commits after each verified phase
-4. After all plan phases are complete, create a PR using `/create_pr`
-5. **Code review**: After the PR is created, spawn a sub-agent to run the automated code review:
+3. After all plan phases are complete, create a PR using `/create_pr`
+4. **Code review**: After the PR is created, spawn a sub-agent to run the automated code review:
    ```
    Task(subagent_type: "general-purpose", prompt: "Run /code-review:code-review to review all changes in the current PR. Report back with any issues found.")
    ```
    Address any high-confidence issues the sub-agent reports before finalizing.
-6. Run `/create_handoff {project-directory-path}`
-7. Ask user confirmation #1: "Phase 10 (Implementation) is complete. Should I mark it as COMPLETED?"
-8. Update phases array: Set phase 10 `status: "COMPLETED"` and `ended_at: {timestamp}`
-9. **Congratulate the user**: "Project implementation complete! All 10 phases have been successfully executed."
+
+## Post-Completion Steps
+
+1. Congratulate the user: "Project implementation complete! All phases have been successfully executed."
 
 ## Example Command
 ```

@@ -10,18 +10,17 @@ This phase creates Linear tickets from the user stories. This phase is optional 
 
 ## Execution Steps
 
-1. Update phases array: Add `{number: 8, name: "linear-tickets-creation", status: "IN_PROGRESS", started_at: {timestamp}, ended_at: null}`
-2. Run `/prd-to-linear-tickets {project-directory-path}`
-3. The command will:
+1. Run `/prd-to-linear-tickets {project-directory-path}`
+2. The command will:
    - Read state.yaml for project ID
    - Read resources/user-stories.md for user stories (grouped by Feature)
    - Create a preview at `{project-directory-path}/resources/linear-tickets.md`
    - Ask user to approve before creating tickets in Linear
-4. After the command completes, run `/create_handoff {project-directory-path}`
-5. **Verify the tickets were created in Linear**
-6. Ask user confirmation #1: "Phase 8 (Linear Tickets Creation) is complete. Should I mark it as COMPLETED?"
-7. Update phases array: Set phase 8 `status: "COMPLETED"` and `ended_at: {timestamp}`
-8. Tell the user: "Phase 9 (Implementation Plan Creation) uses semantic code analysis and plannotator. Please start a new session with `claude-ks-serena --plugin plannotator@plannotator` to proceed."
+3. Verify the tickets were created in Linear
+
+## Post-Completion Steps
+
+1. Tell the user: "Phase 9 (Implementation Plan Creation) uses semantic code analysis. Please start a new session with `claude-ks-serena` to proceed."
 
 ## Example Command
 ```
@@ -37,4 +36,4 @@ This phase creates Linear tickets from the user stories. This phase is optional 
 - The command will show a preview and ask for approval before creating tickets
 
 ## Next Phase
-Phase 9: Implementation Plan Creation — user should launch with `claude-ks-serena --plugin plannotator@plannotator`.
+Phase 9: Implementation Plan Creation — user should launch with `claude-ks-serena`.

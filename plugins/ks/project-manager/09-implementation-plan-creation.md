@@ -19,18 +19,17 @@ The actual implementation happens in Phase 10, not here.
 
 ## Execution Steps
 
-1. Update phases array: Add `{number: 9, name: "implementation-plan-creation", status: "IN_PROGRESS", started_at: {timestamp}, ended_at: null}`
-2. Run `/create_plan {project-directory-path}` (runs in plan mode)
-3. The command will:
+1. Run `/create_plan {project-directory-path}` (runs in plan mode)
+2. The command will:
    - Research codebase patterns and analyze requirements
    - Write the plan to Claude Code's plan file (temporary location)
    - Iterate with user until they are satisfied
    - Use `ExitPlanMode` to formally finalize the approved plan
    - **Copy the approved plan** from Claude Code plans directory to `{project-directory-path}/resources/implementation-plan.md`
-4. After user approves the plan, run `/create_handoff {project-directory-path}`
-5. Ask user confirmation #1: "Phase 9 (Implementation Plan Creation) is complete. Should I mark it as COMPLETED?"
-6. Update phases array: Set phase 9 `status: "COMPLETED"` and `ended_at: {timestamp}`
-7. Tell the user: "Phase 10 (Implementation) uses semantic code analysis and automated PR review. Please start a new session with `claude-ks-serena --plugin code-review@claude-plugins-official` to proceed."
+
+## Post-Completion Steps
+
+1. Tell the user: "Phase 10 (Implementation) uses semantic code analysis and automated PR review. Please start a new session with `claude-ks-serena --plugin code-review@claude-plugins-official` to proceed."
 
 ## Example Command
 ```
