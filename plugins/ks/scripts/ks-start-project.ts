@@ -434,7 +434,7 @@ function createWorktreeAndLaunchClaude(projectSlug: string, workflowRelPath: str
     const claudeArgs: string[] = [];
     if (process.env.DEV === 'true') {
       const repoRoot = execSync('git rev-parse --show-toplevel', { cwd: scriptDir, encoding: 'utf-8' }).trim();
-      claudeArgs.push('--plugin-dir', repoRoot);
+      claudeArgs.push('--plugin-dir', path.join(repoRoot, 'plugins', 'ks'));
     }
     const claude = spawn('claude', claudeArgs, {
       stdio: 'inherit',
@@ -478,7 +478,7 @@ function formatYaml(state: WorkflowState): string {
 
   // Add schema reference for editor validation (using $HOME for portability)
   const homeDir = process.env.HOME || '~';
-  formattedLines.push(`# yaml-language-server: $schema=${homeDir}/.claude/c-scripts/state.schema.json`);
+  formattedLines.push(`# yaml-language-server: $schema=${homeDir}/.claude/plugins/ks/scripts/state.schema.json`);
   formattedLines.push('');
   formattedLines.push('# Linear Project Information');
 

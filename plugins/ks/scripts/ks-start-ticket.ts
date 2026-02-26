@@ -271,7 +271,7 @@ function formatYaml(state: TicketWorkflowState): string {
 
   // Add schema reference for editor validation
   const homeDir = process.env.HOME || '~';
-  formattedLines.push(`# yaml-language-server: $schema=${homeDir}/.claude/plugins/ks/c-scripts/ticket-state.schema.json`);
+  formattedLines.push(`# yaml-language-server: $schema=${homeDir}/.claude/plugins/ks/scripts/ticket-state.schema.json`);
   formattedLines.push('');
   formattedLines.push('# Linear Ticket Information');
 
@@ -370,7 +370,7 @@ function createWorktreeAndLaunchClaude(branchName: string, workflowRelPath: stri
     const claudeArgs: string[] = [];
     if (process.env.DEV === 'true') {
       const repoRoot = execSync('git rev-parse --show-toplevel', { cwd: scriptDir, encoding: 'utf-8' }).trim();
-      claudeArgs.push('--plugin-dir', repoRoot);
+      claudeArgs.push('--plugin-dir', path.join(repoRoot, 'plugins', 'ks'));
     }
     const claude = spawn('claude', claudeArgs, {
       stdio: 'inherit',

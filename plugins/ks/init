@@ -10,11 +10,11 @@ while [[ "$#" -gt 0 ]]; do
   shift
 done
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CSCRIPTS_DIR="$SCRIPT_DIR/c-scripts"
+PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPTS_DIR="$PLUGIN_DIR/scripts"
 
 echo "=== Installing dependencies ==="
-cd "$CSCRIPTS_DIR"
+cd "$SCRIPTS_DIR"
 npm install
 
 echo ""
@@ -25,10 +25,9 @@ echo ""
 echo "=== Configuring shell ==="
 ZSHRC="$HOME/.zshrc"
 
-# Add claude-ks alias (dev mode only)
+# Set DEV and KS_PHASE_FILES_DIR in scripts/.env
+ENV_FILE="$SCRIPTS_DIR/.env"
 if [ "$DEV_MODE" = true ]; then
-  # Set dev=true in c-scripts/.env
-  ENV_FILE="$CSCRIPTS_DIR/.env"
   if [ -f "$ENV_FILE" ]; then
     if grep -q "^DEV=" "$ENV_FILE" 2>/dev/null; then
       sed -i '' 's/^DEV=.*/DEV=true/' "$ENV_FILE"
@@ -40,34 +39,32 @@ if [ "$DEV_MODE" = true ]; then
     echo "DEV=true" > "$ENV_FILE"
   fi
   echo "Set DEV=true in $ENV_FILE"
-  PHASE_FILES_PATH="$SCRIPT_DIR/project-manager"
+  PHASE_FILES_PATH="$PLUGIN_DIR/project-manager"
 else
   PHASE_FILES_PATH="$HOME/.claude/plugins/ks/project-manager"
 fi
 
-# Set KS_PHASE_FILES_DIR in c-scripts/.env
-ENV_FILE="${ENV_FILE:-$CSCRIPTS_DIR/.env}"
+# Set KS_PHASE_FILES_DIR in scripts/.env
 if [ -f "$ENV_FILE" ] && grep -q "^KS_PHASE_FILES_DIR=" "$ENV_FILE" 2>/dev/null; then
   sed -i '' "s|^KS_PHASE_FILES_DIR=.*|KS_PHASE_FILES_DIR=$PHASE_FILES_PATH|" "$ENV_FILE"
 else
-  # Ensure trailing newline before appending
   [ -s "$ENV_FILE" ] && [ -n "$(tail -c 1 "$ENV_FILE")" ] && echo "" >> "$ENV_FILE"
   echo "KS_PHASE_FILES_DIR=$PHASE_FILES_PATH" >> "$ENV_FILE"
 fi
 echo "Set KS_PHASE_FILES_DIR=$PHASE_FILES_PATH in $ENV_FILE"
 
-# Add c-scripts to PATH
-PATH_LINE="export PATH=\"$CSCRIPTS_DIR:\$PATH\""
-if grep -qF "$CSCRIPTS_DIR" "$ZSHRC" 2>/dev/null; then
-  echo "c-scripts PATH already exists in $ZSHRC, skipping"
+# Add scripts to PATH (replace old c-scripts PATH if present)
+PATH_LINE="export PATH=\"$SCRIPTS_DIR:\$PATH\""
+if grep -qF "$SCRIPTS_DIR" "$ZSHRC" 2>/dev/null; then
+  echo "scripts PATH already exists in $ZSHRC, skipping"
 else
   echo "$PATH_LINE" >> "$ZSHRC"
-  echo "Added c-scripts to PATH in $ZSHRC"
+  echo "Added scripts to PATH in $ZSHRC"
 fi
 
 echo ""
 echo "=== Configuring project root ==="
-CONFIG_FILE="$SCRIPT_DIR/.config"
+CONFIG_FILE="$PLUGIN_DIR/.config"
 CURRENT_ROOT=""
 if [ -f "$CONFIG_FILE" ] && grep -q "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" 2>/dev/null; then
   CURRENT_ROOT=$(grep "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" | cut -d'=' -f2-)
@@ -102,8 +99,13 @@ echo ""
 echo "Next steps:"
 echo "  1. Get a Linear API key (with write permissions) from:"
 echo "     https://linear.app/settings/api"
-echo "     Then add it to $CSCRIPTS_DIR/.env:"
+echo "     Then add it to $SCRIPTS_DIR/.env:"
 echo "     LINEAR_API_KEY=lin_api_your_key_here"
 echo ""
-echo "  2. Copy ks-rules.md to your KarmaSuite project:"
-echo "     cp $SCRIPT_DIR/ks-rules.md /path/to/your/project/CLAUDE.md"
+echo "  2. Get a Slack bot token from:"
+echo "     https://api.slack.com/apps/A0AFPCG7PQD/oauth"
+echo "     Then add it to $SCRIPTS_DIR/.env:"
+echo "     SLACK_TOKEN=xoxb-your-token-here"
+echo ""
+echo "  3. Copy ks-rules.md to your KarmaSuite project:"
+echo "     cp $PLUGIN_DIR/ks-rules.md /path/to/your/project/CLAUDE.md"
