@@ -60,6 +60,10 @@ linear project update <id-or-slug-or-url> --body "Update text" --health onTrack
 
 Health options: `onTrack`, `atRisk`, `offTrack`
 
+Note on project updates:
+- The `--body` field supports markdown. Use Linear ticket links (e.g., `[KAR-123](https://linear.app/karmasuite/issue/KAR-123)`) so Linear auto-links them in the update.
+- Always show the user the update body and ask for confirmation before posting.
+
 Note on project text fields:
 - `--description` = short summary shown under the project title
 - `--content` = full project description in markdown (the "Description" section in the UI)
