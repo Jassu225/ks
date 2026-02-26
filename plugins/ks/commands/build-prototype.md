@@ -1,5 +1,4 @@
 ---
-name: build-prototype
 description: Builds high-quality React prototypes from PRD and user stories documents. Takes a project directory path and reads all required files from state.yaml and resources folder.
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, TodoWrite, AskUserQuestion, Task, WebSearch, WebFetch
 argument-hint: [project-directory-path]

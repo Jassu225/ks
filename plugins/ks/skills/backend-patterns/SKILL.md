@@ -1,5 +1,4 @@
 ---
-name: backend-patterns
 description: Backend architecture patterns for KarmaSuite - Next.js Pages Router, tRPC, Prisma ORM, Clerk auth, Inngest background jobs.
 ---
 

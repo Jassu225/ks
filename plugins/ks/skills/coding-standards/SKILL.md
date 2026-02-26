@@ -1,5 +1,4 @@
 ---
-name: coding-standards
 description: Coding standards for KarmaSuite - TypeScript, React, Next.js Pages Router, tRPC, Prisma, Vitest.
 ---
 

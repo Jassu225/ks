@@ -1,5 +1,4 @@
 ---
-name: write-problem-statement
 description: Co-write the description section of Linear overview page by understanding the customer problem.
 argument-hint: [project-directory-path]
 model: opus

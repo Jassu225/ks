@@ -1,5 +1,4 @@
 ---
-name: frontend-patterns
 description: Frontend patterns for KarmaSuite - React, Next.js Pages Router, TailwindCSS, Radix UI, AG Grid, tRPC hooks.
 ---
 

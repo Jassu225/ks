@@ -1,5 +1,4 @@
 ---
-name: postgres-patterns
 description: PostgreSQL patterns for KarmaSuite - Prisma migrations, query optimization, schema design, indexing.
 ---
 
