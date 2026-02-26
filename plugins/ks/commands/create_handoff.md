@@ -134,7 +134,4 @@ After writing the handoff, respond:
 
 ```
 Handoff created at `{filepath}`
-
-Resume with:
-/resume_handoff {filepath}
 ```
