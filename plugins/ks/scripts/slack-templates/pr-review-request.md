@@ -1,6 +1,7 @@
 ---
 name: PR Review Request
 description: Post to #engineering when a PR is ready for review
+channel_id: C051A3TSM5K
 ---
 
 # PR Review Request Template
