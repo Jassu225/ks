@@ -13,11 +13,12 @@ When invoked:
 1. Check if a project directory was provided as an argument
 2. If not provided, ask: "Please provide the project directory path (e.g., `workflow/{username}/{project-slug}`)"
 3. Read `state.yaml` from the provided project directory
-4. **Detect workflow type**: Check if root key is `project` or `ticket`
+4. Check for handoff files in `{project-directory-path}/resources/handoffs/`. If any exist, read the **latest** one (sorted by filename timestamp) to understand prior session context, debugging trail, and resume point.
+5. **Detect workflow type**: Check if root key is `project` or `ticket`
    - If `ticket` key exists → **Ticket Workflow** (phases 1, 2, 9, 10 only)
    - If `project` key exists → **Project Workflow** (all 10 phases)
-5. Parse the `phases` array to determine status (phases not in array are NOT_STARTED)
-6. Determine status:
+6. Parse the `phases` array to determine status (phases not in array are NOT_STARTED)
+7. Determine status:
    - **Ticket workflow**: "I see this is a ticket workflow: {ticket.identifier} - {ticket.name}. This uses an abbreviated workflow (Phases 1, 2, 9, 10). Ready to begin?"
    - **Project workflow (fresh)**: "I see this is a fresh project: {project-name}. Ready to begin Phase 1 (Context Creation)?"
    - **Resuming**: Show phase status summary (including any SKIPPED phases) and ask which phase to continue from
@@ -54,11 +55,11 @@ For each phase:
 3. **If skipping:** Update state.yaml with `status: "SKIPPED"`, proceed to next phase
 4. **If proceeding:**
    - Update state.yaml: `status: "IN_PROGRESS"`, `started_at: {timestamp}`
-   - Execute the phase command
-   - Run `/create_handoff {project-directory-path}`
-   - **Confirm #1:** "Phase X complete. Mark as COMPLETED?"
+   - Perform the **Execution Steps** from the phase file
+   - **Confirm:** "Phase X complete. Mark as COMPLETED?"
    - Update state.yaml: `status: "COMPLETED"`, `ended_at: {timestamp}`
-   - **Confirm #2:** "Ready to proceed to Phase Y?"
+   - Run `/create_handoff {project-directory-path}`
+   - Perform the **Post-Completion Steps** from the phase file
 5. **On error:** STOP, inform user, wait for intervention
 
 ---
@@ -109,9 +110,10 @@ workflow/{username}/{project-slug}/
 
 ## Critical Rules
 
-- **MANDATORY: Before marking any phase as COMPLETED, re-read its phase file and verify ALL execution steps were performed.**
+- **MANDATORY: Before marking any phase as COMPLETED, re-read its phase file and verify all Execution Steps and Post-Completion Steps were performed.**
+- **MANDATORY: After marking a phase as COMPLETED, you MUST run `/create_handoff {project-directory-path}`. Never skip this step. Every completed phase must have a handoff document.**
 - **Detect workflow type first** — ticket vs project determines which phases to run
-- **Phases 3-7 (project workflow):** Remind user to write project updates in Linear
+- **Phases 3, 5, 6, 7 (project workflow):** Use the Linear CLI (`linear project update`) to post project updates after each phase
 - **Phase 9:** Planning only — do NOT create todos or start implementation
 - **On error:** STOP immediately, inform user, wait for intervention
 

@@ -10,14 +10,15 @@ This phase adds detailed product requirements to the Linear project.
 
 ## Execution Steps
 
-1. Update phases array: Add `{number: 6, name: "product-requirements", status: "IN_PROGRESS", started_at: {timestamp}, ended_at: null}`
-2. Run `/add-product-requirements {project-directory-path}`
-3. After the command completes, run `/create_handoff {project-directory-path}`
-4. **Verify the product requirements were added to Linear project**
-5. Ask user confirmation #1: "Phase 6 (Product Requirements) is complete. Should I mark it as COMPLETED?"
-6. Update phases array: Set phase 6 `status: "COMPLETED"` and `ended_at: {timestamp}`
-7. **Ask user**: "Please review the product requirements and write a project update manually in Linear (e.g., 'PRD complete'). Once done, confirm to proceed to Phase 7."
-8. Wait for user confirmation to proceed to Phase 7
+1. Run `/add-product-requirements {project-directory-path}`
+2. Verify the product requirements were added to Linear project
+
+## Post-Completion Steps
+
+1. Post a project update in Linear using the project ID from `state.yaml`:
+   `linear project update <project-id> --body "Added Product requirements section. Please review @jon" --health onTrack`
+   Show the update body to the user and ask for confirmation before posting.
+2. Wait for user confirmation to proceed to Phase 7
 
 ## Example Command
 ```
@@ -29,7 +30,7 @@ This phase adds detailed product requirements to the Linear project.
 - Linear project updated with requirements
 
 ## Special Instructions
-- Remind user to review requirements and write manual project update in Linear before proceeding
+- Post project update in Linear using `linear project update` before proceeding
 
 ## Next Phase
 Phase 7: TAD Creation

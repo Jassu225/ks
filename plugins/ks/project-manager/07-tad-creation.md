@@ -10,14 +10,15 @@ This phase creates the Technical Architecture Document (TAD) and attaches it to 
 
 ## Execution Steps
 
-1. Update phases array: Add `{number: 7, name: "tad-creation", status: "IN_PROGRESS", started_at: {timestamp}, ended_at: null}`
-2. Run `/write-tad {project-directory-path}`
-3. After the command completes, run `/create_handoff {project-directory-path}`
-4. **Verify the TAD was created and attached to Linear project**
-5. Ask user confirmation #1: "Phase 7 (TAD Creation) is complete. Should I mark it as COMPLETED?"
-6. Update phases array: Set phase 7 `status: "COMPLETED"` and `ended_at: {timestamp}`
-7. **Ask user**: "Please review the TAD and write a project update manually in Linear (e.g., 'TAD complete'). Once done, confirm to proceed to Phase 8."
-8. Wait for user confirmation to proceed to Phase 8
+1. Run `/write-tad {project-directory-path}`
+2. Verify the TAD was created and attached to Linear project
+
+## Post-Completion Steps
+
+1. Post a project update in Linear using the project ID from `state.yaml`:
+   `linear project update <project-id> --body "Created draft TAD. Please review @jon" --health onTrack`
+   Show the update body to the user and ask for confirmation before posting.
+2. Wait for user confirmation to proceed to Phase 8
 
 ## Example Command
 ```
@@ -29,7 +30,7 @@ This phase creates the Technical Architecture Document (TAD) and attaches it to 
 - Linear project updated with TAD attachment
 
 ## Special Instructions
-- Remind user to review TAD and write manual project update in Linear before proceeding
+- Post project update in Linear using `linear project update` before proceeding
 
 ## Next Phase
 Phase 8: Linear Tickets Creation
