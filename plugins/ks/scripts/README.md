@@ -6,7 +6,7 @@ CLI scripts for Linear integration and KarmaSuite workflow management.
 
 1. Install dependencies:
    ```bash
-   cd ~/.claude/c-scripts
+   cd plugins/ks/scripts
    npm install
    ```
 

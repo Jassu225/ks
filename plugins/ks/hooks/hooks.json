@@ -6,17 +6,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/c-scripts/quality-format.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/quality-format.sh",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/c-scripts/quality-lint.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/quality-lint.sh",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/c-scripts/quality-typecheck.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/quality-typecheck.sh",
             "timeout": 120
           }
         ]
@@ -28,17 +28,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/c-scripts/quality-format.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/quality-format.sh",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/c-scripts/quality-lint.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/quality-lint.sh",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/c-scripts/quality-typecheck.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/quality-typecheck.sh",
             "timeout": 120
           }
         ]

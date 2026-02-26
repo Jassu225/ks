@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "ks",
-      "source": "./",
+      "source": "./plugins/ks",
       "description": "KarmaSuite development tools and workflows",
       "version": "1.0.0",
       "author": {

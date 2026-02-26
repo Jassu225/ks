@@ -1,0 +1,39 @@
+#!/bin/bash
+# Launch Claude Code with ks plugin
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$PLUGIN_DIR/../.." && pwd)"
+
+# Load env vars (LINEAR_API_KEY, SLACK_TOKEN, DEV, KS_PHASE_FILES_DIR, etc.)
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  set -a
+  source "$SCRIPT_DIR/.env"
+  set +a
+fi
+
+# Default: load ks plugin
+PLUGIN_DIRS=("--plugin-dir" "$PLUGIN_DIR")
+
+# Parse flags
+PASSTHROUGH_ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --plugin)
+      shift
+      RESOLVED=$("$SCRIPT_DIR/resolve-plugin-dir" "$1") || exit 1
+      PLUGIN_DIRS+=("--plugin-dir" "$RESOLVED")
+      shift
+      ;;
+    --local-plugin)
+      shift
+      PLUGIN_DIRS+=("--plugin-dir" "$REPO_ROOT/plugins/$1")
+      shift
+      ;;
+    *)
+      PASSTHROUGH_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+exec claude "${PLUGIN_DIRS[@]}" "${PASSTHROUGH_ARGS[@]}"

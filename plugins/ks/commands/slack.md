@@ -172,4 +172,4 @@ When the user asks to interact with Slack:
 - Emoji names work with or without colons (`:thumbsup:` or `thumbsup`)
 - Search and status commands require a user token (`xoxp-`), not a bot token
 - Use `--json` when you need to parse output programmatically or extract IDs/timestamps
-- Token is read from `SLACK_TOKEN` in `c-scripts/.env`
+- Token is read from `SLACK_TOKEN` in `scripts/.env`

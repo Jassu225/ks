@@ -4,12 +4,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A Claude Code plugin (`ks`) for KarmaSuite development workflows. It orchestrates a 10-phase software project lifecycle — from problem statement through implementation — using slash commands, specialized agents, and Linear integration.
+A monorepo for Claude Code plugins. Currently contains the `ks` plugin for KarmaSuite development workflows, which orchestrates a 10-phase software project lifecycle using slash commands, specialized agents, and Linear integration.
+
+## Repository Structure
+
+```
+├── .claude-plugin/marketplace.json   # Plugin marketplace listing
+├── plugins/
+│   └── ks/                           # KarmaSuite plugin
+│       ├── .claude-plugin/plugin.json
+│       ├── commands/                  # Slash commands (/ks:command-name)
+│       ├── agents/                    # Specialized subagents
+│       ├── hooks/hooks.json           # Quality hooks (format, lint, typecheck)
+│       ├── skills/                    # Coding standards reference
+│       ├── project-manager/           # 10-phase documentation
+│       ├── scripts/                   # CLI tools and scripts
+│       ├── ks-rules.md               # Plugin-level rules
+│       ├── init / init-dev           # Setup scripts
+│       └── .config                   # Project root path
+├── CLAUDE.md
+└── README.md
+```
 
 ## Setup
 
-- **Production**: Run `./init` to install dependencies, build CLI tools, and add `c-scripts/` to `PATH`.
-- **Development**: Run `./init-dev` to do everything `init` does plus add a `claude-ks` alias to `~/.zshrc`. Use `claude-ks` to launch Claude Code with the plugin loaded from the local repo.
+- **Production**: `cd plugins/ks && ./init`
+- **Development**: `cd plugins/ks && ./init-dev`
+
+This installs dependencies, builds CLI tools, and adds `plugins/ks/scripts/` to `PATH`. Use `claude-ks` to launch Claude Code with the plugin loaded.
 
 ### Optional: Code Review Plugin
 
@@ -21,38 +43,26 @@ Enable automated code review for PRs:
 
 Serena is included automatically when launching via `claude-ks-serena`. It runs only for that session — no persistent MCP registration. Additional plugins can be loaded with `--plugin <name>`, e.g. `claude-ks-serena --plugin code-review@claude-plugins-official`.
 
-## Plugin Structure
-
-- **`.claude-plugin/plugin.json`** — Plugin manifest
-- **`commands/`** — Slash commands (available as `/ks:command-name`)
-- **`agents/`** — Specialized subagents for code analysis
-- **`c-scripts/`** — TypeScript CLI tools (Linear API, project init, quality checks)
-- **`hooks/hooks.json`** — Automatic code quality hooks (format, lint, typecheck on Stop/SubagentStop)
-- **`project-manager/`** — Phase documentation files (01 through 10)
-- **`skills/`** — Reusable coding standards reference (TS, React, backend, Postgres patterns)
-- **`ks-rules.md`** — Plugin-level rules loaded into every session
-
 ## Build & CLI Commands
 
 ```bash
-# Install c-scripts dependencies
-cd c-scripts && npm install
+# Install dependencies
+cd plugins/ks/scripts && npm install
 
 # Build TypeScript CLI tools
-cd c-scripts && npm run build
+cd plugins/ks/scripts && npm run build
 
 # Run Linear CLI directly
-npx tsx c-scripts/linear-cli.ts --help
-npx tsx c-scripts/linear-cli.ts issue get KAR-123
-npx tsx c-scripts/linear-cli.ts project list
+npx tsx plugins/ks/scripts/linear-cli.ts --help
+npx tsx plugins/ks/scripts/linear-cli.ts issue get KAR-123
 
 # Initialize a project workflow from Linear
-npx tsx c-scripts/ks-start-project.ts <linear-project-url> [output-path]
+npx tsx plugins/ks/scripts/ks-start-project.ts <linear-project-url> [output-path]
 
 # Quality checks (also run automatically via hooks)
-c-scripts/quality-format.sh
-c-scripts/quality-lint.sh
-c-scripts/quality-typecheck.sh
+plugins/ks/scripts/quality-format.sh
+plugins/ks/scripts/quality-lint.sh
+plugins/ks/scripts/quality-typecheck.sh
 ```
 
 ## Key Slash Commands
@@ -128,13 +138,23 @@ Provides LSP-powered semantic tools (`find_symbol`, `find_referencing_symbols`, 
 
 ## Environment Setup
 
-The Linear CLI requires a `LINEAR_API_KEY` in `c-scripts/.env`:
+The Linear CLI requires a `LINEAR_API_KEY` in `plugins/ks/scripts/.env`:
 ```
 LINEAR_API_KEY=lin_api_your_key_here
 ```
 
 ## Adding New Components
 
-- **Commands**: Add `.md` files to `commands/` → available as `/ks:filename`
-- **Agents**: Add `.md` files to `agents/` → reference with `subagent_type: "ks:agent-name"`
-- **Hooks**: Edit `hooks/hooks.json` for event-driven automation
+- **Commands**: Add `.md` files to `plugins/ks/commands/` → available as `/ks:filename`
+- **Agents**: Add `.md` files to `plugins/ks/agents/` → reference with `subagent_type: "ks:agent-name"`
+- **Hooks**: Edit `plugins/ks/hooks/hooks.json` for event-driven automation
+
+## Adding a New Plugin
+
+```bash
+mkdir -p plugins/<name>/.claude-plugin
+# Create plugin.json with name, version, description
+mkdir plugins/<name>/commands plugins/<name>/agents
+# Add entry to .claude-plugin/marketplace.json
+# Load with: claude-ks --local-plugin <name>
+```
