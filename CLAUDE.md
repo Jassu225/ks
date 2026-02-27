@@ -75,6 +75,7 @@ plugins/ks/scripts/quality-typecheck.sh
 | `/ks:create_plan` | Implementation planning (PLAN MODE — no code changes) |
 | `/ks:implement-plan` | Execute an approved implementation plan |
 | `/ks:create_pr` | Create PRs with Linear ticket references |
+| `/ks:gh-cli` | GitHub CLI — view PRs, comments, reviews, CI checks |
 | `/ks:prd` | Generate PRD with user stories |
 | `/ks:build-prototype` | Build React prototype from PRD |
 | `/ks:write-tad` | Write Technical Architecture Document |
