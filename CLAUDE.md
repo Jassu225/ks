@@ -16,10 +16,11 @@ A monorepo for Claude Code plugins. Currently contains the `ks` plugin for Karma
 │       ├── commands/                  # Slash commands (/ks:command-name)
 │       ├── agents/                    # Specialized subagents
 │       ├── hooks/hooks.json           # Quality hooks (format, lint, typecheck)
-│       ├── skills/                    # Coding standards reference
+│       ├── skills/                    # Coding standards (empty, .gitkeep)
+│       ├── stash/skills/              # Coding standards reference (stashed)
 │       ├── project-manager/           # 10-phase documentation
 │       ├── scripts/                   # CLI tools and scripts
-│       ├── ks-rules.md               # Plugin-level rules
+│       ├── rules/ks-rules.md         # Plugin-level rules
 │       ├── init / init-dev           # Setup scripts
 │       └── .config                   # Project root path
 ├── CLAUDE.md
