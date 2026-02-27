@@ -36,4 +36,4 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-exec claude "${PLUGIN_DIRS[@]}" "${PASSTHROUGH_ARGS[@]}"
+exec claude "${PLUGIN_DIRS[@]}" --append-system-prompt-file "$PLUGIN_DIR/rules/ks-rules.md" "${PASSTHROUGH_ARGS[@]}"
