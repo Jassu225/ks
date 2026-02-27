@@ -32,6 +32,10 @@ Do not run ESLint, Prettier, or TypeScript type checking manually — hooks hand
 
 After creating a PR via `/ks:create_pr`, run `/code-review:code-review` for automated code review. The review checks for bugs, logic errors, and CLAUDE.md compliance. Only issues with 80+ confidence are posted as PR comments.
 
+## Slack
+
+Always use the `/ks:slack` command for any Slack-related operations. The `slack` CLI is available in `$PATH`. When a message should mention or address someone (e.g., "ask John…", "tell Sarah…"), resolve the person's name to a Slack user ID first using `slack user info <name> --json`. If the lookup fails, fall back to `slack user list --json` and find the closest match. Use `<@USER_ID>` in the message text for proper mentions. Always show the user the full message and target channel, and get explicit confirmation before sending.
+
 ## Semantic Code Analysis (Serena)
 
 When Serena is running, **all agents must prefer Serena tools over text-based alternatives** (Grep, Glob) for symbol navigation, reference tracing, and file structure inspection. Serena produces more accurate results with fewer tokens. Fall back to text-based tools only when Serena does not cover the specific need (e.g., searching for string literals or config values). Serena provides:
