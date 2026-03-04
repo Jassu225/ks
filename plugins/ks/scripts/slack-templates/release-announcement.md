@@ -19,6 +19,8 @@ Post to **#released** when a feature or fix is deployed.
 {CHANGELOG_BULLETS}
 
 *Demo:* {LOOM_URL}
+
+For more info, please refer to {PROJECT_THREAD}
 ```
 
 ## Variables
@@ -29,3 +31,4 @@ Post to **#released** when a feature or fix is deployed.
 | `{PROBLEM_DESCRIPTION}` | 1-2 sentence description of the problem that was solved | `When users clicked "+" to manually add an expense, the new expense got buried in the middle of the list.` |
 | `{CHANGELOG_BULLETS}` | Bullet list of key changes (use • prefix) | `• Newly created expenses now pin to the top of the grid` |
 | `{LOOM_URL}` | Loom demo video URL | `https://www.loom.com/share/05b47068b11343d190ae9f3d7e8603bb` |
+| `{PROJECT_THREAD}` | Slack project thread URL | `https://karmasuite.slack.com/archives/C05JACKMFJB/p1769783226197199` |
