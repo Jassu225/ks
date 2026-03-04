@@ -44,3 +44,7 @@ When Serena is running, **all agents must prefer Serena tools over text-based al
 - `get_symbols_overview` — Get file structure without reading full contents
 
 Agents fall back to text-based tools (Grep, Glob, Read) automatically when Serena is not available.
+
+## Code Simplifier Agent
+
+When running the `ks:code-simplifier` agent, always read its agent definition file first and include ALL of its simplification rules explicitly in the prompt. Do not rely on the agent to pick up these rules on its own — enumerate every rule from the definition so nothing gets missed.
