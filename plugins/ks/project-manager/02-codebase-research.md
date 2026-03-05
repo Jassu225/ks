@@ -3,14 +3,14 @@
 This phase researches the codebase to understand existing patterns, architecture, and relevant code areas.
 
 ## Command
-`/research_codebase {project-directory-path}`
+`/ks:research_codebase {project-directory-path}`
 
 ## Phase Name (for state.yaml)
 `codebase-research`
 
 ## Execution Steps
 
-1. Run `/research_codebase {project-directory-path}`
+1. Run `/ks:research_codebase {project-directory-path}`
 2. Read and understand the research document (`{project-directory-path}/resources/codebase-research.md`)
 
 ## Post-Completion Steps

@@ -408,8 +408,8 @@ If you encounter issues:
 
 1. **No project directory provided**: Ask for it: "I need a project directory path to proceed (e.g., 'workflow/jaswanth/budget-category-reordering')."
 2. **state.yaml not found**: Verify path with user
-3. **resources/user-stories.md not found**: Ask user to run `/prd` first (resources/prd.md is optional)
-4. **Research folder empty**: Ask user to run `/research_codebase` first
+3. **resources/user-stories.md not found**: Ask user to run `/ks:prd` first (resources/prd.md is optional)
+4. **Research folder empty**: Ask user to run `/ks:research_codebase` first
 5. **Unclear requirements**: Ask comprehensive clarifying questions
 6. **Missing information**: Request specific details from the user
 7. **Missing dependencies**: Report and ask how to proceed

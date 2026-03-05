@@ -1,9 +1,9 @@
 # Phase 9: Implementation Plan Creation
 
-This phase creates the detailed implementation plan. It runs in **plan mode** - the `/create_plan` command will research the codebase, create a detailed implementation plan, and iterate with the user until satisfied.
+This phase creates the detailed implementation plan. It runs in **plan mode** - the `/ks:create_plan` command will research the codebase, create a detailed implementation plan, and iterate with the user until satisfied.
 
 ## Command
-`/create_plan {project-directory-path}`
+`/ks:create_plan {project-directory-path}`
 
 ## Phase Name (for state.yaml)
 `implementation-plan-creation`
@@ -19,7 +19,7 @@ The actual implementation happens in Phase 10, not here.
 
 ## Execution Steps
 
-1. Run `/create_plan {project-directory-path}` (runs in plan mode)
+1. Run `/ks:create_plan {project-directory-path}` (runs in plan mode)
 2. The command will:
    - Research codebase patterns and analyze requirements
    - Write the plan to Claude Code's plan file (temporary location)
@@ -33,7 +33,7 @@ The actual implementation happens in Phase 10, not here.
 
 ## Example Command
 ```
-/create_plan workflow/jaswanth/basic-ability-to-rearrange-budget-category-rows-43d039de15eb
+/ks:create_plan workflow/jaswanth/basic-ability-to-rearrange-budget-category-rows-43d039de15eb
 ```
 
 ## Output Files

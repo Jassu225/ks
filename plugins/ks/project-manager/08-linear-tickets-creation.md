@@ -3,14 +3,14 @@
 This phase creates Linear tickets from the user stories. This phase is optional - you may skip it if you prefer to create Linear tickets manually or don't need individual tickets for each feature.
 
 ## Command
-`/prd-to-linear-tickets {project-directory-path}`
+`/ks:prd-to-linear-tickets {project-directory-path}`
 
 ## Phase Name (for state.yaml)
 `linear-tickets-creation`
 
 ## Execution Steps
 
-1. Run `/prd-to-linear-tickets {project-directory-path}`
+1. Run `/ks:prd-to-linear-tickets {project-directory-path}`
 2. The command will:
    - Read state.yaml for project ID
    - Read resources/user-stories.md for user stories (grouped by Feature)

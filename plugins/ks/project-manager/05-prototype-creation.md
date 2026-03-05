@@ -3,14 +3,14 @@
 This phase creates a prototype based on the user stories and requirements.
 
 ## Command
-`/build-prototype {project-directory-path}`
+`/ks:build-prototype {project-directory-path}`
 
 ## Phase Name (for state.yaml)
 `prototype-creation`
 
 ## Execution Steps
 
-1. Run `/build-prototype {project-directory-path}`
+1. Run `/ks:build-prototype {project-directory-path}`
 2. Verify the prototype was created
 
 ## Post-Completion Steps

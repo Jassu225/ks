@@ -3,14 +3,14 @@
 This phase adds detailed product requirements to the Linear project.
 
 ## Command
-`/add-product-requirements {project-directory-path}`
+`/ks:add-product-requirements {project-directory-path}`
 
 ## Phase Name (for state.yaml)
 `product-requirements`
 
 ## Execution Steps
 
-1. Run `/add-product-requirements {project-directory-path}`
+1. Run `/ks:add-product-requirements {project-directory-path}`
 2. Verify the product requirements were added to Linear project
 
 ## Post-Completion Steps

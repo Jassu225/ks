@@ -3,14 +3,14 @@
 This phase creates detailed user stories based on the PRD.
 
 ## Command
-`/prd {project-directory-path}`
+`/ks:prd {project-directory-path}`
 
 ## Phase Name (for state.yaml)
 `prd-user-stories`
 
 ## Execution Steps
 
-1. Run `/prd {project-directory-path}`
+1. Run `/ks:prd {project-directory-path}`
 2. Read and understand the user stories document (`{project-directory-path}/resources/user-stories.md`)
 
 ## Post-Completion Steps

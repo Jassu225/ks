@@ -3,14 +3,14 @@
 This phase creates the Technical Architecture Document (TAD) and attaches it to the Linear project.
 
 ## Command
-`/write-tad {project-directory-path}`
+`/ks:write-tad {project-directory-path}`
 
 ## Phase Name (for state.yaml)
 `tad-creation`
 
 ## Execution Steps
 
-1. Run `/write-tad {project-directory-path}`
+1. Run `/ks:write-tad {project-directory-path}`
 2. Verify the TAD was created and attached to Linear project
 
 ## Post-Completion Steps

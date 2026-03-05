@@ -3,14 +3,14 @@
 This phase creates the user context file. The state.yaml already exists in the project directory.
 
 ## Command
-`/user-context-generator {project-directory-path}`
+`/ks:user-context-generator {project-directory-path}`
 
 ## Phase Name (for state.yaml)
 `context-creation`
 
 ## Execution Steps
 
-1. Run `/user-context-generator {project-directory-path}`
+1. Run `/ks:user-context-generator {project-directory-path}`
 2. Read and understand the generated context file
 
 ## Post-Completion Steps

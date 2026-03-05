@@ -31,16 +31,16 @@ When invoked:
 
 | # | Name | state.yaml name | Command | Phase File | Ticket |
 |---|------|-----------------|---------|------------|:------:|
-| 1 | Context Creation | `context-creation` | `/user-context-generator` | `01-context-creation.md` | ✓ |
-| 2 | Codebase Research | `codebase-research` | `/research_codebase` | `02-codebase-research.md` | ✓ |
-| 3 | Initial PRD Draft | `initial-prd-draft` | `/write-problem-statement` | `03-initial-prd-draft.md` | — |
-| 4 | PRD User Stories | `prd-user-stories` | `/prd` | `04-prd-user-stories.md` | — |
-| 5 | Prototype Creation | `prototype-creation` | `/build-prototype` | `05-prototype-creation.md` | — |
-| 6 | Product Requirements | `product-requirements` | `/add-product-requirements` | `06-product-requirements.md` | — |
-| 7 | TAD Creation | `tad-creation` | `/write-tad` | `07-tad-creation.md` | — |
-| 8 | Linear Tickets Creation | `linear-tickets-creation` | `/prd-to-linear-tickets` | `08-linear-tickets-creation.md` | — |
-| 9 | Implementation Plan | `implementation-plan-creation` | `/create_plan` | `09-implementation-plan-creation.md` | ✓ |
-| 10 | Implementation | `implementation` | `/implement-plan` | `10-implementation.md` | ✓ |
+| 1 | Context Creation | `context-creation` | `/ks:user-context-generator` | `01-context-creation.md` | ✓ |
+| 2 | Codebase Research | `codebase-research` | `/ks:research_codebase` | `02-codebase-research.md` | ✓ |
+| 3 | Initial PRD Draft | `initial-prd-draft` | `/ks:write-problem-statement` | `03-initial-prd-draft.md` | — |
+| 4 | PRD User Stories | `prd-user-stories` | `/ks:prd` | `04-prd-user-stories.md` | — |
+| 5 | Prototype Creation | `prototype-creation` | `/ks:build-prototype` | `05-prototype-creation.md` | — |
+| 6 | Product Requirements | `product-requirements` | `/ks:add-product-requirements` | `06-product-requirements.md` | — |
+| 7 | TAD Creation | `tad-creation` | `/ks:write-tad` | `07-tad-creation.md` | — |
+| 8 | Linear Tickets Creation | `linear-tickets-creation` | `/ks:prd-to-linear-tickets` | `08-linear-tickets-creation.md` | — |
+| 9 | Implementation Plan | `implementation-plan-creation` | `/ks:create_plan` | `09-implementation-plan-creation.md` | ✓ |
+| 10 | Implementation | `implementation` | `/ks:implement-plan` | `10-implementation.md` | ✓ |
 
 > **Ticket workflows** skip phases 3-8 (requirements already defined in Linear ticket).
 
@@ -58,7 +58,7 @@ For each phase:
    - Perform the **Execution Steps** from the phase file
    - **Confirm:** "Phase X complete. Mark as COMPLETED?"
    - Update state.yaml: `status: "COMPLETED"`, `ended_at: {timestamp}`
-   - Run `/create_handoff {project-directory-path}`
+   - Run `/ks:create_handoff {project-directory-path}`
    - Perform the **Post-Completion Steps** from the phase file
 5. **On error:** STOP, inform user, wait for intervention
 
@@ -111,7 +111,7 @@ workflow/{username}/{project-slug}/
 ## Critical Rules
 
 - **MANDATORY: Before marking any phase as COMPLETED, re-read its phase file and verify all Execution Steps and Post-Completion Steps were performed.**
-- **MANDATORY: After marking a phase as COMPLETED, you MUST run `/create_handoff {project-directory-path}`. Never skip this step. Every completed phase must have a handoff document.**
+- **MANDATORY: After marking a phase as COMPLETED, you MUST run `/ks:create_handoff {project-directory-path}`. Never skip this step. Every completed phase must have a handoff document.**
 - **Detect workflow type first** — ticket vs project determines which phases to run
 - **Phases 3, 5, 6, 7 (project workflow):** Use the Linear CLI (`linear project update`) to post project updates after each phase
 - **Phase 9:** Planning only — do NOT create todos or start implementation

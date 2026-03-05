@@ -3,14 +3,14 @@
 This phase creates the initial problem statement and writes it to the Linear project description.
 
 ## Command
-`/write-problem-statement {project-directory-path}`
+`/ks:write-problem-statement {project-directory-path}`
 
 ## Phase Name (for state.yaml)
 `initial-prd-draft`
 
 ## Execution Steps
 
-1. Run `/write-problem-statement {project-directory-path}`
+1. Run `/ks:write-problem-statement {project-directory-path}`
 2. Verify the PRD was written to Linear project description
 
 ## Post-Completion Steps

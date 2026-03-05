@@ -48,7 +48,7 @@ When given a project directory path:
 
 ## Implementation Philosophy
 
-Plans are carefully designed through the `/create_plan` command, but reality can be messy. Your job is to:
+Plans are carefully designed through the `/ks:create_plan` command, but reality can be messy. Your job is to:
 - **Follow the plan's intent** while adapting to what you find in the codebase
 - **Implement each phase fully** before moving to the next
 - **Verify your work** makes sense in the broader codebase context

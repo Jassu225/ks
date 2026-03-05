@@ -1,16 +1,16 @@
 # Phase 10: Implementation
 
-This phase implements the approved plan from Phase 9. The `/implement-plan` command will execute each plan phase, run verification, and pause for human testing.
+This phase implements the approved plan from Phase 9. The `/ks:implement-plan` command will execute each plan phase, run verification, and pause for human testing.
 
 ## Command
-`/implement-plan {project-directory-path}`
+`/ks:implement-plan {project-directory-path}`
 
 ## Phase Name (for state.yaml)
 `implementation`
 
 ## Execution Steps
 
-1. Run `/implement-plan {project-directory-path}`
+1. Run `/ks:implement-plan {project-directory-path}`
 2. The command will:
    - Read the implementation plan at `{project-directory-path}/resources/implementation-plan.md`
    - Execute each phase in the plan sequentially
@@ -18,7 +18,7 @@ This phase implements the approved plan from Phase 9. The `/implement-plan` comm
    - Pause for human manual verification between phases
    - Update plan checkboxes as work is completed
    - Create commits after each verified phase
-3. After all plan phases are complete, create a PR using `/create_pr`
+3. After all plan phases are complete, create a PR using `/ks:create_pr`
 4. **Code review**: After the PR is created, spawn a sub-agent to run the automated code review:
    ```
    Task(subagent_type: "general-purpose", prompt: "Run /code-review:code-review to review all changes in the current PR. Report back with any issues found.")
@@ -31,7 +31,7 @@ This phase implements the approved plan from Phase 9. The `/implement-plan` comm
 
 ## Example Command
 ```
-/implement-plan workflow/jaswanth/basic-ability-to-rearrange-budget-category-rows-43d039de15eb
+/ks:implement-plan workflow/jaswanth/basic-ability-to-rearrange-budget-category-rows-43d039de15eb
 ```
 
 ## Output Files
