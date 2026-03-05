@@ -173,7 +173,33 @@ function parseSlackMessageUrl(url: string): SlackThread {
   return { channel, ts, url };
 }
 
-async function promptForProjectThread(): Promise<SlackThread | null> {
+async function extractSlackThreadFromIssue(issue: Issue): Promise<SlackThread | null> {
+  try {
+    const attachments = await issue.attachments();
+    for (const attachment of attachments.nodes) {
+      // Slack attachments have a URL pointing to a Slack message
+      if (attachment.url && /slack\.com\/archives\//.test(attachment.url)) {
+        const thread = parseSlackMessageUrl(attachment.url);
+        return thread;
+      }
+    }
+  } catch {
+    // Attachments fetch failed — fall through to manual prompt
+  }
+  return null;
+}
+
+async function getProjectThread(issue: Issue): Promise<SlackThread | null> {
+  // First, try to extract from the ticket's attachments
+  console.log(chalk.blue('Checking ticket for Slack thread attachment...'));
+  const thread = await extractSlackThreadFromIssue(issue);
+  if (thread) {
+    console.log(chalk.green(`✓ Found Slack thread from ticket attachment: ${thread.url}`));
+    return thread;
+  }
+
+  // Not found — ask the user
+  console.log(chalk.gray('  No Slack thread found in ticket attachments.'));
   const { slackUrl } = await inquirer.prompt([{
     type: 'input',
     name: 'slackUrl',
@@ -457,8 +483,8 @@ ${chalk.cyan('Example:')}
     const branchName = issue.branchName || identifier.toLowerCase();
     console.log(chalk.gray(`Branch name: ${branchName}`));
 
-    // Prompt for Slack project thread
-    const projectThread = await promptForProjectThread();
+    // Try to get Slack thread from ticket attachments, then prompt if not found
+    const projectThread = await getProjectThread(issue);
 
     // Generate workflow state
     console.log(chalk.blue('\nGenerating workflow state...'));
