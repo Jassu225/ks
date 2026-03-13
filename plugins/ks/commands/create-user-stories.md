@@ -1,12 +1,11 @@
 ---
-description: "Generate a Product Requirements Document (PRD) for a new feature. Use when planning a feature, starting a new project, or when asked to create a PRD. Triggers on: create a prd, write prd for, plan this feature, requirements for, spec out. Asks clarifying questions iteratively until user is satisfied."
-model: opus
+description: "Generate user stories from a PRD. Asks clarifying questions iteratively until user is satisfied."
 argument-hint: [project-directory-path]
 ---
 
-# PRD Generator
+# User Story Generator
 
-Create detailed Product Requirements Documents that are clear, actionable, and suitable for implementation.
+Create detailed user stories from an existing PRD that are clear, actionable, and suitable for implementation.
 
 ---
 
@@ -21,7 +20,7 @@ Create detailed Product Requirements Documents that are clear, actionable, and s
 
 Example invocation:
 ```
-/prd workflow/jaswanth/budget-category-reordering
+/ks:create-user-stories workflow/jaswanth/budget-category-reordering
 ```
 
 ---
@@ -32,11 +31,11 @@ Example invocation:
 2. Read the existing problem statement (if exists) from `{project-directory-path}/resources/prd.md`
 3. Read and understand the research document at `{project-directory-path}/resources/codebase-research.md`
 4. Ask clarifying questions (with lettered options) iteratively until the user confirms they are satisfied
-5. Generate user stories and detailed PRD sections based on answers
+5. Generate user stories based on answers
 6. Save to `{project-directory-path}/resources/user-stories.md`
 7. Ask the user to review and iterate until satisfied
 
-**Important:** Do NOT start implementing. Just create the PRD.
+**Important:** Do NOT start implementing. Just create the user stories.
 
 ---
 
@@ -75,9 +74,9 @@ This lets users respond with "1A, 2C, 3B" for quick iteration.
 
 ---
 
-## Step 2: PRD Structure
+## Step 2: User stories Structure
 
-Generate the PRD with these sections:
+Generate the user stories with these sections:
 
 ### 1. Introduction/Overview
 Brief description of the feature and the problem it solves.
@@ -249,7 +248,7 @@ Add priority levels to tasks so users can focus on what matters most. Tasks can 
 
 ## Checklist
 
-Before finalizing the PRD:
+Before finalizing the user stories document:
 
 - [ ] Asked clarifying questions iteratively until user was satisfied
 - [ ] Incorporated user's answers
@@ -257,5 +256,5 @@ Before finalizing the PRD:
 - [ ] Functional requirements are numbered and unambiguous
 - [ ] Non-goals section defines clear boundaries
 - [ ] Saved to `{project-directory-path}/resources/user-stories.md`
-- [ ] Asked user to review and confirm satisfaction with the PRD
+- [ ] Asked user to review and confirm satisfaction with the user stories
 - [ ] Made any requested changes and re-saved until user approved
