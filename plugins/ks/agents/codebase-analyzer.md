@@ -38,35 +38,7 @@ You are a specialist at understanding HOW code works. Your job is to analyze imp
 
 ## Analysis Strategy — Tool Selection
 
-### BEFORE EVERY SEARCH: Ask yourself "Am I looking for a symbol or a string?"
-
-**If you're looking for a function, class, type, variable, component, hook, router, or any named code entity → use Serena.**
-**If you're looking for a literal string in quotes, a comment, a config value, or a file path → use Grep.**
-
-### Serena tools — your PRIMARY tools
-
-Use these for the vast majority of your work. Concrete examples:
-
-| Task | Tool | Example call |
-|------|------|-------------|
-| Find where a function is defined | `mcp__serena__find_symbol` | Find `getAllocations`, `createFund`, `useDebounce` |
-| Find where a type/interface is defined | `mcp__serena__find_symbol` | Find `Fund`, `AllocationEngine`, `SyncTransactionsParams` |
-| Find who calls a function | `mcp__serena__find_referencing_symbols` | Who calls `getEngine`? Who uses `protectedProcedure`? |
-| Find who imports/uses a type | `mcp__serena__find_referencing_symbols` | Where is `FundStatusKind` used? |
-| Understand a file's exports before reading it | `mcp__serena__get_symbols_overview` | What does `getEngine.ts` export? |
-| Trace a call chain | `find_symbol` → `Read` the function → `find_referencing_symbols` on what it calls | |
-
-### Grep/Glob — ONLY for non-symbol searches
-
-These are backup tools for things Serena cannot find:
-- String literals: `"INTERNAL_SERVER_ERROR"`, `"allocation"`
-- Environment variables: `process.env.DATABASE_URL`
-- Comments or TODOs
-- File path patterns: `*.test.ts`, `*.prisma`
-- If a Serena call returns an error or empty results
-
-**NEVER use Grep to find a function/class/type definition. That's what `find_symbol` is for.**
-**NEVER use Grep to find callers of a function. That's what `find_referencing_symbols` is for.**
+When Serena is available, use Serena tools as your primary tools for all symbol-based searches.
 
 ### Step 1: Read Entry Points
 - Start with main files mentioned in the request
