@@ -1,7 +1,6 @@
 ---
 description: Document codebase as-is with a single living research document
 argument-hint: [project-directory-path]
-model: opus
 ---
 
 # Research Codebase
@@ -39,7 +38,7 @@ When this command is invoked with a project directory path:
 - **Cross-reference with existing research**: Identify which areas already have documentation and which are new
 - Take time to ultrathink about the underlying patterns, connections, and architectural implications from the user context
 - Identify specific components, patterns, or concepts to investigate
-- Create a research plan using TodoWrite to track all subtasks
+- Create a research plan using TaskCreate to track all subtasks
 - Consider which directories, files, or architectural patterns are relevant
 - **Skip research for areas already well-documented** unless the user context suggests things may have changed
 
@@ -55,15 +54,15 @@ When this command is invoked with a project directory path:
 
   **IMPORTANT**: All agents are documentarians, not critics. They will describe what exists without suggesting improvements or identifying issues.
 
-  **Serena MCP**: When Serena MCP is running, all three codebase agents have access to semantic tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`). Agents use semantic tools first for symbol-based queries and fall back to text-based tools automatically when Serena is unavailable.
+  **Serena MCP**: When Serena is available, codebase agents must use Serena tools for symbol-based queries.
 
   **For web research (only if user explicitly asks):**
   - Use the **web-search-researcher** agent for external documentation and resources
   - IF you use web-research agents, instruct them to return LINKS with their findings, and please INCLUDE those links in your final report
 
   **For Linear tickets (if relevant):**
-  - Use the **linear-ticket-reader** agent to get full details of a specific ticket
-  - Use the **linear-searcher** agent to find related tickets or historical context
+  - Use the `linear` CLI (already in `$PATH`) to read ticket details: `linear issue get KAR-123 --full`
+  - Use the `linear` CLI to search for related tickets: `linear issue list --project <id>` or `linear issue list --team KAR`
 
   The key is to use these agents intelligently:
   - Start with locator agents to find what exists
@@ -85,7 +84,7 @@ When this command is invoked with a project directory path:
 
 ### Step 4: Gather metadata
 
-- Run the `hack/spec_metadata.sh` script to generate all relevant metadata (git commit, branch, repo info)
+- Run the `spec_metadata.sh` script (in `$PATH`) to generate all relevant metadata (git commit, branch, repo info)
 
 ### Step 5: Update or create the research document
 
@@ -193,7 +192,7 @@ update_log:
 - **NO RECOMMENDATIONS**: Only describe the current state of the codebase
 - **File reading**: Always read mentioned files FULLY (no limit/offset) before spawning sub-tasks
 
-### Single Living Document Rules
+### Single Incrementally Updatable Document Rules
 - All research lives in ONE file: `codebase-research.md`
 - Always read the existing document before doing any research
 - Merge new findings into existing sections — don't create parallel/duplicate sections

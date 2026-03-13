@@ -2,42 +2,40 @@
 description: Create detailed implementation plans from PRDs for KarmaSuite features through interactive research
 argument-hint: [project-directory-path]
 allowed-tools: Read, Write, Edit, Glob, Grep, Task, AskUserQuestion, ExitPlanMode, Bash(linear:*)
-model: opus
 plan-mode: true
 ---
 
 # Implementation Plan Creator
 
-**This command runs in PLAN MODE.** Focus on research, analysis, and planning. When the plan is finalized and the user is satisfied, use `ExitPlanMode` to formally approve the plan.
+**This command runs in PLAN MODE.** You MUST call `EnterPlanMode` immediately before doing anything else. Do not read files, do not research — enter plan mode first. Focus on research, analysis, and planning. When the plan is finalized and the user is satisfied, use `ExitPlanMode` to formally approve the plan.
 
 You are tasked with creating detailed implementation plans for KarmaSuite features through an interactive, iterative process. You should be skeptical, thorough, and work collaboratively with the user to produce high-quality technical specifications.
-
-## CRITICAL: Enter Plan Mode First
-
-**MANDATORY FIRST STEP**: Before doing anything else, you MUST call the `EnterPlanMode` tool to switch into plan mode. Do not read files, do not ask questions, do not proceed with any other action until you have successfully entered plan mode.
-
-```
-1. Call EnterPlanMode tool immediately
-2. Wait for plan mode to be active
-3. Only then proceed with the steps below
-```
 
 ## Input & Output
 
 **Input:** A project directory path provided via arguments: `$ARGUMENTS`
-- State file: `{project-directory-path}/state.yaml` (for project ID and URL)
+- State file: `{project-directory-path}/state.yaml` (for project ID/URL and **workflow type**)
+- Research file: `{project-directory-path}/resources/codebase-research.md`
+
+**Additional inputs depend on workflow type** (detected from `state.yaml` root key):
+
+**Project workflow** (`project` key in state.yaml — all 10 phases):
 - Problem statement (optional): `{project-directory-path}/resources/prd.md`
 - User stories: `{project-directory-path}/resources/user-stories.md`
 - Prototype summary: `{project-directory-path}/resources/prototype.md`
 - TAD document: `{project-directory-path}/resources/tad.md`
-- Research file: `{project-directory-path}/resources/codebase-research.md`
 - Linear tickets (if created): `{project-directory-path}/resources/linear-tickets.md`
 
-**Output:** Implementation plan at `{project-directory-path}/resources/implementation-plan.md`
+**Ticket workflow** (`ticket` key in state.yaml — phases 1, 2, 9, 10 only):
+- Linear ticket details: fetched via `linear issue get {ticket.identifier}` (the ticket identifier comes from `state.yaml`)
+- User context: `{project-directory-path}/resources/user-context.md`
+- Note: `user-stories.md`, `prototype.md`, `tad.md`, `prd.md`, and `linear-tickets.md` do NOT exist in ticket workflows — phases 3-8 are skipped
+
+**Output:** Implementation plan at `{project-directory-path}/resources/implementation-plan-{NN}.md` (zero-padded iteration number, e.g., `implementation-plan-01.md`)
 
 Example invocation:
 ```
-/create_plan workflow/jaswanth/budget-category-reordering
+/ks:create_plan workflow/jaswanth/budget-category-reordering
 ```
 
 ## Initial Response
@@ -48,20 +46,43 @@ When this command is invoked:
    - If provided as a parameter, immediately read `state.yaml` and begin the research process
    - If NOT provided, ask: "I need a project directory path to proceed. Please provide the path (e.g., 'workflow/jaswanth/budget-category-reordering')."
 
-2. **Read all input files FULLY**:
+2. **Read state.yaml and detect workflow type**:
    - Read `{project-directory-path}/state.yaml`
+   - **Detect workflow type**: Check if the root key is `project` or `ticket`
+     - `ticket` key → **Ticket Workflow** (phases 3-8 were skipped)
+     - `project` key → **Project Workflow** (all phases available)
+   - **Determine iteration number**: Count the entries in Phase 9's `iterations` array in state.yaml. If no array exists, this is iteration 1. The output file will be `implementation-plan-{NN}.md` (zero-padded).
+
+3. **Check for previous plan iterations**:
+   - Look for existing plan files: `{project-directory-path}/resources/implementation-plan-*.md`
+   - **If previous plans exist** (iteration 2+):
+     - Read the latest previous plan fully — it provides essential context on what was already planned and implemented
+     - Note which sections were completed (checked boxes) vs incomplete
+     - The new plan should reference what was already done and focus on what's new or changed
+
+4. **Read input files based on workflow type**:
+
+   **For project workflows — read all project files:**
    - Read `{project-directory-path}/resources/prd.md` (if exists)
    - Read `{project-directory-path}/resources/user-stories.md`
    - Read `{project-directory-path}/resources/prototype.md`
    - Read `{project-directory-path}/resources/tad.md`
    - Read `{project-directory-path}/resources/linear-tickets.md` (if exists)
-   - Read the research document at `{project-directory-path}/resources/codebase-research.md`
+   - Read `{project-directory-path}/resources/codebase-research.md`
+
+   **For ticket workflows — fetch ticket details from Linear:**
+   - Run `linear issue get {ticket.identifier}` to fetch full ticket details (description, comments, labels, assignee, priority)
+   - Read `{project-directory-path}/resources/user-context.md` (if exists)
+   - Read `{project-directory-path}/resources/codebase-research.md`
+   - Do NOT attempt to read `user-stories.md`, `prototype.md`, `tad.md`, `prd.md`, or `linear-tickets.md` — these files do not exist in ticket workflows
 
 ## Process Steps
 
 ### Step 1: Context Gathering & Initial Analysis
 
-1. **Read all project files immediately and FULLY**:
+1. **Read all context files immediately and FULLY** (based on workflow type detected in step 2):
+
+   **For project workflows:**
    - State file to get project info (ID, name, URL)
    - PRD for problem context (if exists)
    - User stories for detailed requirements
@@ -69,6 +90,20 @@ When this command is invoked:
    - TAD for technical architecture decisions
    - Linear tickets for work breakdown and priorities (if exists)
    - Research documents for codebase patterns and insights
+
+   **For ticket workflows:**
+   - State file to get ticket info (identifier, name, URL)
+   - Linear ticket details via `linear issue get {ticket.identifier}` (description, comments, labels, priority)
+   - User context: `{project-directory-path}/resources/user-context.md` (if exists)
+   - Research documents for codebase patterns and insights
+   - Do NOT attempt to read `user-stories.md`, `prototype.md`, `tad.md`, `prd.md`, or `linear-tickets.md`
+
+   **For iteration 2+ (both workflow types):**
+   - Previous plan file(s): `{project-directory-path}/resources/implementation-plan-*.md`
+   - Read the latest previous plan fully to understand what was already planned and implemented
+   - Note completed items (checked boxes) — these represent work already done
+   - The new plan should build on this context, not repeat completed work
+
    - **IMPORTANT**: Use the Read tool WITHOUT limit/offset parameters to read entire files
    - **CRITICAL**: DO NOT spawn sub-tasks before reading these files yourself in the main context
 
@@ -79,7 +114,7 @@ When this command is invoked:
    - Use **codebase-analyzer** agent to understand how current implementations work
    - Use **codebase-pattern-finder** agent to find similar features to model after
 
-   **Serena MCP**: When Serena MCP is running, all three codebase agents have access to semantic tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`). Agents use semantic tools first for symbol-based queries and fall back to text-based tools automatically when Serena is unavailable.
+   **Serena MCP**: When Serena is available, codebase agents must use Serena tools for symbol-based queries.
 
    These agents will:
    - Find relevant source files, configs, and tests
@@ -93,15 +128,15 @@ When this command is invoked:
    - This ensures you have complete understanding before proceeding
 
 4. **Analyze and verify understanding**:
-   - Cross-reference the user stories with actual code
-   - Compare TAD decisions with codebase reality
+   - **Project workflows**: Cross-reference user stories and TAD decisions with actual code
+   - **Ticket workflows**: Cross-reference the Linear ticket description and acceptance criteria with actual code
    - Identify any discrepancies or misunderstandings
    - Note assumptions that need verification
    - Determine true scope based on codebase reality
 
 5. **Present informed understanding and focused questions**:
    ```
-   Based on the PRD, TAD, and my research of the codebase, I understand we need to [accurate summary].
+   Based on the [PRD, TAD / Linear ticket details] and my research of the codebase, I understand we need to [accurate summary].
 
    I've found that:
    - [Current implementation detail with file:line reference]
@@ -188,7 +223,7 @@ Once aligned on approach:
 
 After structure approval:
 
-1. **Write the plan** to `{project-directory-path}/resources/implementation-plan.md`
+1. **Write the plan** to Claude Code's plan file (plan mode writes to its own location by default)
 
 2. **Use this template structure**:
 
@@ -201,11 +236,27 @@ After structure approval:
 
 ## References
 
+**For project workflows:**
 - **Project**: {project name from state.yaml}
 - **Linear URL**: {project URL from state.yaml}
 - **User Stories**: `{project-directory-path}/resources/user-stories.md`
 - **TAD**: `{project-directory-path}/resources/tad.md`
 - **Research**: `{project-directory-path}/resources/codebase-research.md`
+
+**For ticket workflows:**
+- **Ticket**: {ticket.identifier} — {ticket name from state.yaml}
+- **Linear URL**: {ticket URL from state.yaml}
+- **User Context**: `{project-directory-path}/resources/user-context.md`
+- **Research**: `{project-directory-path}/resources/codebase-research.md`
+
+## Prototype Code Assessment
+
+**For project workflows only** (skip for ticket workflows):
+
+The prototype from Phase 5 is committed in the working tree. For each area the prototype touched, state one of:
+- **Keep as-is** — production-ready, no changes needed
+- **Refactor** — right approach, needs cleanup (specify what)
+- **Rewrite** — prototype took shortcuts, implement differently (specify why)
 
 ## Current State Analysis
 
@@ -276,11 +327,9 @@ cd packages/prisma && pnpm migrate:dev
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Database migration applies cleanly: `cd packages/prisma && pnpm migrate:dev`
-- [ ] Lint passes: `cd /Users/jassu/karmasuite/karmasuite && pnpm lint 2>&1 | head -100`
-- [ ] Type checking passes: `cd /Users/jassu/karmasuite/karmasuite/apps/www && pnpm tsc --noEmit 2>&1 | head -100`
-- [ ] Tests pass: `pnpm test` (if applicable)
-- [ ] Build succeeds: `pnpm --filter www run build`
+- [ ] Database migration applies cleanly (if applicable)
+- [ ] Tests pass (if applicable)
+- [ ] Build succeeds
 
 #### Manual Verification:
 - [ ] Feature works as expected in UI at http://localhost:3000
@@ -341,12 +390,7 @@ cd packages/prisma && pnpm migrate:dev
 
 ## Code Quality Requirements
 
-Before pushing code:
-```bash
-# Get modified files and format them
-git diff --name-only main...HEAD | grep -E '\.(ts|tsx)$' | xargs pnpm exec prettier --write
-git diff --name-only main...HEAD | grep -E '\.(ts|tsx)$' | xargs pnpm exec eslint --fix
-```
+Formatting, linting, and type checking are handled automatically by hooks on every agent stop — no manual commands needed. Tests must still be run explicitly during phase verification.
 
 ## Commit Message Format
 
@@ -365,45 +409,29 @@ refactor(prisma): (KAR-1236) alphabetize Organization model attributes
 [Any remaining questions - ideally this section should be empty before implementation]
 ````
 
-### Step 5: Iterate with User Until Satisfied
+### Step 5: Finalize the Plan
 
-Once the implementation plan is written to `{project-directory-path}/resources/implementation-plan.md`:
-
-1. **Ask the user to review the plan**:
-   ```
-   I've created the implementation plan at:
-   `{project-directory-path}/resources/implementation-plan.md`
-
-   Please review it and let me know:
-   - Are the phases properly scoped?
-   - Are the success criteria specific enough?
-   - Any technical details that need adjustment?
-   - Missing edge cases or considerations?
-   ```
-
-2. **Iterate based on feedback**:
-   - Make requested modifications to `resources/implementation-plan.md`
-   - Present the updated plan for review
-   - Continue iterating until the user is satisfied
-
-3. **When user approves the plan**:
-   - Use `ExitPlanMode` to formally finalize the plan
-   - Include any `allowedPrompts` for actions needed during implementation
-   - **IMPORTANT**: After ExitPlanMode is approved, copy the plan from Claude Code's plan file to the project directory:
-     - Source: The plan file path shown in system messages (e.g., `~/.claude/plans/xxx.md`)
-     - Destination: `{project-directory-path}/resources/implementation-plan.md`
-     - Use the Read tool to read the plan file, then Write tool to save it to the project directory
-   - The plan is now ready for the implementation phase (Phase 10)
+When the plan is complete:
+1. Use `ExitPlanMode` to formally finalize the plan
+2. Include any `allowedPrompts` for actions needed during implementation
+3. **IMPORTANT**: After ExitPlanMode is approved, copy the plan from Claude Code's plan file to the project directory:
+   - Source: The plan file path shown in system messages (e.g., `~/.claude/plans/xxx.md`)
+   - Destination: `{project-directory-path}/resources/implementation-plan-{NN}.md` (zero-padded iteration number)
+   - Use the Read tool to read the plan file, then Write tool to save it to the project directory
+4. The plan is now ready for the implementation phase (Phase 10)
 
 ## Important Guidelines
 
-1. **Plan Mode Rules**:
-   - This command runs in plan mode - focus on research and planning
-   - Iterate with the user until they are satisfied with the plan
-   - Use `ExitPlanMode` only after the user approves the plan
-   - **CRITICAL**: Do NOT create to-do tasks (TaskCreate) or start implementing code in this phase
-   - **CRITICAL**: Do NOT update Linear ticket statuses to "In Progress" - that happens in Phase 10
-   - This phase is ONLY for creating the plan document, not for execution
+1. **Plan Mode Rules — ABSOLUTE BOUNDARY, NO EXCEPTIONS**:
+   - This command runs in plan mode — research and planning ONLY
+   - Use `ExitPlanMode` when the plan is complete
+   - **YOU MUST NOT EDIT, CREATE, OR MODIFY ANY SOURCE CODE FILES.** Not even "small" changes, not "preparatory" work, not "just this one file." ZERO implementation happens in this phase.
+   - **FORBIDDEN**: Editing source code, config files, schema files, test files, or any file that is not the implementation plan itself
+   - **FORBIDDEN**: Running database migrations, installing dependencies, or making any changes to the codebase
+   - **FORBIDDEN**: Creating to-do tasks (TaskCreate) or starting implementation of any kind
+   - **FORBIDDEN**: Updating Linear ticket statuses to "In Progress" — that happens in Phase 10
+   - **PERMITTED**: Reading files, running research agents, writing the implementation plan document, discussing with the user
+   - If you find yourself about to edit a non-plan file, STOP IMMEDIATELY. You are violating the Phase 9 boundary. All implementation happens in Phase 10.
 
 2. **Be Skeptical**:
    - Question vague requirements
@@ -417,72 +445,26 @@ Once the implementation plan is written to `{project-directory-path}/resources/i
    - Allow course corrections
    - Work collaboratively
 
-5. **Be Thorough**:
+4. **Be Thorough**:
    - Read all context files COMPLETELY before planning
    - Research actual code patterns using parallel sub-tasks
    - Include specific file paths and line numbers
    - Write measurable success criteria with clear automated vs manual distinction
 
-6. **Be Practical**:
+5. **Be Practical**:
    - Focus on incremental, testable changes
    - Consider migration and rollback
    - Think about edge cases
    - Include "what we're NOT doing"
 
-7. **No Open Questions in Final Plan**:
+6. **No Open Questions in Final Plan**:
    - If you encounter open questions during planning, STOP
    - Research or ask for clarification immediately
    - Do NOT write the plan with unresolved questions
    - The implementation plan must be complete and actionable
    - Every decision must be made before finalizing the plan
 
-8. **Follow KarmaSuite Conventions**:
-   - Prisma: Alphabetically ordered attributes, @map("snake_case")
-   - TypeScript: Use dictionaries over arrays for lookups
-   - React: Use FC<PropsWithChildren<...>> for components
-   - Testing: Vitest with proper database setup
-   - Prefer `packages/react-components` over legacy `components`
-   - Never import from client into server or vice versa
-
-## KarmaSuite-Specific Patterns
-
-### For Database Changes:
-1. Update Prisma schema (alphabetically ordered, @map annotations)
-2. Run migration: `cd packages/prisma && pnpm migrate:dev`
-3. Update related TypeScript types
-4. Add/update tRPC procedures
-5. Test with: `cd packages/prisma && pnpm migrate:reset:test`
-
-### For Engine/Business Logic:
-1. Locate in `packages/engines/src/`
-2. Follow existing patterns (e.g., getEngine.ts for allocations)
-3. Use MathUtils.sum() for calculations
-4. Write unit tests with Vitest
-5. Consider atomic transactions for DB operations
-
-### For UI Components:
-1. Prefer `packages/react-components` (Tailwind + Radix)
-2. Use shared hooks from `packages/react-hooks`
-3. Use icons from `packages/react-icons`
-4. Follow TailwindCSS config from `packages/tailwind-config`
-5. Handle tRPC errors with onError callbacks
-
-### For GL Integrations:
-1. Check `packages/general-ledger-external`
-2. Follow patterns for QB/NetSuite/Sage
-3. Consider sync implications
-4. Test with actual GL data structures
-
-### For API Endpoints:
-1. tRPC procedures in `apps/www/src/server/api/routers/`
-2. Proper error handling
-3. Input validation with Zod
-4. Consider permissions/auth
-
-### For Background Jobs:
-1. Inngest functions in `apps/www/src/inngest/`
-2. Consider retry logic
-3. Monitor execution
+7. **Follow KarmaSuite Conventions** (see the "KarmaSuite Conventions" section in `plugins/ks/rules/ks-rules.md` for the full list of conventions and domain-specific patterns)
 
 ## Success Criteria Guidelines
 
@@ -501,10 +483,16 @@ Once the implementation plan is written to `{project-directory-path}/resources/i
 
 ## Error Handling
 
-If any of the following occur, flag to the user for review:
-- state.yaml not found or missing required fields (id, url)
+**Always flag to the user:**
+- state.yaml not found or missing required fields
+- resources/codebase-research.md not found or empty
+- Unable to identify implementation approach from available information
+
+**Project workflow only** — also flag if:
 - resources/user-stories.md not found
 - resources/tad.md not found
 - resources/prototype.md not found
-- Research folder empty
-- Unable to identify implementation approach from available information
+
+**Ticket workflow only** — also flag if:
+- `linear issue get {ticket.identifier}` fails or returns no data
+- ticket.identifier missing from state.yaml

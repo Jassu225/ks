@@ -1,28 +1,28 @@
 ---
-description: Add prioritized product requirements to Linear project from prototype
+description: Complete the PRD by adding prioritized product requirements from prototype findings
 argument-hint: [project-directory-path]
 allowed-tools: Read, Write, Edit, WebFetch, Bash(linear:*)
-model: opus
 ---
 
-# Add Product Requirements to Linear Project
+# Complete PRD with Product Requirements
 
-This command reads the prototype summary and research documents, generates a prioritized Product Requirements document, iterates with the user until satisfied, then appends it to the Linear project description.
+This command reads the prototype summary and research documents, generates prioritized product requirements, iterates with the user until satisfied, then appends the requirements to the existing PRD (`prd.md`) and updates the Linear project description.
 
 ## Input & Output
 
 **Input:** A project directory path provided via arguments: `$ARGUMENTS`
 - State file: `{project-directory-path}/state.yaml` (for project ID and URL)
+- Existing PRD: `{project-directory-path}/resources/prd.md` (from Phase 3)
 - Prototype summary: `{project-directory-path}/resources/prototype.md`
 - Research file: `{project-directory-path}/resources/codebase-research.md`
 
 **Output:**
-- Product requirements document at `{project-directory-path}/resources/product_requirements.md`
-- Updated Linear project description (appended, not replaced)
+- Updated PRD at `{project-directory-path}/resources/prd.md` (product requirements appended)
+- Updated Linear project description (full replacement with complete prd.md content)
 
 Example invocation:
 ```
-/add-product-requirements workflow/jaswanth/budget-category-reordering
+/ks:add-product-requirements workflow/jaswanth/budget-category-reordering
 ```
 
 ## Process
@@ -35,14 +35,16 @@ Example invocation:
    - Read the prototype summary from `{project-directory-path}/resources/prototype.md`
    - Fetch the current Linear project description using the URL from state.yaml
 
-3. **Extract and Map Priorities**
+3. **Read existing PRD**
+   - Read `{project-directory-path}/resources/prd.md` (created in Phase 3)
+
+4. **Extract and Map Priorities**
    - **High priority** → P0
    - **Medium priority** → P0
    - **Low priority** → P1
    - **Non-goals section** (if present) → P2
 
-4. **Generate Product Requirements Document**
-   - Create `{project-directory-path}/resources/product_requirements.md`
+5. **Generate Product Requirements Section**
    - Automatically group requirements by **module/area**
    - Use **bold formatting** for module names
    - Create nested bullet structure: Module → Page/Feature → Specific UI components
@@ -51,27 +53,25 @@ Example invocation:
    - Include "(if needed)" for P1 and P2 sections only when appropriate
    - Use "None identified" if no items exist for a priority level
 
-5. **Iterate with User**
-   - Present the draft to the user
+6. **Iterate with User**
+   - Present the draft product requirements section to the user
    - Ask for feedback and make requested changes
-   - Update `resources/product_requirements.md` with each iteration
-   - Continue until user explicitly approves the document
+   - Continue until user explicitly approves
 
-6. **Update Linear Project**
-   - When user explicitly approves, fetch the current project description:
-     - Run `linear project get <project-id> --json` (project ID from state.yaml)
-     - Extract the current `content` field (contains the problem statement from Phase 3)
-   - Combine the existing description with the new Product Requirements section:
-     - Keep all existing content intact
-     - Add a blank line after existing content
-     - Append the full content of `resources/product_requirements.md`
-   - Update the Linear project:
-     - Run `linear project edit <project-id> --content "<combined content>"`
+7. **Append to PRD**
+   - When user approves, append the product requirements section to `{project-directory-path}/resources/prd.md`
+   - Keep all existing PRD content intact
+   - Add a blank line after existing content, then append the product requirements
+
+8. **Update Linear Project**
+   - The updated `resources/prd.md` now contains both the problem statement (Phase 3) and the product requirements, so it fully replaces the Linear project description.
+   - Run `linear project edit <project-id> --content "<full content of resources/prd.md>"`
 
 ## Error Handling
 
 If any of the following occur, flag to the user for review:
 - state.yaml not found or missing required fields (id, url)
+- resources/prd.md not found (Phase 3 must complete first)
 - resources/prototype.md not found
 - Prototype doesn't have clear feature details
 - Linear project already has a "Product requirements" section
@@ -137,6 +137,6 @@ If any of the following occur, flag to the user for review:
 - **User-facing only**: Focus on **what** the user sees and does, not **how** it's implemented
 - **No technical details**: Never mention APIs, database fields, code changes, components, or implementation specifics
 - **Hierarchical structure**: Module → Page → Component (user-facing names only)
-- **Preserve existing content**: When updating Linear, APPEND to existing description, never replace
+- **Linear is a full sync**: The local `prd.md` is the source of truth; the Linear project description is always a full replacement with the complete `prd.md` content
 - **Iterate until satisfied**: Do not push to Linear until user explicitly approves
 - **Exact formatting**: Preserve the indentation and bullet structure as shown in the example

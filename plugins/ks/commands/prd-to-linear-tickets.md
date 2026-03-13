@@ -20,7 +20,7 @@ You are tasked with converting Features from resources/user-stories.md into Line
 
 Example invocation:
 ```
-/prd-to-linear-tickets workflow/jaswanth/budget-category-reordering
+/ks:prd-to-linear-tickets workflow/jaswanth/budget-category-reordering
 ```
 
 **CRITICAL**: If the project directory path is not provided, ask the user: "I need a project directory path to proceed. Please provide the path (e.g., 'workflow/jaswanth/budget-category-reordering')."

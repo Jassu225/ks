@@ -1,30 +1,38 @@
 ---
 description: Implement approved implementation plans phase by phase with verification
 argument-hint: [project-directory-path]
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Task, AskUserQuestion
-model: opus
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, Task, TaskCreate, TaskList, TaskGet, TaskUpdate, TeamCreate, TeamDelete, SendMessage, AskUserQuestion
 ---
 
 # Implement Plan
 
-You are tasked with implementing an approved technical plan from a project directory. These plans contain phases with specific changes and success criteria.
+You are the **orchestrator**. You delegate deep analysis and heavy reading to subagents, then coordinate execution using implementation subagents. You MUST verify files touched by multiple subagents or cross-cutting concerns (shared interfaces, type changes that ripple across modules) after subagents report completion. You MAY spot-check individual task outputs that don't overlap with other tasks.
 
 ## Input & Output
 
 **Input:** A project directory path provided via arguments: `$ARGUMENTS`
-- State file: `{project-directory-path}/state.yaml` (for project info)
-- Implementation plan: `{project-directory-path}/resources/implementation-plan.md`
+- State file: `{project-directory-path}/state.yaml` (for project info, **workflow type**, and **iteration number**)
+- Implementation plan: `{project-directory-path}/resources/implementation-plan-{NN}.md` (latest numbered plan — iteration number = length of Phase 9's `iterations` array in state.yaml, default 1)
 - Research file: `{project-directory-path}/resources/codebase-research.md`
+
+**Additional inputs depend on workflow type** (detected from `state.yaml` root key):
+
+**Project workflow** (`project` key in state.yaml — all 10 phases):
 - User stories: `{project-directory-path}/resources/user-stories.md`
 - TAD: `{project-directory-path}/resources/tad.md`
 
+**Ticket workflow** (`ticket` key in state.yaml — phases 1, 2, 9, 10 only):
+- Linear ticket details: fetched via `linear issue get {ticket.identifier}` (the ticket identifier comes from `state.yaml`)
+- User context: `{project-directory-path}/resources/user-context.md`
+- Note: `user-stories.md`, `tad.md`, `prd.md`, `prototype.md`, and `linear-tickets.md` do NOT exist in ticket workflows — phases 3-8 are skipped
+
 **Output:**
 - Implemented code changes in the KarmaSuite codebase
-- Updated plan with completed checkboxes
+- Updated plan (`implementation-plan-{NN}.md`) with completed checkboxes
 
 Example invocation:
 ```
-/implement-plan workflow/jaswanth/budget-category-reordering
+/ks:implement-plan workflow/jaswanth/budget-category-reordering
 ```
 
 **CRITICAL**: If the project directory path is not provided, ask the user: "I need a project directory path to proceed. Please provide the path (e.g., 'workflow/jaswanth/budget-category-reordering')."
@@ -33,129 +41,198 @@ Example invocation:
 
 When given a project directory path:
 
-1. **Read state.yaml** to get project info (name, Linear URL)
-2. **Read the implementation plan completely** at `{project-directory-path}/resources/implementation-plan.md`
-3. **Read the research document FIRST** from `{project-directory-path}/resources/codebase-research.md`
-   - These contain critical details: enum type names, column mappings, helper functions, existing patterns
-   - Reading these BEFORE exploring the codebase prevents unnecessary trial-and-error debugging
-5. **Read supporting documents**:
-   - TAD from `{project-directory-path}/resources/tad.md`
-   - User stories from `{project-directory-path}/resources/user-stories.md`
-6. **Read files mentioned in the plan** - use Read tool WITHOUT limit/offset parameters for complete context
-7. **Think deeply** about how the pieces fit together
-8. **Only then explore codebase** - Use Grep/Glob only if research documents don't have what you need
-9. **Start implementing** if you understand what needs to be done
+1. **Read state.yaml** to get project info (name, Linear URL, ticket ID for commits), **detect workflow type** (check if root key is `project` or `ticket`), and **determine iteration number** (length of Phase 9's `iterations` array, default 1). The plan file is `{project-directory-path}/resources/implementation-plan-{NN}.md` (zero-padded iteration number).
+2. **Spawn the analysis subagent** — delegate ALL plan reading and analysis:
+
+```
+Agent(
+  subagent_type: "general-purpose",
+  name: "plan-analyzer",
+  description: "Ultrathink analysis of implementation plan",
+  prompt: "You are analyzing an approved implementation plan. Your job is to deeply understand it and produce a structured task list.
+
+PROJECT DIRECTORY: {project-directory-path}
+
+## Step 1: Read Everything
+
+Read ALL of these documents completely (no limit/offset):
+1. {project-directory-path}/resources/implementation-plan-{NN}.md (the current iteration's plan — NN = length of Phase 9's iterations array in state.yaml, default 01)
+2. {project-directory-path}/resources/codebase-research.md (READ THIS BEFORE exploring codebase — it has enum names, column mappings, helper functions, existing patterns)
+
+**Additional reads depend on workflow type** (detected from state.yaml root key):
+
+**Project workflow** (state.yaml has `project` key):
+3. {project-directory-path}/resources/tad.md
+4. {project-directory-path}/resources/user-stories.md
+
+**Ticket workflow** (state.yaml has `ticket` key):
+3. Fetch Linear ticket details via: linear issue get {ticket.identifier} (identifier from state.yaml)
+4. {project-directory-path}/resources/user-context.md (if exists)
+- Do NOT read tad.md, user-stories.md, prd.md, prototype.md, or linear-tickets.md — they do not exist in ticket workflows
+
+Then for both workflow types:
+5. Every file mentioned in the implementation plan
+
+Only use Grep/Glob to explore the codebase if the documents above don't have what you need.
+
+## Step 2: Ultrathink
+
+Engage MAXIMUM reasoning effort to deeply analyze the entire plan:
+- How do all the phases connect end-to-end?
+- What are the dependencies between tasks within each phase?
+- Which tasks within a phase touch DIFFERENT files and can safely run in parallel?
+- Which tasks modify the SAME files or depend on each other's output and must run sequentially?
+- Are there any gaps, ambiguities, or potential conflicts in the plan?
+
+## Step 3: Identify Clarifying Questions
+
+List ANY ambiguities, missing context, or decisions that need user input. If there are none, say so explicitly.
+
+## Step 4: Produce the Task List
+
+Return a structured task list in this EXACT format:
+
+### CLARIFYING QUESTIONS (if any)
+- [Question 1]
+- [Question 2]
+- (or 'None')
+
+### TASK LIST
+
+For each task:
+TASK: Phase {N}: {imperative subject}
+FILES: {comma-separated list of files to read and modify}
+CHANGES: {detailed description of exact changes to make}
+CONVENTIONS: {relevant KarmaSuite conventions for this task}
+PARALLEL_GROUP: {phase number}.{group letter} (tasks with the same group can run in parallel; tasks sharing files get different groups within the same phase)
+BLOCKED_BY: {list of task subjects this depends on, or 'None'}
+
+KarmaSuite Conventions: See the 'KarmaSuite Conventions' section in plugins/ks/rules/ks-rules.md for the full list.
+
+IMPORTANT: Be thorough. Every checkbox item in the plan must become a task. Group tasks within a phase by which files they touch — same files = different parallel group (sequential), different files = same parallel group (parallel)."
+)
+```
+
+3. **Review the analysis results:**
+   - If the subagent returned clarifying questions, present them to the user using `AskUserQuestion` and wait for answers
+   - Once all questions are resolved, proceed to task creation
+4. **Create the task list and begin execution** (see Task List & Subagent Workflow below)
 
 ## Implementation Philosophy
 
-Plans are carefully designed through the `/ks:create_plan` command, but reality can be messy. Your job is to:
-- **Follow the plan's intent** while adapting to what you find in the codebase
-- **Implement each phase fully** before moving to the next
-- **Verify your work** makes sense in the broader codebase context
+Plans are carefully designed through the `/ks:create_plan` command, but reality can be messy. As the orchestrator, your job is to:
+- **Coordinate subagents** to implement each phase fully before moving to the next
+- **Review subagent results** for issues or deviations before proceeding
 - **Update checkboxes** in the plan as you complete sections using the Edit tool
+- **Handle verification and commits** — only you commit, only after user approval
 
-When things don't match the plan exactly, think about why and communicate clearly. The plan is your guide, but your judgment matters too.
-
-### When You Encounter a Mismatch
-
-If you encounter a situation where the plan can't be followed:
-- **STOP** and think deeply about why
-- Present the issue clearly:
-  ```
-  Issue in Phase [N]:
-  Expected: [what the plan says]
-  Found: [actual situation]
-  Why this matters: [explanation]
-
-  How should I proceed?
-  ```
-
-## Phase Implementation Process
-
-**CRITICAL WORKFLOW**: For each task/todo item, follow this exact cycle:
-1. **Implement** the task
-2. **Ask user to verify** the implementation
-3. **Commit** after user confirms verification
-4. **Continue** to next task
-
-### For Each Phase in the Plan:
-
-#### 1. Pre-Implementation
-
-**CRITICAL: Research Documents First**
-- **Read the research document FIRST** from `{project-directory-path}/resources/codebase-research.md`
-- Research documents contain valuable context: enum type names, column mappings, existing patterns, helper functions
-- This prevents trial-and-error debugging (e.g., wrong enum cast names, wrong column names)
-- Only explore the codebase directly (Grep, Glob) if the research documents don't have what you need
-
-**Then:**
-- Read the phase overview and understand what it accomplishes
-- Read ALL files that will be modified (full content, no truncation)
-- Create task list using `TaskCreate` for each item in this phase
-
-#### 2. Implementation (Per Task)
-
-For **each individual task** in the phase:
-
-**Step A - Implement:**
-- Update the task status to `in_progress` using `TaskUpdate`
-- Make the code changes specified for this task
-- Follow KarmaSuite conventions:
-  - Prisma: Alphabetically ordered attributes, `@map("snake_case")`
-  - TypeScript: Use dictionaries over arrays for lookups
-  - React: Use `FC<PropsWithChildren<...>>` for components
-  - Prefer `packages/react-components` over legacy `components`
-  - Use `MathUtils.sum()` for calculations
-  - Never import from client into server or vice versa
-
-**Step B - Ask User to Verify:**
-After implementing a task, present to the user:
+When a subagent reports a mismatch with the plan, present it clearly to the user:
 ```
-Task Complete: [Task description]
+Issue in Phase [N] (reported by subagent):
+Expected: [what the plan says]
+Found: [actual situation]
+Why this matters: [explanation]
 
-Changes made:
-- [List of files modified]
-- [Summary of changes]
-
-Please verify the implementation. Once verified, I'll commit these changes.
+How should I proceed?
 ```
 
-**Step C - Commit:**
-After user confirms verification:
-- Run `prettier --write` and `eslint --fix` on modified files
-- Create a commit with the appropriate message format
-- Update the task status to `completed` using `TaskUpdate`
+## Task List & Subagent Workflow
 
-**Step D - Continue:**
-- Move to the next task in the phase
-- Repeat Steps A-D
+After the Ultrathink analysis, create a comprehensive task list and execute it using subagents.
 
-#### 3. Phase Completion
+### Step 1: Create the Full Task List from Analysis
 
-After all tasks in a phase are committed:
-- Run the automated success criteria checks (typecheck, lint, build)
-- Present summary to user:
+Using the analysis subagent's structured output, create tasks with `TaskCreate`:
+
+- For each TASK entry from the analysis, create a task with:
+  - `subject`: The task subject (already in imperative form from the analysis, e.g. "Phase 1: Add DueDate column to Prisma schema")
+  - `description`: Combine FILES, CHANGES, and CONVENTIONS from the analysis into a detailed description. Also include a reference to `{project-directory-path}/resources/codebase-research.md`
+  - `activeForm`: Present continuous form of the subject (e.g. "Adding DueDate column to Prisma schema")
+- Set up **dependencies** using `TaskUpdate` with `addBlockedBy`, derived from the PARALLEL_GROUP and BLOCKED_BY fields:
+  - Tasks in Phase N+1 are blocked by all tasks in Phase N
+  - Tasks within the same phase that have different PARALLEL_GROUP letters are blocked by each other (they touch the same files)
+  - Tasks within the same phase with the same PARALLEL_GROUP letter have NO blockedBy (they can run in parallel)
+
+### Step 2: Execute Phases Sequentially with Parallel Subagents
+
+**CRITICAL**: Phases execute sequentially. Within each phase, non-colliding tasks run in parallel.
+
+For each phase:
+
+#### 2a. Identify Parallel Groups
+
+From the task list, identify which tasks in the current phase can run in parallel (they touch different files and have no data dependencies). Group them into batches:
+- **Maximum 5 subagents** running simultaneously
+- If a phase has more than 5 parallelizable tasks, split into batches of up to 5
+- Tasks that modify the same file or depend on another task's output must run sequentially (use `addBlockedBy`)
+
+#### 2b. Spawn Subagents
+
+For each parallel batch, spawn subagents using the `Agent` tool:
+
+```
+Agent(
+  subagent_type: "general-purpose",
+  name: "impl-phase{N}-task{M}",
+  description: "Implement [task subject]",
+  prompt: "You are implementing a task from an approved implementation plan.
+
+PROJECT DIRECTORY: {project-directory-path}
+
+YOUR TASK:
+[Full task description including files, changes, conventions]
+
+IMPORTANT INSTRUCTIONS:
+1. Read the research document FIRST: {project-directory-path}/resources/codebase-research.md
+2. Read ALL files you will modify completely (no limit/offset)
+3. Make the specified changes following KarmaSuite conventions
+4. Do NOT commit — the lead agent handles commits after verification
+5. Do NOT ask questions — if something is unclear, document the issue in your response
+6. Report back: list of files modified and summary of changes made
+
+KarmaSuite Conventions: Read the 'KarmaSuite Conventions' section in plugins/ks/rules/ks-rules.md for the full list of conventions and domain-specific patterns."
+)
+```
+
+- Launch all subagents in the batch **in a single message** (parallel tool calls)
+- All subagents work in the **main working directory** (the project already runs in a worktree)
+
+#### 2c. Collect Results
+
+After all subagents in a batch complete:
+- Review each subagent's response for issues or deviations
+- If a subagent reports a problem, address it before proceeding
+- Mark completed tasks using `TaskUpdate` with `status: "completed"`
+- If there are more batches in this phase, run the next batch
+
+#### 2d. Phase Verification (Per-Phase)
+
+After ALL tasks in a phase are complete:
+
+1. **Run automated verification:**
+   - Formatting, linting, and type checking are handled automatically by hooks — no manual commands needed
+   - Run existing tests (hooks do not run tests — this must be explicit)
+
+2. **Present phase summary to user:**
 ```
 Phase [N] Complete
 
-All tasks committed:
-- [Commit hash]: [Task 1 description]
-- [Commit hash]: [Task 2 description]
+Tasks completed:
+- [Task 1]: [files modified, summary]
+- [Task 2]: [files modified, summary]
 ...
 
 Automated verification:
-- [ ] Typecheck: [PASS/FAIL]
-- [ ] Lint: [PASS/FAIL]
+- Formatting/Linting/Typecheck: handled by hooks (runs automatically on stop)
+- [ ] Tests: [PASS/FAIL]
 
-Ready to proceed to Phase [N+1]?
+Please verify the implementation. Once verified, I'll commit and proceed to Phase [N+1].
 ```
 
-#### 4. Pause for Human Verification (End of Phase)
-
-Wait for user confirmation before proceeding to the next phase. This allows the user to:
-- Test the changes manually
-- Review the commits
-- Catch any issues before moving on
+3. **Wait for user confirmation** — do NOT proceed until the user approves
+4. **Commit** all changes for this phase with the appropriate message format
+5. **Update plan checkboxes** for the completed phase using the Edit tool
+6. **Proceed to next phase** — repeat from Step 2a
 
 ## Resuming Work
 
@@ -167,38 +244,28 @@ If the implementation plan has existing checkmarks (- [x]):
 
 ## If You Get Stuck
 
-When something isn't working as expected:
-1. **First**, check the research documents - they often contain the answer (enum names, column names, patterns)
-2. **Then**, make sure you've read and understood all the relevant code
-3. **Consider** if the codebase has evolved since the plan was written
-4. **Check actual error messages** - read API responses, server logs, don't make assumptions
-5. **Present the mismatch clearly** and ask for guidance
+When a subagent reports an issue or something isn't working:
+1. **Spawn a research subagent** for deep investigation, or read specific files directly for quick verification
+2. **Consider** if the codebase has evolved since the plan was written
+3. **Present the issue clearly** to the user and ask for guidance
 
-Use sub-tasks sparingly - mainly for:
-- Targeted debugging
-- Exploring unfamiliar territory
+Use research subagents for:
+- Targeted debugging when an implementation subagent reports an issue
+- Exploring unfamiliar territory not covered in research docs
 - Finding similar patterns in the codebase
 
-Example sub-task usage:
+Example research subagent usage:
 ```
-Task(subagent_type="ks:codebase-pattern-finder", prompt="Find examples of drag-and-drop implementation in the codebase")
+Agent(subagent_type: "ks:codebase-pattern-finder", prompt: "Find examples of drag-and-drop implementation in the codebase")
 ```
 
 ## Code Quality Requirements
 
 Before completing each phase, ensure:
 
-1. **Lint passes**: No new warnings or errors
-2. **Types are correct**: TypeScript compiles without errors
-3. **Tests pass**: All existing tests still pass
-4. **No regressions**: Related features still work
-
-Format code before committing:
-```bash
-# Get modified files and format them
-git diff --name-only main...HEAD | grep -E '\.(ts|tsx)$' | xargs pnpm exec prettier --write
-git diff --name-only main...HEAD | grep -E '\.(ts|tsx)$' | xargs pnpm exec eslint --fix
-```
+1. **Format/Lint/Typecheck**: Handled automatically by hooks on every agent stop — no manual verification needed
+2. **Tests pass**: All existing tests still pass (explicit check required)
+3. **No regressions**: Related features still work
 
 ## Commit Guidelines
 
@@ -220,7 +287,7 @@ Get the ticket ID from the Linear URL in state.yaml.
 
 If any of the following occur, flag to the user for review:
 - state.yaml not found or missing required fields (id, url)
-- resources/implementation-plan.md not found
+- Implementation plan file not found (expected `resources/implementation-plan-{NN}.md` based on iteration)
 - Plan has no phases defined
 - Unable to read files mentioned in the plan
 - Automated verification fails after multiple attempts
@@ -228,15 +295,30 @@ If any of the following occur, flag to the user for review:
 
 ## Important Rules
 
-1. **Read files fully** - Never use limit/offset parameters on Read tool during implementation
-2. **Follow the plan** - The plan has been approved, don't deviate without explicit user approval
-3. **One phase at a time** - Complete and verify each phase before moving on
-4. **Human verification required** - Always pause for manual testing between phases (unless told otherwise)
-5. **Communicate clearly** - When stuck, explain what you tried and what went wrong
-6. **Don't skip verification** - All automated checks must pass before human verification
+1. **You are the orchestrator** - Delegate deep reading and analysis to subagents. You MUST verify files touched by multiple subagents or cross-cutting concerns (shared interfaces, type changes that ripple across modules, files modified by more than one task). You MAY spot-check individual task outputs that don't overlap with other tasks. Do NOT do deep analysis or read entire research docs yourself.
+2. **Ultrathink via subagent** - The analysis subagent does the deep thinking. You receive its structured output and act on it.
+3. **Follow the plan** - The plan has been approved, don't deviate without explicit user approval
+4. **One phase at a time** - Complete and verify each phase before moving on. Phases are sequential.
+5. **Parallel within phases** - Non-colliding tasks within a phase run in parallel via subagents (max 5)
+6. **Human verification per phase** - Pause for manual testing after each phase completes (unless told otherwise)
+7. **Subagents don't commit** - Only the orchestrator (you) commits, after user verifies the phase
+8. **Communicate clearly** - When stuck, explain what you tried and what went wrong
+9. **Don't skip verification** - All automated checks must pass before human verification
+
+## Post-Implementation
+
+After ALL phases are complete and committed:
+
+1. **Create a PR** using `/ks:create_pr`
+2. **Run automated code review** by spawning a sub-agent:
+   ```
+   Agent(subagent_type: "general-purpose", prompt: "Run /code-review:code-review to review all changes in the current PR. Report back with any issues found.")
+   ```
+   Address any high-confidence issues before finalizing.
+3. **Congratulate the user**: "Project implementation complete! All phases have been successfully executed."
 
 ## Remember
 
-You're implementing a carefully planned solution, not just checking boxes. Keep the end goal in mind and maintain forward momentum while ensuring quality at each step.
+You are the orchestrator — you coordinate, verify, and commit. Subagents do the heavy reading, deep analysis, and implementation. You MUST verify files touched by multiple subagents or cross-cutting concerns (shared interfaces, type changes, files modified by more than one task) to catch conflicting edits. You MAY spot-check individual non-overlapping task outputs. Keep the end goal in mind and maintain forward momentum while ensuring quality at each step.
 
-The plan represents significant upfront analysis - trust it, but adapt when the codebase reality demands it. Always communicate when you need to deviate from the plan.
+The plan represents significant upfront analysis — trust it, but adapt when subagents report that codebase reality demands it. Always communicate when you need to deviate from the plan.

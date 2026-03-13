@@ -1,7 +1,6 @@
 ---
 description: Co-write the description section of Linear overview page by understanding the customer problem.
 argument-hint: [project-directory-path]
-model: opus
 ---
 
 ## Role & Constraints
@@ -54,7 +53,7 @@ The PRD is ready for review when you can answer "yes" to all of these:
 
 Example invocation:
 ```
-/write-problem-statement workflow/jaswanth/budget-category-reordering
+/ks:write-problem-statement workflow/jaswanth/budget-category-reordering
 ```
 
 **Your workflow:**

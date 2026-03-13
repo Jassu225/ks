@@ -1,7 +1,6 @@
 ---
 description: Create handoff document for transferring work to another session. Captures ONLY information not already in project files.
 argument-hint: [project-directory-path]
-model: claude-sonnet-4-5-20250929
 ---
 
 # Create Handoff
@@ -14,7 +13,7 @@ Create a **minimal** handoff document that captures ONLY:
 
 **DO NOT duplicate information from these files:**
 - `state.yaml` — project metadata, phase status, ticket IDs
-- `resources/implementation-plan.md` — task status, technical approach
+- `resources/implementation-plan-*.md` — task status, technical approach (latest numbered plan)
 - `resources/codebase-research.md` — codebase findings, patterns, architecture
 - `resources/tad.md` — technical decisions
 - `resources/user-stories.md` / `resources/prd.md` — requirements
@@ -30,7 +29,7 @@ Create a **minimal** handoff document that captures ONLY:
 - Description: brief kebab-case summary (e.g., `phase-3-complete`, `drilldown-bug-fix`)
 
 ### 2. Gather Context
-Run `hack/spec_metadata.sh` to get git commit, branch, and repository info.
+Run `spec_metadata.sh` to get git commit, branch, and repository info.
 
 ### 3. Write Handoff
 
@@ -47,7 +46,7 @@ task: [brief task description]
 
 # Handoff: [Brief description]
 
-> Captures ONLY deltas from project files. See state.yaml for status, resources/implementation-plan.md for tasks.
+> Captures ONLY deltas from project files. See state.yaml for status, resources/implementation-plan-*.md for tasks.
 
 ## What Happened
 [1-3 sentences: what you worked on, outcome, anything unexpected]
@@ -55,7 +54,7 @@ task: [brief task description]
 ## Deviations from Project Files
 [Corrections or conflicts with existing docs — if none, write "None"]
 
-- `resources/implementation-plan.md`: [what differs and why]
+- `resources/implementation-plan-{NN}.md`: [what differs and why]
 - `resources/codebase-research.md`: [what's incorrect or incomplete]
 - `resources/tad.md`: [assumptions that proved wrong]
 
@@ -90,7 +89,7 @@ task: [brief task description]
 - Project ID, slug, Linear URL → `state.yaml`
 - Phase progress / status → `state.yaml`
 - Ticket summaries → `resources/linear-tickets.md`
-- Implementation plan status → `resources/implementation-plan.md`
+- Implementation plan status → `resources/implementation-plan-*.md`
 - Technical findings → `resources/codebase-research.md`
 - "Important context files" lists → self-evident from project structure
 - Pre-existing unrelated errors → not relevant

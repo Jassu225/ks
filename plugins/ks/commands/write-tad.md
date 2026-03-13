@@ -2,7 +2,6 @@
 description: Create a Technical Architecture Document (TAD) and attach it to a Linear project
 argument-hint: [project-directory-path]
 allowed-tools: Read, Write, Edit, Bash(linear:*)
-model: opus
 ---
 
 # TAD Creator
@@ -24,7 +23,7 @@ Create a Technical Architecture Document (TAD) based on project requirements and
 
 Example invocation:
 ```
-/write-tad workflow/jaswanth/budget-category-reordering
+/ks:write-tad workflow/jaswanth/budget-category-reordering
 ```
 
 ## Process
@@ -152,7 +151,7 @@ If any of the following occur, flag to the user for review:
 - state.yaml not found or missing required fields (id, url)
 - resources/user-stories.md not found
 - resources/prototype.md not found
-- Research folder empty
+- resources/codebase-research.md not found
 - Linear project already has a TAD document attached
 
 ## Notes

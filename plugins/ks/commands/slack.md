@@ -155,7 +155,7 @@ When the user asks to interact with Slack:
 2. **Reading messages**: Use `slack channel history <channel>` to get recent messages
 3. **Sending messages**:
    - First, run `slack template list` to check for a relevant template
-   - If a matching template exists, run `slack template view <filename>` to get its content, then fill in the template variables with the actual values from context. If the template frontmatter includes a `channel_id`, use that as the target channel for sending.
+   - If a matching template exists, run `slack template view <filename>` to get its content, then fill in the template variables with the actual values from context. If the template frontmatter includes a `channel_id`, use that as the target channel for sending. If it includes a `tone` property (e.g., `tone: non-technical, product-focused`), write the message in that style.
    - If no template matches, compose the message from scratch
    - **Mentioning users**: If the message should mention or address someone (e.g., the user says "ask John…", "tell Sarah…", "ping @username…"), resolve the person's name to a Slack user ID first by running `slack user info <name> --json` and extracting the `id` field. If the lookup fails (user not found), the name may be misspelled — run `slack user list --json` and find the closest match by comparing real names and display names. Then use `<@USER_ID>` in the message text so the person gets a proper Slack mention/notification. For example, if the user says "ask Jas about the deploy", resolve "Jas" → `U01ABCDEF`, then compose the message with `<@U01ABCDEF>` in the text.
    - **Always show the user the target channel and full message content, then ask for explicit confirmation before sending.**
