@@ -4,4 +4,4 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 SERENA_CONFIG='{"mcpServers":{"serena":{"command":"uvx","args":["--from","git+https://github.com/oraios/serena","serena","start-mcp-server","--context=claude-code","--project-from-cwd"]}}}'
 
-exec "$SCRIPT_DIR/claude-ks" --mcp-config "$SERENA_CONFIG" "$@"
+exec "$SCRIPT_DIR/claude-ks" "$@" --mcp-config "$SERENA_CONFIG"
