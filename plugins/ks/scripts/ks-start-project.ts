@@ -15,6 +15,7 @@
 
 import 'dotenv/config';
 import { LinearClient, Project, Issue, Initiative, IssueLabel, User } from '@linear/sdk';
+import { WebClient } from '@slack/web-api';
 import inquirer from 'inquirer';
 import * as yaml from 'yaml';
 import * as fs from 'fs';
@@ -27,7 +28,8 @@ import { execSync, spawn } from 'child_process';
 // ============================================================================
 
 interface SlackThread {
-  channel: string;
+  channel_id: string;
+  channel_name: string;
   ts: string;
   url: string | null;
 }
@@ -85,7 +87,7 @@ interface WorkflowState {
   };
   slack: {
     project_thread: SlackThread | null;
-    pr_review_threads: Array<{ channel: string; ts: string; url: string | null; pr_url: string | null }>;
+    pr_review_threads: Array<{ channel_id: string; channel_name: string; ts: string; url: string | null; pr_url: string | null }>;
     release_thread: SlackThread | null;
   };
   phases: Phase[];
@@ -203,17 +205,31 @@ function getPriorityName(priority: number | null | undefined): string {
 // Slack URL Parsing
 // ============================================================================
 
-function parseSlackMessageUrl(url: string): SlackThread {
+async function parseSlackMessageUrl(url: string): Promise<SlackThread> {
   // Format: https://{workspace}.slack.com/archives/{channel_id}/p{timestamp}
   const match = url.match(/slack\.com\/archives\/([A-Z0-9]+)\/p(\d+)/i);
   if (!match) {
     throw new Error('Invalid Slack message URL. Expected format: https://{workspace}.slack.com/archives/{channel}/p{timestamp}');
   }
-  const channel = match[1];
+  const channel_id = match[1];
   const rawTs = match[2];
   // Insert dot before last 6 digits: 1234567890123456 → 1234567890.123456
   const ts = rawTs.slice(0, -6) + '.' + rawTs.slice(-6);
-  return { channel, ts, url };
+
+  // Resolve channel name from Slack API
+  let channel_name = '';
+  const slackToken = process.env.SLACK_TOKEN;
+  if (slackToken) {
+    try {
+      const slack = new WebClient(slackToken);
+      const result = await slack.conversations.info({ channel: channel_id });
+      channel_name = result.channel?.name ? `#${result.channel.name}` : '';
+    } catch {
+      // Non-fatal — channel name is best-effort
+    }
+  }
+
+  return { channel_id, channel_name, ts, url };
 }
 
 async function promptForProjectThread(): Promise<SlackThread | null> {
@@ -436,9 +452,9 @@ function createWorktreeAndLaunchClaude(projectSlug: string, workflowRelPath: str
       const repoRoot = execSync('git rev-parse --show-toplevel', { cwd: scriptDir, encoding: 'utf-8' }).trim();
       claudeArgs.push('--plugin-dir', path.join(repoRoot, 'plugins', 'ks'));
     }
+    claudeArgs.push(`/ks:project-manager Let's work on ./${workflowRelPath}/ project`);
     const claude = spawn('claude', claudeArgs, {
-      stdio: 'inherit',
-      shell: true
+      stdio: 'inherit'
     });
 
     claude.on('error', (err) => {

@@ -1,12 +1,15 @@
 ---
 name: Release Announcement
 description: Post to #released when a feature or fix is deployed
+tone: non-technical, product-focused
 channel_id: C087VMGSD6X
 ---
 
 # Release Announcement Template
 
 Post to **#released** when a feature or fix is deployed.
+
+**After posting**: Store the returned Slack thread reference in the workflow `state.yaml` under `slack.release_thread` (channel_id, channel_name, ts, url).
 
 ## Template
 

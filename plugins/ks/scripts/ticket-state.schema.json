@@ -208,22 +208,24 @@
       "type": ["object", "null"],
       "additionalProperties": false,
       "properties": {
-        "channel": { "type": "string", "description": "Slack channel name or ID" },
+        "channel_id": { "type": "string", "description": "Slack channel ID (e.g., 'C051A3TSM5K')" },
+        "channel_name": { "type": "string", "description": "Slack channel name (e.g., '#engineering')" },
         "ts": { "type": "string", "description": "Slack message timestamp (e.g., '1234567890.123456')" },
         "url": { "type": ["string", "null"], "format": "uri", "description": "Slack message permalink" }
       },
-      "required": ["channel", "ts"]
+      "required": ["channel_id", "channel_name", "ts"]
     },
     "slack_pr_review_thread": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "channel": { "type": "string" },
+        "channel_id": { "type": "string", "description": "Slack channel ID (e.g., 'C051A3TSM5K')" },
+        "channel_name": { "type": "string", "description": "Slack channel name (e.g., '#engineering')" },
         "ts": { "type": "string" },
         "url": { "type": ["string", "null"], "format": "uri" },
         "pr_url": { "type": ["string", "null"], "format": "uri", "description": "GitHub PR URL" }
       },
-      "required": ["channel", "ts"]
+      "required": ["channel_id", "channel_name", "ts"]
     },
     "phase": {
       "type": "object",
