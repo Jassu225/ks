@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Search the web for Prisma transaction best practices",
+    "should_trigger": true,
+    "note": "Direct web research request"
+  },
+  {
+    "query": "Find AG Grid documentation for server-side row model filtering",
+    "should_trigger": true,
+    "note": "Library documentation search"
+  },
+  {
+    "query": "Research tRPC error handling patterns and best practices",
+    "should_trigger": true,
+    "note": "Framework best practices"
+  },
+  {
+    "query": "What's the latest way to handle authentication with Clerk in Next.js?",
+    "should_trigger": true,
+    "note": "Auth library documentation"
+  },
+  {
+    "query": "Find the Inngest documentation for scheduled functions and retries",
+    "should_trigger": true,
+    "note": "Background job library docs"
+  },
+  {
+    "query": "Research the QuickBooks Online API for journal entry creation",
+    "should_trigger": true,
+    "note": "External API documentation"
+  },
+  {
+    "query": "What's the recommended way to implement drag-and-drop with React?",
+    "should_trigger": true,
+    "note": "React library research"
+  },
+  {
+    "query": "Find documentation for the Radix UI dialog component",
+    "should_trigger": true,
+    "note": "UI library documentation"
+  },
+  {
+    "query": "Research Vitest mocking strategies for Prisma",
+    "should_trigger": true,
+    "note": "Testing framework research"
+  },
+  {
+    "query": "How does the NetSuite REST API handle pagination?",
+    "should_trigger": true,
+    "note": "External API pagination docs"
+  },
+  {
+    "query": "Find where the fund files are in the codebase",
+    "should_trigger": false,
+    "note": "Codebase navigation — should use codebase-locator"
+  },
+  {
+    "query": "Explain how the allocation engine works",
+    "should_trigger": false,
+    "note": "Code analysis — should use codebase-analyzer"
+  },
+  {
+    "query": "Show me existing tRPC router patterns in the codebase",
+    "should_trigger": false,
+    "note": "Codebase patterns — should use codebase-pattern-finder"
+  },
+  {
+    "query": "Simplify the code I just wrote",
+    "should_trigger": false,
+    "note": "Code simplification — should use code-simplifier"
+  },
+  {
+    "query": "Fix the bug in the allocation calculation",
+    "should_trigger": false,
+    "note": "Bug fix, not web research"
+  },
+  {
+    "query": "Create a PR for the changes",
+    "should_trigger": false,
+    "note": "PR creation, not research"
+  },
+  {
+    "query": "Look up how Hypertune feature flags work in Next.js",
+    "should_trigger": true,
+    "note": "Feature flag library research"
+  },
+  {
+    "query": "Find examples of Sage Intacct API usage for entity CRUD",
+    "should_trigger": true,
+    "note": "External API examples"
+  },
+  {
+    "query": "What are the Tailwind CSS best practices for responsive data grids?",
+    "should_trigger": true,
+    "note": "CSS framework research"
+  },
+  {
+    "query": "Research the Sentry SDK setup for Next.js error tracking",
+    "should_trigger": true,
+    "note": "Monitoring library research"
+  }
+]

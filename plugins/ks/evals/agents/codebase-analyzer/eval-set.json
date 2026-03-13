@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Explain how the allocation engine computes fund allocations",
+    "should_trigger": true,
+    "note": "Implementation analysis request"
+  },
+  {
+    "query": "Analyze the data flow from the tRPC router to the database for fund creation",
+    "should_trigger": true,
+    "note": "Data flow trace request"
+  },
+  {
+    "query": "How does the QuickBooks Online sync work in the GL integration?",
+    "should_trigger": true,
+    "note": "Integration implementation analysis"
+  },
+  {
+    "query": "What does the getEngine function do and how does it process allocations?",
+    "should_trigger": true,
+    "note": "Specific function analysis"
+  },
+  {
+    "query": "Trace the authentication flow from Clerk to the API routes",
+    "should_trigger": true,
+    "note": "Auth flow analysis"
+  },
+  {
+    "query": "How does the budget category ordering get persisted and loaded?",
+    "should_trigger": true,
+    "note": "Feature implementation analysis"
+  },
+  {
+    "query": "Analyze the error handling patterns in the tRPC procedures",
+    "should_trigger": true,
+    "note": "Error handling analysis"
+  },
+  {
+    "query": "How does the Inngest job retry mechanism work for GL sync?",
+    "should_trigger": true,
+    "note": "Background job analysis"
+  },
+  {
+    "query": "Find where the fund files are in the codebase",
+    "should_trigger": false,
+    "note": "File location — should use codebase-locator"
+  },
+  {
+    "query": "Show me examples of drag-and-drop implementation",
+    "should_trigger": false,
+    "note": "Pattern examples — should use codebase-pattern-finder"
+  },
+  {
+    "query": "Search the web for tRPC error handling best practices",
+    "should_trigger": false,
+    "note": "Web research — should use web-search-researcher"
+  },
+  {
+    "query": "Simplify the allocation calculation code",
+    "should_trigger": false,
+    "note": "Code simplification — should use code-simplifier"
+  },
+  {
+    "query": "Fix the bug in the fund creation API",
+    "should_trigger": false,
+    "note": "Bug fix, not analysis"
+  },
+  {
+    "query": "Explain the validation logic in the BrokenRestriction module",
+    "should_trigger": true,
+    "note": "Module implementation explanation"
+  },
+  {
+    "query": "How does the Prisma client handle transactions in the expense module?",
+    "should_trigger": true,
+    "note": "Database interaction analysis"
+  },
+  {
+    "query": "What happens when a user saves a new budget category order?",
+    "should_trigger": true,
+    "note": "End-to-end feature flow analysis"
+  },
+  {
+    "query": "How do the React components in the fund page fetch and display data?",
+    "should_trigger": true,
+    "note": "Frontend data flow analysis"
+  },
+  {
+    "query": "Analyze how feature flags from Hypertune control the expense actuals module",
+    "should_trigger": true,
+    "note": "Feature flag usage analysis"
+  },
+  {
+    "query": "Where are all the tRPC router files?",
+    "should_trigger": false,
+    "note": "File location — should use codebase-locator"
+  },
+  {
+    "query": "Find similar patterns to the GL adapter",
+    "should_trigger": false,
+    "note": "Pattern finding — should use codebase-pattern-finder"
+  }
+]

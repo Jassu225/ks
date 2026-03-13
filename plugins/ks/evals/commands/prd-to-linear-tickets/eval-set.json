@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Convert the PRD user stories into Linear tickets",
+    "should_trigger": true,
+    "note": "Direct PRD-to-tickets conversion"
+  },
+  {
+    "query": "Create Linear tickets from the user stories document",
+    "should_trigger": true,
+    "note": "Ticket creation from user stories"
+  },
+  {
+    "query": "/ks:prd-to-linear-tickets workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "Break down the PRD features into individual Linear tickets",
+    "should_trigger": true,
+    "note": "Feature breakdown request"
+  },
+  {
+    "query": "Generate tickets in Linear from the user stories",
+    "should_trigger": true,
+    "note": "Ticket generation request"
+  },
+  {
+    "query": "Convert each feature from user-stories.md into a Linear issue with story points",
+    "should_trigger": true,
+    "note": "Detailed conversion with story points"
+  },
+  {
+    "query": "Create the work items in Linear based on the PRD",
+    "should_trigger": true,
+    "note": "Work items creation from PRD"
+  },
+  {
+    "query": "Create a single Linear issue for the bug",
+    "should_trigger": false,
+    "note": "Single issue creation — should trigger linear"
+  },
+  {
+    "query": "Update ticket KAR-123 status",
+    "should_trigger": false,
+    "note": "Ticket update, not creation from PRD"
+  },
+  {
+    "query": "Write user stories for the feature",
+    "should_trigger": false,
+    "note": "User story creation — should trigger create-user-stories"
+  },
+  {
+    "query": "Write the PRD for the feature",
+    "should_trigger": false,
+    "note": "PRD writing — should trigger write-problem-statement"
+  },
+  {
+    "query": "Create an implementation plan",
+    "should_trigger": false,
+    "note": "Planning, not ticket creation"
+  },
+  {
+    "query": "Research the codebase",
+    "should_trigger": false,
+    "note": "Research, not ticket creation"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not ticket creation"
+  },
+  {
+    "query": "Turn the features into actionable tickets with acceptance criteria",
+    "should_trigger": true,
+    "note": "Actionable tickets from features"
+  },
+  {
+    "query": "Estimate story points and create Linear tickets for each feature",
+    "should_trigger": true,
+    "note": "Story point estimation + ticket creation"
+  },
+  {
+    "query": "Post a comment on KAR-456",
+    "should_trigger": false,
+    "note": "Comment on existing ticket — should trigger linear"
+  },
+  {
+    "query": "Show me the preview of tickets before creating them in Linear",
+    "should_trigger": true,
+    "note": "Preview-first ticket creation"
+  },
+  {
+    "query": "Add product requirements to the PRD",
+    "should_trigger": false,
+    "note": "PRD completion — should trigger add-product-requirements"
+  },
+  {
+    "query": "List all tickets in the project",
+    "should_trigger": false,
+    "note": "Ticket listing — should trigger linear"
+  }
+]

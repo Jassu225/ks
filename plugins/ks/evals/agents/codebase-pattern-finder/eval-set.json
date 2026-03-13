@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Show me examples of how tRPC routers are structured in the codebase",
+    "should_trigger": true,
+    "note": "Pattern example request for tRPC"
+  },
+  {
+    "query": "Find similar implementations to model the drag-and-drop feature after",
+    "should_trigger": true,
+    "note": "Similar implementation search"
+  },
+  {
+    "query": "What patterns exist for Prisma queries with includes and relations?",
+    "should_trigger": true,
+    "note": "Database query patterns"
+  },
+  {
+    "query": "Show me how AG Grid is configured in existing pages",
+    "should_trigger": true,
+    "note": "UI component configuration patterns"
+  },
+  {
+    "query": "Find examples of how tests are structured in the engines package",
+    "should_trigger": true,
+    "note": "Test pattern examples"
+  },
+  {
+    "query": "What React component patterns are used in packages/react-components?",
+    "should_trigger": true,
+    "note": "React component patterns"
+  },
+  {
+    "query": "Find examples of GL integration operations to model a new one after",
+    "should_trigger": true,
+    "note": "Integration pattern examples"
+  },
+  {
+    "query": "Show me how existing pages handle loading states and error states",
+    "should_trigger": true,
+    "note": "UI state handling patterns"
+  },
+  {
+    "query": "Find usage examples of the MathUtils module",
+    "should_trigger": true,
+    "note": "Utility usage examples"
+  },
+  {
+    "query": "What validation patterns exist for tRPC input schemas?",
+    "should_trigger": true,
+    "note": "Input validation patterns"
+  },
+  {
+    "query": "Where are the fund files located?",
+    "should_trigger": false,
+    "note": "File location — should use codebase-locator"
+  },
+  {
+    "query": "Explain how the allocation engine works",
+    "should_trigger": false,
+    "note": "Implementation analysis — should use codebase-analyzer"
+  },
+  {
+    "query": "Search the web for AG Grid server-side filtering",
+    "should_trigger": false,
+    "note": "Web research — should use web-search-researcher"
+  },
+  {
+    "query": "Simplify the code I just wrote",
+    "should_trigger": false,
+    "note": "Code simplification — should use code-simplifier"
+  },
+  {
+    "query": "Fix the bug in the allocation calculation",
+    "should_trigger": false,
+    "note": "Bug fix, not pattern finding"
+  },
+  {
+    "query": "Show me how the strategy pattern is implemented in the GL sync module",
+    "should_trigger": true,
+    "note": "Design pattern example"
+  },
+  {
+    "query": "Find examples of how other pages use the data grid component",
+    "should_trigger": true,
+    "note": "Component usage examples"
+  },
+  {
+    "query": "What hook patterns exist for data fetching in the app?",
+    "should_trigger": true,
+    "note": "Hook patterns"
+  },
+  {
+    "query": "Show me how other features handle permissions and authorization",
+    "should_trigger": true,
+    "note": "Authorization pattern examples"
+  },
+  {
+    "query": "Trace the data flow from API to database",
+    "should_trigger": false,
+    "note": "Data flow tracing — should use codebase-analyzer"
+  }
+]

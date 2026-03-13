@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Create an implementation plan for KAR-456",
+    "should_trigger": true,
+    "note": "Direct plan creation with ticket reference"
+  },
+  {
+    "query": "Plan the implementation for the budget reordering feature",
+    "should_trigger": true,
+    "note": "Plan creation with feature description"
+  },
+  {
+    "query": "/ks:create_plan workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "I need an implementation plan for workflow/jaswanth/egl-optimization",
+    "should_trigger": true,
+    "note": "Plan request with project directory path"
+  },
+  {
+    "query": "Let's plan how to implement the new allocation feature",
+    "should_trigger": true,
+    "note": "Indirect planning request"
+  },
+  {
+    "query": "Write a detailed plan for the fund coder bulk actions ticket",
+    "should_trigger": true,
+    "note": "Plan request mentioning ticket context"
+  },
+  {
+    "query": "Can you create a plan for this ticket? It's about adding drag-and-drop to the budget page",
+    "should_trigger": true,
+    "note": "Conversational plan request"
+  },
+  {
+    "query": "I want to plan the work for the next sprint",
+    "should_trigger": false,
+    "note": "Sprint planning, not implementation planning"
+  },
+  {
+    "query": "Implement the plan at workflow/jaswanth/budget-category-reordering",
+    "should_trigger": false,
+    "note": "Implementation, not planning — should trigger implement-plan"
+  },
+  {
+    "query": "Fix the typo in the README",
+    "should_trigger": false,
+    "note": "Simple edit, no planning needed"
+  },
+  {
+    "query": "Research the codebase for allocation patterns",
+    "should_trigger": false,
+    "note": "Research, not planning — should trigger research_codebase"
+  },
+  {
+    "query": "Create a PR for branch feature/KAR-456",
+    "should_trigger": false,
+    "note": "PR creation, not planning"
+  },
+  {
+    "query": "Write a PRD for the new feature",
+    "should_trigger": false,
+    "note": "PRD writing, not implementation planning"
+  },
+  {
+    "query": "Start building the prototype for the budget feature",
+    "should_trigger": false,
+    "note": "Prototype building, not planning"
+  },
+  {
+    "query": "Create the second iteration plan for workflow/jaswanth/egl-optimization",
+    "should_trigger": true,
+    "note": "Iteration 2+ plan creation"
+  },
+  {
+    "query": "We need to re-plan based on what we learned during implementation",
+    "should_trigger": true,
+    "note": "Re-planning after implementation feedback"
+  },
+  {
+    "query": "Help me think through the technical approach for KAR-789",
+    "should_trigger": true,
+    "note": "Indirect — technical planning request"
+  },
+  {
+    "query": "Create Linear tickets from the PRD",
+    "should_trigger": false,
+    "note": "Ticket creation, not planning — should trigger prd-to-linear-tickets"
+  },
+  {
+    "query": "What's the status of the project?",
+    "should_trigger": false,
+    "note": "Status check, not planning — should trigger project-manager"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not planning"
+  }
+]

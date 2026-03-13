@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Write a TAD for the budget reordering project",
+    "should_trigger": true,
+    "note": "Direct TAD creation request"
+  },
+  {
+    "query": "Create a Technical Architecture Document for the feature",
+    "should_trigger": true,
+    "note": "Full name TAD request"
+  },
+  {
+    "query": "/ks:write-tad workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "Draft the technical approach document for KAR-456",
+    "should_trigger": true,
+    "note": "TAD using alternate naming"
+  },
+  {
+    "query": "We need a TAD before we start implementing",
+    "should_trigger": true,
+    "note": "Pre-implementation TAD request"
+  },
+  {
+    "query": "Document the technical strategy and proposed data model changes",
+    "should_trigger": true,
+    "note": "TAD content-focused request"
+  },
+  {
+    "query": "Write the technical approach with Prisma schema changes and API design",
+    "should_trigger": true,
+    "note": "TAD with specific technical sections"
+  },
+  {
+    "query": "Write the PRD for the new feature",
+    "should_trigger": false,
+    "note": "PRD writing, not TAD — should trigger write-problem-statement"
+  },
+  {
+    "query": "Create user stories from the PRD",
+    "should_trigger": false,
+    "note": "User stories, not TAD — should trigger create-user-stories"
+  },
+  {
+    "query": "Create an implementation plan",
+    "should_trigger": false,
+    "note": "Implementation plan, not TAD — should trigger create_plan"
+  },
+  {
+    "query": "Research the codebase for fund patterns",
+    "should_trigger": false,
+    "note": "Research, not TAD"
+  },
+  {
+    "query": "Build the prototype",
+    "should_trigger": false,
+    "note": "Prototype, not TAD"
+  },
+  {
+    "query": "Add product requirements to the PRD",
+    "should_trigger": false,
+    "note": "Product requirements, not TAD"
+  },
+  {
+    "query": "Create Linear tickets from the PRD",
+    "should_trigger": false,
+    "note": "Ticket creation, not TAD"
+  },
+  {
+    "query": "Write the technical approach for the new GL integration",
+    "should_trigger": true,
+    "note": "Technical approach using integration context"
+  },
+  {
+    "query": "Document the proposed solution including data models and RPCs",
+    "should_trigger": true,
+    "note": "Solution documentation matching TAD structure"
+  },
+  {
+    "query": "Simplify the code I just wrote",
+    "should_trigger": false,
+    "note": "Code simplification, not TAD"
+  },
+  {
+    "query": "Generate the TAD and attach it to the Linear project",
+    "should_trigger": true,
+    "note": "TAD with Linear attachment"
+  },
+  {
+    "query": "What changes to the Prisma schema do we need?",
+    "should_trigger": false,
+    "note": "Schema question — too specific for full TAD"
+  },
+  {
+    "query": "Create a handoff document",
+    "should_trigger": false,
+    "note": "Handoff, not TAD"
+  }
+]

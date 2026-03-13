@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Generate user context for the budget reordering feature",
+    "should_trigger": true,
+    "note": "Direct user context generation"
+  },
+  {
+    "query": "Create a context document for the project",
+    "should_trigger": true,
+    "note": "Context document creation"
+  },
+  {
+    "query": "/ks:user-context-generator workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "Gather context about the customer problem and solution",
+    "should_trigger": true,
+    "note": "Context gathering request"
+  },
+  {
+    "query": "Help me document the feature context — customer problem, workflow, and solution",
+    "should_trigger": true,
+    "note": "Structured context documentation"
+  },
+  {
+    "query": "Start Phase 1 — create the user context document",
+    "should_trigger": true,
+    "note": "Phase-aware context creation"
+  },
+  {
+    "query": "I want to capture the problem and current workflow before we research",
+    "should_trigger": true,
+    "note": "Pre-research context capture"
+  },
+  {
+    "query": "Research the codebase for allocation patterns",
+    "should_trigger": false,
+    "note": "Codebase research, not user context"
+  },
+  {
+    "query": "Write the PRD for the feature",
+    "should_trigger": false,
+    "note": "PRD writing, not user context"
+  },
+  {
+    "query": "Create an implementation plan",
+    "should_trigger": false,
+    "note": "Planning, not user context"
+  },
+  {
+    "query": "Create user stories from the PRD",
+    "should_trigger": false,
+    "note": "User stories, not user context"
+  },
+  {
+    "query": "Build the prototype",
+    "should_trigger": false,
+    "note": "Prototype, not user context"
+  },
+  {
+    "query": "Create a handoff document",
+    "should_trigger": false,
+    "note": "Handoff — should trigger create_handoff"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not user context"
+  },
+  {
+    "query": "Walk me through the context questions — customer problem, current workflow, solution, assumptions",
+    "should_trigger": true,
+    "note": "Context questionnaire request"
+  },
+  {
+    "query": "Let me describe the feature we want to build",
+    "should_trigger": true,
+    "note": "Feature description — start of context gathering"
+  },
+  {
+    "query": "Start a new project by gathering context",
+    "should_trigger": true,
+    "note": "New project context gathering"
+  },
+  {
+    "query": "Update the Linear ticket status",
+    "should_trigger": false,
+    "note": "Linear operation, not user context"
+  },
+  {
+    "query": "Create the impact statement for this feature",
+    "should_trigger": true,
+    "note": "Impact statement — final step of user context"
+  },
+  {
+    "query": "Send a Slack message",
+    "should_trigger": false,
+    "note": "Slack, not user context"
+  }
+]

@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Create a PR for branch feature/KAR-456-budget-reordering",
+    "should_trigger": true,
+    "note": "Direct PR creation with branch name"
+  },
+  {
+    "query": "Open a pull request for the current branch",
+    "should_trigger": true,
+    "note": "PR creation for current branch"
+  },
+  {
+    "query": "/ks:create_pr feature/KAR-789-egl-fix",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "Create PR for feature/KAR-123 against develop",
+    "should_trigger": true,
+    "note": "PR creation with custom target branch"
+  },
+  {
+    "query": "I'm done with the implementation, let's create a pull request",
+    "should_trigger": true,
+    "note": "Post-implementation PR creation"
+  },
+  {
+    "query": "Make a PR for my changes",
+    "should_trigger": true,
+    "note": "Informal PR creation request"
+  },
+  {
+    "query": "Submit a pull request for the budget category feature",
+    "should_trigger": true,
+    "note": "PR submission request"
+  },
+  {
+    "query": "View PR #123",
+    "should_trigger": false,
+    "note": "Viewing a PR, not creating — should trigger gh-cli"
+  },
+  {
+    "query": "Check the CI status on PR 456",
+    "should_trigger": false,
+    "note": "CI check, not PR creation — should trigger gh-cli"
+  },
+  {
+    "query": "Review the pull request comments",
+    "should_trigger": false,
+    "note": "PR review, not creation — should trigger gh-cli"
+  },
+  {
+    "query": "Merge PR 789",
+    "should_trigger": false,
+    "note": "PR merge, not creation — should trigger gh-cli"
+  },
+  {
+    "query": "Create a Linear ticket for the bug",
+    "should_trigger": false,
+    "note": "Linear ticket creation, not PR — should trigger linear"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not PR creation"
+  },
+  {
+    "query": "Implement the plan for the feature",
+    "should_trigger": false,
+    "note": "Implementation, not PR creation"
+  },
+  {
+    "query": "Create a draft PR for feature/KAR-321",
+    "should_trigger": true,
+    "note": "Draft PR creation"
+  },
+  {
+    "query": "Push my branch and create a PR",
+    "should_trigger": true,
+    "note": "Push + PR creation combined request"
+  },
+  {
+    "query": "Comment on PR 456 with feedback",
+    "should_trigger": false,
+    "note": "PR commenting, not creation — should trigger gh-cli"
+  },
+  {
+    "query": "Create a PR with the conventional commit title format",
+    "should_trigger": true,
+    "note": "PR creation mentioning formatting"
+  },
+  {
+    "query": "Add a reviewer to PR 789",
+    "should_trigger": false,
+    "note": "PR management, not creation — should trigger gh-cli"
+  },
+  {
+    "query": "Close PR 123",
+    "should_trigger": false,
+    "note": "PR closing, not creation — should trigger gh-cli"
+  }
+]

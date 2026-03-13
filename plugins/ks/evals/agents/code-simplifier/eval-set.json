@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Simplify the code I just wrote",
+    "should_trigger": true,
+    "note": "Direct simplification request"
+  },
+  {
+    "query": "Clean up this implementation for clarity",
+    "should_trigger": true,
+    "note": "Cleanup request"
+  },
+  {
+    "query": "Refine the recently modified code for consistency",
+    "should_trigger": true,
+    "note": "Refinement request"
+  },
+  {
+    "query": "The code works but it's messy — can you simplify it?",
+    "should_trigger": true,
+    "note": "Conversational simplification"
+  },
+  {
+    "query": "Remove dead code and unused imports from the files I changed",
+    "should_trigger": true,
+    "note": "Dead code removal"
+  },
+  {
+    "query": "Fix the unstable references in my React hook dependency arrays",
+    "should_trigger": true,
+    "note": "React-specific code quality issue"
+  },
+  {
+    "query": "Make this code more readable without changing functionality",
+    "should_trigger": true,
+    "note": "Readability improvement"
+  },
+  {
+    "query": "Replace the nested ternaries with cleaner conditional logic",
+    "should_trigger": true,
+    "note": "Specific simplification pattern"
+  },
+  {
+    "query": "Apply KarmaSuite coding standards to the modified files",
+    "should_trigger": true,
+    "note": "Standards application"
+  },
+  {
+    "query": "Review my changes for code quality and simplify where possible",
+    "should_trigger": true,
+    "note": "Quality review + simplification"
+  },
+  {
+    "query": "Find where the fund files are in the codebase",
+    "should_trigger": false,
+    "note": "File location — should use codebase-locator"
+  },
+  {
+    "query": "Explain how the allocation engine works",
+    "should_trigger": false,
+    "note": "Analysis — should use codebase-analyzer"
+  },
+  {
+    "query": "Show me tRPC router patterns",
+    "should_trigger": false,
+    "note": "Pattern finding — should use codebase-pattern-finder"
+  },
+  {
+    "query": "Search the web for React best practices",
+    "should_trigger": false,
+    "note": "Web research — should use web-search-researcher"
+  },
+  {
+    "query": "Create an implementation plan",
+    "should_trigger": false,
+    "note": "Planning, not simplification"
+  },
+  {
+    "query": "Add a new feature to the budget page",
+    "should_trigger": false,
+    "note": "Feature addition, not simplification"
+  },
+  {
+    "query": "Fix the bug in the allocation calculation",
+    "should_trigger": false,
+    "note": "Bug fix — different from simplification"
+  },
+  {
+    "query": "Convert relative imports to absolute imports in the modified files",
+    "should_trigger": true,
+    "note": "Import style fix — part of code standards"
+  },
+  {
+    "query": "Reduce the complexity of the nested conditionals in the fund router",
+    "should_trigger": true,
+    "note": "Complexity reduction"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not simplification"
+  }
+]

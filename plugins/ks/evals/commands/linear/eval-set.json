@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Read ticket KAR-123 from Linear",
+    "should_trigger": true,
+    "note": "Direct ticket read request"
+  },
+  {
+    "query": "Create a Linear issue for the bug in allocation",
+    "should_trigger": true,
+    "note": "Issue creation request"
+  },
+  {
+    "query": "Update KAR-456 status to In Progress",
+    "should_trigger": true,
+    "note": "Ticket status update"
+  },
+  {
+    "query": "What's in ticket KAR-789?",
+    "should_trigger": true,
+    "note": "Conversational ticket inquiry"
+  },
+  {
+    "query": "Post a comment on KAR-123 saying the fix is deployed",
+    "should_trigger": true,
+    "note": "Comment on Linear ticket"
+  },
+  {
+    "query": "List all tickets assigned to me in the KAR team",
+    "should_trigger": true,
+    "note": "Ticket listing with filter"
+  },
+  {
+    "query": "Check the Linear project status for budget reordering",
+    "should_trigger": true,
+    "note": "Project status check"
+  },
+  {
+    "query": "Get the project details from this Linear URL: https://linear.app/karmasuite/project/...",
+    "should_trigger": true,
+    "note": "Project from URL"
+  },
+  {
+    "query": "Create a document in Linear for the project",
+    "should_trigger": true,
+    "note": "Linear document creation"
+  },
+  {
+    "query": "Update the Linear project description with the PRD content",
+    "should_trigger": true,
+    "note": "Project description update"
+  },
+  {
+    "query": "Post a project update on Linear saying Phase 3 is complete",
+    "should_trigger": true,
+    "note": "Project status update"
+  },
+  {
+    "query": "Check the GitHub PR status",
+    "should_trigger": false,
+    "note": "GitHub, not Linear — should trigger gh-cli"
+  },
+  {
+    "query": "Send a Slack message to the engineering channel",
+    "should_trigger": false,
+    "note": "Slack, not Linear — should trigger slack"
+  },
+  {
+    "query": "Create a PR for branch feature/KAR-456",
+    "should_trigger": false,
+    "note": "PR creation, not Linear — should trigger create_pr"
+  },
+  {
+    "query": "Convert PRD to Linear tickets",
+    "should_trigger": false,
+    "note": "Structured ticket creation — should trigger prd-to-linear-tickets"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not Linear"
+  },
+  {
+    "query": "Research the codebase for fund patterns",
+    "should_trigger": false,
+    "note": "Codebase research, not Linear"
+  },
+  {
+    "query": "What labels are available in the KAR team?",
+    "should_trigger": true,
+    "note": "Linear labels query"
+  },
+  {
+    "query": "List the current cycle tickets for the KAR team",
+    "should_trigger": true,
+    "note": "Cycle listing"
+  },
+  {
+    "query": "Who is assigned to KAR-456?",
+    "should_trigger": true,
+    "note": "Ticket assignment inquiry"
+  }
+]

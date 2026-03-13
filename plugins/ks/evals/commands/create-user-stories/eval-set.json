@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Create user stories for the budget reordering feature",
+    "should_trigger": true,
+    "note": "Direct user stories request"
+  },
+  {
+    "query": "Generate user stories from the PRD",
+    "should_trigger": true,
+    "note": "User stories from PRD"
+  },
+  {
+    "query": "/ks:create-user-stories workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "Write detailed user stories with acceptance criteria",
+    "should_trigger": true,
+    "note": "Detailed user stories request"
+  },
+  {
+    "query": "Break down the feature into user stories",
+    "should_trigger": true,
+    "note": "Feature breakdown into stories"
+  },
+  {
+    "query": "Create the user stories document for the project",
+    "should_trigger": true,
+    "note": "Document creation request"
+  },
+  {
+    "query": "Generate stories in the 'As a user, I want...' format",
+    "should_trigger": true,
+    "note": "Format-specific request"
+  },
+  {
+    "query": "Write the initial PRD with problem statement",
+    "should_trigger": false,
+    "note": "PRD writing — should trigger write-problem-statement"
+  },
+  {
+    "query": "Convert PRD to Linear tickets",
+    "should_trigger": false,
+    "note": "Ticket creation — should trigger prd-to-linear-tickets"
+  },
+  {
+    "query": "Write the TAD for the project",
+    "should_trigger": false,
+    "note": "TAD — should trigger write-tad"
+  },
+  {
+    "query": "Build the prototype",
+    "should_trigger": false,
+    "note": "Prototype — should trigger build-prototype"
+  },
+  {
+    "query": "Add product requirements to the PRD",
+    "should_trigger": false,
+    "note": "Product requirements — should trigger add-product-requirements"
+  },
+  {
+    "query": "Create an implementation plan",
+    "should_trigger": false,
+    "note": "Planning — should trigger create_plan"
+  },
+  {
+    "query": "Research the codebase",
+    "should_trigger": false,
+    "note": "Research, not user stories"
+  },
+  {
+    "query": "Define the acceptance criteria for each feature",
+    "should_trigger": true,
+    "note": "Acceptance criteria — part of user stories"
+  },
+  {
+    "query": "What are the functional requirements for this feature?",
+    "should_trigger": true,
+    "note": "Functional requirements — output of user stories command"
+  },
+  {
+    "query": "Group the user stories by feature area",
+    "should_trigger": true,
+    "note": "Feature grouping request"
+  },
+  {
+    "query": "Create a Linear ticket for the bug",
+    "should_trigger": false,
+    "note": "Single ticket — should trigger linear"
+  },
+  {
+    "query": "Generate the non-goals and out-of-scope items",
+    "should_trigger": true,
+    "note": "Non-goals section — part of user stories"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not user stories"
+  }
+]

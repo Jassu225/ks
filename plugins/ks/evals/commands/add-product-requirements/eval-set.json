@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Add product requirements to the PRD",
+    "should_trigger": true,
+    "note": "Direct product requirements addition"
+  },
+  {
+    "query": "Complete the PRD with prioritized product requirements",
+    "should_trigger": true,
+    "note": "PRD completion request"
+  },
+  {
+    "query": "/ks:add-product-requirements workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "Generate the P0/P1/P2 requirements from the prototype findings",
+    "should_trigger": true,
+    "note": "Priority-based requirements generation"
+  },
+  {
+    "query": "Append the product requirements section to the existing PRD",
+    "should_trigger": true,
+    "note": "Append requirements to PRD"
+  },
+  {
+    "query": "Create the product requirements based on the prototype summary",
+    "should_trigger": true,
+    "note": "Requirements from prototype"
+  },
+  {
+    "query": "Finalize the PRD with all the modules and pages that need changes",
+    "should_trigger": true,
+    "note": "PRD finalization with module listing"
+  },
+  {
+    "query": "Write the initial PRD with problem statement",
+    "should_trigger": false,
+    "note": "Initial PRD — should trigger write-problem-statement"
+  },
+  {
+    "query": "Create user stories from the PRD",
+    "should_trigger": false,
+    "note": "User stories — should trigger create-user-stories"
+  },
+  {
+    "query": "Write the TAD for the project",
+    "should_trigger": false,
+    "note": "TAD — should trigger write-tad"
+  },
+  {
+    "query": "Build the prototype",
+    "should_trigger": false,
+    "note": "Prototype — should trigger build-prototype"
+  },
+  {
+    "query": "Create Linear tickets from the PRD",
+    "should_trigger": false,
+    "note": "Ticket creation — should trigger prd-to-linear-tickets"
+  },
+  {
+    "query": "Research the codebase",
+    "should_trigger": false,
+    "note": "Research, not requirements"
+  },
+  {
+    "query": "Create an implementation plan",
+    "should_trigger": false,
+    "note": "Planning, not requirements"
+  },
+  {
+    "query": "Map out which user-facing modules need changes based on the prototype",
+    "should_trigger": true,
+    "note": "Module mapping from prototype"
+  },
+  {
+    "query": "Update the Linear project description with the completed PRD",
+    "should_trigger": true,
+    "note": "Linear sync after PRD completion"
+  },
+  {
+    "query": "List all the pages and UI components that need to show budget categories in custom order",
+    "should_trigger": true,
+    "note": "Specific product requirements listing"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not requirements"
+  },
+  {
+    "query": "Complete Phase 6 of the project — add product requirements",
+    "should_trigger": true,
+    "note": "Phase-aware requirements request"
+  },
+  {
+    "query": "Document the customer problem",
+    "should_trigger": false,
+    "note": "Problem statement — should trigger write-problem-statement"
+  }
+]

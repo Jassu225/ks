@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Create a handoff document for this session",
+    "should_trigger": true,
+    "note": "Direct handoff creation"
+  },
+  {
+    "query": "Document the handoff for the next session",
+    "should_trigger": true,
+    "note": "Session handoff request"
+  },
+  {
+    "query": "/ks:create_handoff workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "Create a handoff so someone can pick up where I left off",
+    "should_trigger": true,
+    "note": "Handoff for work continuation"
+  },
+  {
+    "query": "Save the current session context for next time",
+    "should_trigger": true,
+    "note": "Context preservation request"
+  },
+  {
+    "query": "Write the handoff document with the debugging trail and resume point",
+    "should_trigger": true,
+    "note": "Detailed handoff request"
+  },
+  {
+    "query": "Document what we did and what's next before ending this session",
+    "should_trigger": true,
+    "note": "End-of-session documentation"
+  },
+  {
+    "query": "Create an implementation plan",
+    "should_trigger": false,
+    "note": "Planning, not handoff"
+  },
+  {
+    "query": "Research the codebase",
+    "should_trigger": false,
+    "note": "Research, not handoff"
+  },
+  {
+    "query": "Write the PRD for the feature",
+    "should_trigger": false,
+    "note": "PRD, not handoff"
+  },
+  {
+    "query": "Create a PR for the changes",
+    "should_trigger": false,
+    "note": "PR creation, not handoff"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not handoff"
+  },
+  {
+    "query": "Generate user context for the feature",
+    "should_trigger": false,
+    "note": "User context — should trigger user-context-generator"
+  },
+  {
+    "query": "Write the TAD",
+    "should_trigger": false,
+    "note": "TAD, not handoff"
+  },
+  {
+    "query": "Record the deviations from the implementation plan",
+    "should_trigger": true,
+    "note": "Deviation recording — handoff content"
+  },
+  {
+    "query": "Capture what happened and the resume point for the next agent",
+    "should_trigger": true,
+    "note": "Resume point capture"
+  },
+  {
+    "query": "Save a handoff with uncommitted changes and debugging context",
+    "should_trigger": true,
+    "note": "Debugging-context handoff"
+  },
+  {
+    "query": "Send a Slack message",
+    "should_trigger": false,
+    "note": "Slack, not handoff"
+  },
+  {
+    "query": "What's the status of the project?",
+    "should_trigger": false,
+    "note": "Status check — should trigger project-manager"
+  },
+  {
+    "query": "I'm ending the session — create the handoff",
+    "should_trigger": true,
+    "note": "Session end handoff trigger"
+  }
+]

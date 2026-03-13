@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Deploy to production",
+    "should_trigger": true,
+    "note": "Direct deploy request"
+  },
+  {
+    "query": "Deploy to prod",
+    "should_trigger": true,
+    "note": "Short form deploy request"
+  },
+  {
+    "query": "Run the deployment",
+    "should_trigger": true,
+    "note": "Deployment execution request"
+  },
+  {
+    "query": "Let's deploy the latest changes to production",
+    "should_trigger": true,
+    "note": "Conversational deploy request"
+  },
+  {
+    "query": "What commits are ready to deploy?",
+    "should_trigger": true,
+    "note": "Pre-deploy diff check"
+  },
+  {
+    "query": "Run pre-deploy to see what's going out",
+    "should_trigger": true,
+    "note": "Pre-deploy only request"
+  },
+  {
+    "query": "Ship it to production",
+    "should_trigger": true,
+    "note": "Informal deploy request"
+  },
+  {
+    "query": "Create a PR for the feature branch",
+    "should_trigger": false,
+    "note": "PR creation, not deployment"
+  },
+  {
+    "query": "Check the CI status on PR 456",
+    "should_trigger": false,
+    "note": "CI check, not deployment"
+  },
+  {
+    "query": "Send a Slack message to engineering",
+    "should_trigger": false,
+    "note": "Slack message, not deployment"
+  },
+  {
+    "query": "Implement the plan for the feature",
+    "should_trigger": false,
+    "note": "Implementation, not deployment"
+  },
+  {
+    "query": "Merge PR 123",
+    "should_trigger": false,
+    "note": "PR merge, not deployment"
+  },
+  {
+    "query": "Research the codebase for deployment patterns",
+    "should_trigger": false,
+    "note": "Research about deployment, not actual deployment"
+  },
+  {
+    "query": "Deploy the latest to staging",
+    "should_trigger": false,
+    "note": "Staging deploy — command only handles production"
+  },
+  {
+    "query": "Is there anything ready to deploy?",
+    "should_trigger": true,
+    "note": "Deploy readiness inquiry"
+  },
+  {
+    "query": "Push my changes to the remote",
+    "should_trigger": false,
+    "note": "Git push, not production deployment"
+  },
+  {
+    "query": "Release the new feature to users",
+    "should_trigger": true,
+    "note": "Release request — maps to production deploy"
+  },
+  {
+    "query": "Create a Linear ticket",
+    "should_trigger": false,
+    "note": "Linear operation, not deployment"
+  },
+  {
+    "query": "Roll out the hotfix to production",
+    "should_trigger": true,
+    "note": "Hotfix deployment"
+  },
+  {
+    "query": "Update the project status on Linear",
+    "should_trigger": false,
+    "note": "Linear update, not deployment"
+  }
+]

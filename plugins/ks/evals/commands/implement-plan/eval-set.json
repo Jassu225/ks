@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Implement the plan at workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Direct implementation request with path"
+  },
+  {
+    "query": "Start implementing the approved implementation plan",
+    "should_trigger": true,
+    "note": "Implementation start request"
+  },
+  {
+    "query": "/ks:implement-plan workflow/jaswanth/egl-optimization",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "Execute the implementation plan for the budget feature",
+    "should_trigger": true,
+    "note": "Execute plan request"
+  },
+  {
+    "query": "Let's begin implementation — the plan is approved",
+    "should_trigger": true,
+    "note": "Conversational implementation start"
+  },
+  {
+    "query": "Continue implementing from Phase 3 of the plan",
+    "should_trigger": true,
+    "note": "Resume implementation from specific phase"
+  },
+  {
+    "query": "Pick up the implementation where we left off",
+    "should_trigger": true,
+    "note": "Resume interrupted implementation"
+  },
+  {
+    "query": "The plan is approved, let's start coding",
+    "should_trigger": true,
+    "note": "Post-approval implementation trigger"
+  },
+  {
+    "query": "Create an implementation plan for the feature",
+    "should_trigger": false,
+    "note": "Planning, not implementing — should trigger create_plan"
+  },
+  {
+    "query": "Plan the work for KAR-789",
+    "should_trigger": false,
+    "note": "Planning request, not implementation"
+  },
+  {
+    "query": "Research the codebase for allocation patterns",
+    "should_trigger": false,
+    "note": "Research, not implementation"
+  },
+  {
+    "query": "Create a PR for branch feature/KAR-456",
+    "should_trigger": false,
+    "note": "PR creation, not implementation"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not implementation"
+  },
+  {
+    "query": "Fix the typo in the config file",
+    "should_trigger": false,
+    "note": "Simple fix, not plan-based implementation"
+  },
+  {
+    "query": "Build the prototype for the budget feature",
+    "should_trigger": false,
+    "note": "Prototype, not implementation — should trigger build-prototype"
+  },
+  {
+    "query": "Write user stories for the feature",
+    "should_trigger": false,
+    "note": "User stories, not implementation"
+  },
+  {
+    "query": "Run the implementation for iteration 2 of the plan",
+    "should_trigger": true,
+    "note": "Specific iteration implementation"
+  },
+  {
+    "query": "Phase 2 is verified, proceed to Phase 3 of the implementation",
+    "should_trigger": true,
+    "note": "Mid-implementation phase continuation"
+  },
+  {
+    "query": "I see Phases 1-2 are done, continue from Phase 3",
+    "should_trigger": true,
+    "note": "Resume with phase awareness"
+  },
+  {
+    "query": "Write the TAD for this project",
+    "should_trigger": false,
+    "note": "TAD creation, not implementation"
+  }
+]

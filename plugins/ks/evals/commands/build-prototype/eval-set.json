@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Build a prototype for the budget category reordering feature",
+    "should_trigger": true,
+    "note": "Direct prototype build request"
+  },
+  {
+    "query": "Create a working prototype from the PRD and user stories",
+    "should_trigger": true,
+    "note": "Prototype from documents"
+  },
+  {
+    "query": "/ks:build-prototype workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "Build a React prototype for the new expense actuals UI",
+    "should_trigger": true,
+    "note": "Technology-specific prototype request"
+  },
+  {
+    "query": "Let's prototype the drag-and-drop reordering on the budget page",
+    "should_trigger": true,
+    "note": "Feature-specific prototype"
+  },
+  {
+    "query": "Create a proof-of-concept implementation for the feature",
+    "should_trigger": true,
+    "note": "PoC request mapping to prototype"
+  },
+  {
+    "query": "Build a quick working version of the feature to validate the approach",
+    "should_trigger": true,
+    "note": "Validation-focused prototype"
+  },
+  {
+    "query": "Implement the approved plan for the feature",
+    "should_trigger": false,
+    "note": "Full implementation, not prototype — should trigger implement-plan"
+  },
+  {
+    "query": "Create an implementation plan",
+    "should_trigger": false,
+    "note": "Planning, not prototyping"
+  },
+  {
+    "query": "Write user stories for the feature",
+    "should_trigger": false,
+    "note": "User stories, not prototype"
+  },
+  {
+    "query": "Write the PRD for the feature",
+    "should_trigger": false,
+    "note": "PRD writing, not prototyping"
+  },
+  {
+    "query": "Write the TAD for the project",
+    "should_trigger": false,
+    "note": "TAD, not prototype"
+  },
+  {
+    "query": "Research the codebase for existing patterns",
+    "should_trigger": false,
+    "note": "Research, not prototyping"
+  },
+  {
+    "query": "Create a PR for the prototype branch",
+    "should_trigger": false,
+    "note": "PR creation, not prototyping"
+  },
+  {
+    "query": "Prototype the new fund allocation UI on the existing budget page",
+    "should_trigger": true,
+    "note": "Prototype on existing page"
+  },
+  {
+    "query": "Build a mockup of the bulk actions feature",
+    "should_trigger": true,
+    "note": "Mockup/prototype request"
+  },
+  {
+    "query": "Fix the bug in the allocation calculation",
+    "should_trigger": false,
+    "note": "Bug fix, not prototyping"
+  },
+  {
+    "query": "Create a prototype summary document",
+    "should_trigger": false,
+    "note": "Just the summary doc — prototype command creates both code + summary"
+  },
+  {
+    "query": "Let's build and test the new UI before writing the TAD",
+    "should_trigger": true,
+    "note": "Pre-TAD prototyping request"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not prototyping"
+  }
+]

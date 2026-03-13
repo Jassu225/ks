@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Check the CI status on PR 456",
+    "should_trigger": true,
+    "note": "CI check request"
+  },
+  {
+    "query": "View PR #123 details",
+    "should_trigger": true,
+    "note": "PR view request"
+  },
+  {
+    "query": "Show me the comments on pull request 789",
+    "should_trigger": true,
+    "note": "PR comments view"
+  },
+  {
+    "query": "Merge PR 456 with squash",
+    "should_trigger": true,
+    "note": "PR merge request"
+  },
+  {
+    "query": "List all open PRs",
+    "should_trigger": true,
+    "note": "PR listing"
+  },
+  {
+    "query": "Approve PR 123",
+    "should_trigger": true,
+    "note": "PR approval"
+  },
+  {
+    "query": "Check the review threads on PR 789",
+    "should_trigger": true,
+    "note": "Review threads inquiry"
+  },
+  {
+    "query": "Resolve the review thread on PR 456",
+    "should_trigger": true,
+    "note": "Thread resolution"
+  },
+  {
+    "query": "What's the diff on PR 123?",
+    "should_trigger": true,
+    "note": "PR diff view"
+  },
+  {
+    "query": "Comment on PR 789 saying the fix looks good",
+    "should_trigger": true,
+    "note": "PR commenting"
+  },
+  {
+    "query": "Close PR 456 without merging",
+    "should_trigger": true,
+    "note": "PR close"
+  },
+  {
+    "query": "Are all checks passing on the current PR?",
+    "should_trigger": true,
+    "note": "CI status check for current branch"
+  },
+  {
+    "query": "Create a PR for branch feature/KAR-456",
+    "should_trigger": false,
+    "note": "PR creation — should trigger create_pr"
+  },
+  {
+    "query": "Read Linear ticket KAR-123",
+    "should_trigger": false,
+    "note": "Linear, not GitHub — should trigger linear"
+  },
+  {
+    "query": "Send a Slack message about the PR",
+    "should_trigger": false,
+    "note": "Slack, not GitHub — should trigger slack"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not GitHub"
+  },
+  {
+    "query": "Research the codebase",
+    "should_trigger": false,
+    "note": "Codebase research, not GitHub"
+  },
+  {
+    "query": "Reply to the inline code review comment on line 45",
+    "should_trigger": true,
+    "note": "Inline review comment reply"
+  },
+  {
+    "query": "Mark PR 123 as ready for review",
+    "should_trigger": true,
+    "note": "Remove draft status"
+  },
+  {
+    "query": "Request changes on PR 456",
+    "should_trigger": true,
+    "note": "Review with change request"
+  }
+]

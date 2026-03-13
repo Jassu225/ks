@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Write the PRD for the budget reordering feature",
+    "should_trigger": true,
+    "note": "Direct PRD writing request"
+  },
+  {
+    "query": "Draft an initial problem statement for the new feature",
+    "should_trigger": true,
+    "note": "Problem statement drafting"
+  },
+  {
+    "query": "/ks:write-problem-statement workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "Create the initial PRD with customer problem and solution",
+    "should_trigger": true,
+    "note": "PRD creation with specific sections"
+  },
+  {
+    "query": "Document the customer problem for the expense bulk actions feature",
+    "should_trigger": true,
+    "note": "Customer problem documentation"
+  },
+  {
+    "query": "Write up the problem statement and solution overview for Linear",
+    "should_trigger": true,
+    "note": "PRD for Linear project description"
+  },
+  {
+    "query": "Help me articulate the customer pain point for this feature",
+    "should_trigger": true,
+    "note": "Pain point articulation request"
+  },
+  {
+    "query": "Add product requirements to the PRD",
+    "should_trigger": false,
+    "note": "Completing PRD, not initial draft — should trigger add-product-requirements"
+  },
+  {
+    "query": "Create user stories from the PRD",
+    "should_trigger": false,
+    "note": "User stories, not PRD — should trigger create-user-stories"
+  },
+  {
+    "query": "Write the TAD for the project",
+    "should_trigger": false,
+    "note": "TAD, not PRD — should trigger write-tad"
+  },
+  {
+    "query": "Create an implementation plan",
+    "should_trigger": false,
+    "note": "Implementation plan, not PRD"
+  },
+  {
+    "query": "Build the prototype for the feature",
+    "should_trigger": false,
+    "note": "Prototype, not PRD"
+  },
+  {
+    "query": "Research the codebase",
+    "should_trigger": false,
+    "note": "Research, not PRD"
+  },
+  {
+    "query": "Generate user context for the feature",
+    "should_trigger": false,
+    "note": "User context, not PRD — should trigger user-context-generator"
+  },
+  {
+    "query": "Write the initial PRD based on the research and user context documents",
+    "should_trigger": true,
+    "note": "PRD creation referencing input documents"
+  },
+  {
+    "query": "Co-write the Linear overview page description for this project",
+    "should_trigger": true,
+    "note": "Linear overview description — matches command purpose"
+  },
+  {
+    "query": "Define the customer problem using the 'I am a... I'm trying to...' format",
+    "should_trigger": true,
+    "note": "Specific PRD template format request"
+  },
+  {
+    "query": "Update the existing PRD with new requirements",
+    "should_trigger": false,
+    "note": "PRD update — should trigger add-product-requirements"
+  },
+  {
+    "query": "Convert the PRD into Linear tickets",
+    "should_trigger": false,
+    "note": "Ticket creation — should trigger prd-to-linear-tickets"
+  },
+  {
+    "query": "What data points support this feature request?",
+    "should_trigger": true,
+    "note": "Data points gathering — part of PRD process"
+  }
+]

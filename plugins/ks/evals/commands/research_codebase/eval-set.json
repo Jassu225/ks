@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Research the codebase for the allocation engine",
+    "should_trigger": true,
+    "note": "Direct codebase research request"
+  },
+  {
+    "query": "Document how the fund management module works",
+    "should_trigger": true,
+    "note": "Documentation/research of existing code"
+  },
+  {
+    "query": "/ks:research_codebase workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "I need a comprehensive research document covering the expense actuals area",
+    "should_trigger": true,
+    "note": "Research request with specific area"
+  },
+  {
+    "query": "Investigate the codebase to understand how budget categories are stored and displayed",
+    "should_trigger": true,
+    "note": "Investigation request about specific feature"
+  },
+  {
+    "query": "Can you do codebase research for the GL integration module?",
+    "should_trigger": true,
+    "note": "Conversational research request"
+  },
+  {
+    "query": "Update the research document with findings about the tRPC router patterns",
+    "should_trigger": true,
+    "note": "Incremental research update"
+  },
+  {
+    "query": "Map out the data flow from the budget page to the database",
+    "should_trigger": true,
+    "note": "Data flow research request"
+  },
+  {
+    "query": "Find where the fund files are in the codebase",
+    "should_trigger": false,
+    "note": "Simple file location — should use codebase-locator agent"
+  },
+  {
+    "query": "Fix the bug in the allocation calculation",
+    "should_trigger": false,
+    "note": "Bug fix, not research"
+  },
+  {
+    "query": "Create an implementation plan for KAR-456",
+    "should_trigger": false,
+    "note": "Planning, not research"
+  },
+  {
+    "query": "Write the PRD for the new feature",
+    "should_trigger": false,
+    "note": "PRD writing, not codebase research"
+  },
+  {
+    "query": "Search the web for Prisma best practices",
+    "should_trigger": false,
+    "note": "Web research, not codebase research"
+  },
+  {
+    "query": "Create a PR for the budget feature",
+    "should_trigger": false,
+    "note": "PR creation, not research"
+  },
+  {
+    "query": "Simplify the code I just wrote",
+    "should_trigger": false,
+    "note": "Code simplification, not research"
+  },
+  {
+    "query": "Research how the QuickBooks Online sync works in our codebase",
+    "should_trigger": true,
+    "note": "Specific subsystem research"
+  },
+  {
+    "query": "I need to understand the existing drag-and-drop implementation before planning",
+    "should_trigger": true,
+    "note": "Pre-planning research"
+  },
+  {
+    "query": "Generate user context for the project",
+    "should_trigger": false,
+    "note": "User context generation, not codebase research"
+  },
+  {
+    "query": "Show me examples of how AG Grid is configured in the codebase",
+    "should_trigger": false,
+    "note": "Pattern finding — should use codebase-pattern-finder agent"
+  },
+  {
+    "query": "Research and document the permissions system across the application",
+    "should_trigger": true,
+    "note": "Cross-cutting research request"
+  }
+]

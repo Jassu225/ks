@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Find where the fund-related files are in the codebase",
+    "should_trigger": true,
+    "note": "Direct file location request"
+  },
+  {
+    "query": "Where are the allocation engine files?",
+    "should_trigger": true,
+    "note": "Component location query"
+  },
+  {
+    "query": "Locate all tRPC routers related to expenses",
+    "should_trigger": true,
+    "note": "Router location request"
+  },
+  {
+    "query": "Find the Prisma schema and all migration files",
+    "should_trigger": true,
+    "note": "Database file location"
+  },
+  {
+    "query": "Where are the QuickBooks integration files?",
+    "should_trigger": true,
+    "note": "Integration file location"
+  },
+  {
+    "query": "Find all test files for the allocation engine",
+    "should_trigger": true,
+    "note": "Test file location"
+  },
+  {
+    "query": "What files are in the packages/react-components directory?",
+    "should_trigger": true,
+    "note": "Directory listing request"
+  },
+  {
+    "query": "Locate the budget category components and pages",
+    "should_trigger": true,
+    "note": "Feature-specific file finding"
+  },
+  {
+    "query": "Find all files that import from @karmasuite/engines",
+    "should_trigger": true,
+    "note": "Import dependency search"
+  },
+  {
+    "query": "Where are the Inngest background job definitions?",
+    "should_trigger": true,
+    "note": "Background job file location"
+  },
+  {
+    "query": "Explain how the allocation engine computes fund allocations",
+    "should_trigger": false,
+    "note": "Implementation analysis — should use codebase-analyzer"
+  },
+  {
+    "query": "Show me examples of how tRPC routers are structured",
+    "should_trigger": false,
+    "note": "Pattern examples — should use codebase-pattern-finder"
+  },
+  {
+    "query": "Search the web for Prisma best practices",
+    "should_trigger": false,
+    "note": "Web research — should use web-search-researcher"
+  },
+  {
+    "query": "Simplify the code I just wrote",
+    "should_trigger": false,
+    "note": "Code simplification — should use code-simplifier"
+  },
+  {
+    "query": "Fix the bug in the allocation calculation",
+    "should_trigger": false,
+    "note": "Bug fix, not file finding"
+  },
+  {
+    "query": "Trace the data flow from the API to the database",
+    "should_trigger": false,
+    "note": "Data flow analysis — should use codebase-analyzer"
+  },
+  {
+    "query": "Find all files related to the GL sync feature",
+    "should_trigger": true,
+    "note": "Feature-related file search"
+  },
+  {
+    "query": "Which directories contain the expense actuals code?",
+    "should_trigger": true,
+    "note": "Directory identification"
+  },
+  {
+    "query": "Locate the React hooks used across the application",
+    "should_trigger": true,
+    "note": "Hook file location"
+  },
+  {
+    "query": "Find all configuration files in the monorepo",
+    "should_trigger": true,
+    "note": "Config file location"
+  }
+]

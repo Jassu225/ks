@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Send a Slack message to the engineering channel",
+    "should_trigger": true,
+    "note": "Direct Slack message send"
+  },
+  {
+    "query": "Post in #product about the new feature release",
+    "should_trigger": true,
+    "note": "Channel-specific message"
+  },
+  {
+    "query": "Check the recent messages in the engineering channel",
+    "should_trigger": true,
+    "note": "Channel history read"
+  },
+  {
+    "query": "Send a PR review request message on Slack",
+    "should_trigger": true,
+    "note": "Template-based message"
+  },
+  {
+    "query": "Reply in the Slack thread about the deployment",
+    "should_trigger": true,
+    "note": "Thread reply"
+  },
+  {
+    "query": "Set my Slack status to 'In a meeting'",
+    "should_trigger": true,
+    "note": "Status update"
+  },
+  {
+    "query": "Search Slack for messages about the allocation bug",
+    "should_trigger": true,
+    "note": "Slack search"
+  },
+  {
+    "query": "Upload the report to the #finance channel on Slack",
+    "should_trigger": true,
+    "note": "File upload"
+  },
+  {
+    "query": "Add a thumbsup reaction to that message",
+    "should_trigger": true,
+    "note": "Reaction add"
+  },
+  {
+    "query": "Who is online on Slack right now?",
+    "should_trigger": true,
+    "note": "User presence check"
+  },
+  {
+    "query": "Post a release announcement in Slack",
+    "should_trigger": true,
+    "note": "Template-based release announcement"
+  },
+  {
+    "query": "Create a Linear ticket for the bug",
+    "should_trigger": false,
+    "note": "Linear, not Slack — should trigger linear"
+  },
+  {
+    "query": "Check the GitHub PR comments",
+    "should_trigger": false,
+    "note": "GitHub, not Slack — should trigger gh-cli"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment — should trigger deploy (which includes Slack step)"
+  },
+  {
+    "query": "Create a PR for the feature branch",
+    "should_trigger": false,
+    "note": "PR creation, not Slack"
+  },
+  {
+    "query": "Research the codebase",
+    "should_trigger": false,
+    "note": "Codebase research, not Slack"
+  },
+  {
+    "query": "Pin the deployment message in the engineering channel",
+    "should_trigger": true,
+    "note": "Pin message"
+  },
+  {
+    "query": "What Slack templates are available?",
+    "should_trigger": true,
+    "note": "Template listing"
+  },
+  {
+    "query": "DM Jas about the deployment timeline",
+    "should_trigger": true,
+    "note": "Direct message request"
+  },
+  {
+    "query": "Create a new Slack channel for the project",
+    "should_trigger": true,
+    "note": "Channel creation"
+  }
+]

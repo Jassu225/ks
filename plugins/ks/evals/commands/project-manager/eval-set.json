@@ -1,0 +1,102 @@
+[
+  {
+    "query": "Start the project workflow for workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Direct project workflow start"
+  },
+  {
+    "query": "What phase are we on for the budget reordering project?",
+    "should_trigger": true,
+    "note": "Phase status inquiry"
+  },
+  {
+    "query": "/ks:project-manager workflow/jaswanth/egl-optimization",
+    "should_trigger": true,
+    "note": "Explicit command invocation"
+  },
+  {
+    "query": "Manage the full project lifecycle for this feature",
+    "should_trigger": true,
+    "note": "Full lifecycle management request"
+  },
+  {
+    "query": "Let's start a new project from the Linear project URL",
+    "should_trigger": true,
+    "note": "New project initiation"
+  },
+  {
+    "query": "Resume the project workflow — we left off at Phase 5",
+    "should_trigger": true,
+    "note": "Workflow resume request"
+  },
+  {
+    "query": "Move to the next phase of the project",
+    "should_trigger": true,
+    "note": "Phase progression request"
+  },
+  {
+    "query": "Skip Phase 4 and go to Phase 5",
+    "should_trigger": true,
+    "note": "Phase skip request"
+  },
+  {
+    "query": "I need to go back to Phase 3 — the PRD needs rework",
+    "should_trigger": true,
+    "note": "Phase revisit request"
+  },
+  {
+    "query": "Show me the project status summary",
+    "should_trigger": true,
+    "note": "Status summary request"
+  },
+  {
+    "query": "Create an implementation plan for KAR-456",
+    "should_trigger": false,
+    "note": "Specific phase command — should trigger create_plan"
+  },
+  {
+    "query": "Research the codebase for allocation patterns",
+    "should_trigger": false,
+    "note": "Specific phase command — should trigger research_codebase"
+  },
+  {
+    "query": "Build a prototype from the PRD",
+    "should_trigger": false,
+    "note": "Specific phase command — should trigger build-prototype"
+  },
+  {
+    "query": "Create a PR for branch feature/KAR-456",
+    "should_trigger": false,
+    "note": "PR creation, not project management"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not project management"
+  },
+  {
+    "query": "Read ticket KAR-123 from Linear",
+    "should_trigger": false,
+    "note": "Linear operation, not project management"
+  },
+  {
+    "query": "Start the ticket workflow for KAR-789",
+    "should_trigger": true,
+    "note": "Ticket workflow (abbreviated project management)"
+  },
+  {
+    "query": "Orchestrate the end-to-end workflow for this feature",
+    "should_trigger": true,
+    "note": "Orchestration request"
+  },
+  {
+    "query": "Which phases are invalidated and need re-evaluation?",
+    "should_trigger": true,
+    "note": "Invalidated phases inquiry"
+  },
+  {
+    "query": "Fix the bug in the allocation calculation",
+    "should_trigger": false,
+    "note": "Bug fix, not project management"
+  }
+]
