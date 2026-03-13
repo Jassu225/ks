@@ -514,6 +514,7 @@ async function getIssue(identifier: string, options: { json?: boolean; full?: bo
   const parent = await issue.parent;
   const children = await issue.children();
   const comments = options.full ? await issue.comments() : null;
+  const attachments = options.full ? await issue.attachments() : null;
 
   const data = {
     id: issue.id,
@@ -530,6 +531,7 @@ async function getIssue(identifier: string, options: { json?: boolean; full?: bo
     parent: parent ? { id: parent.id, identifier: parent.identifier, title: parent.title } : null,
     children: children.nodes.map(c => ({ id: c.id, identifier: c.identifier, title: c.title })),
     comments: comments ? comments.nodes.map(c => ({ id: c.id, body: c.body, createdAt: c.createdAt })) : undefined,
+    attachments: attachments ? attachments.nodes.map(a => ({ id: a.id, title: a.title, subtitle: a.subtitle, url: a.url, sourceType: a.sourceType, metadata: a.metadata, createdAt: a.createdAt })) : undefined,
     createdAt: issue.createdAt,
     updatedAt: issue.updatedAt,
     completedAt: issue.completedAt,
@@ -550,6 +552,14 @@ async function getIssue(identifier: string, options: { json?: boolean; full?: bo
     }
     if (data.description) {
       console.log(`\nDescription:\n${data.description}`);
+    }
+    if (data.attachments && data.attachments.length > 0) {
+      console.log(chalk.bold(`\nAttachments (${data.attachments.length}):`));
+      for (const a of data.attachments) {
+        console.log(`  - ${a.title}${a.subtitle ? ` (${a.subtitle})` : ''}`);
+        console.log(`    URL: ${a.url}`);
+        if (a.sourceType) console.log(`    Source: ${a.sourceType}`);
+      }
     }
   }
 }
@@ -1072,6 +1082,64 @@ async function listLabels(options: { team?: string; json?: boolean }): Promise<v
 }
 
 // ============================================================================
+// Attachment Commands
+// ============================================================================
+
+async function getAttachments(identifier: string, options: { json?: boolean }): Promise<void> {
+  const client = getClient();
+  const issue = await findIssueByIdentifier(client, identifier);
+
+  if (!issue) {
+    // Try by ID
+    try {
+      const fetched = await client.issue(identifier);
+      if (fetched) {
+        const attachments = await fetched.attachments();
+        return displayAttachments(fetched.identifier, attachments.nodes, options.json);
+      }
+    } catch {
+      // fall through
+    }
+    console.error(chalk.red(`Issue not found: ${identifier}`));
+    process.exit(1);
+  }
+
+  const attachments = await issue.attachments();
+  displayAttachments(issue.identifier, attachments.nodes, options.json);
+}
+
+function displayAttachments(issueIdentifier: string, attachments: Array<{ id: string; title: string; subtitle?: string; url: string; sourceType?: string; metadata: Record<string, unknown>; source?: Record<string, unknown> | null; createdAt: Date }>, json?: boolean): void {
+  const data = attachments.map(a => ({
+    id: a.id,
+    title: a.title,
+    subtitle: a.subtitle,
+    url: a.url,
+    sourceType: a.sourceType,
+    metadata: a.metadata,
+    source: a.source,
+    createdAt: a.createdAt
+  }));
+
+  if (json) {
+    output(data, true);
+  } else {
+    if (data.length === 0) {
+      console.log(chalk.yellow(`No attachments found for ${issueIdentifier}`));
+      return;
+    }
+    console.log(chalk.bold(`\nAttachments for ${issueIdentifier} (${data.length}):\n`));
+    for (const a of data) {
+      console.log(chalk.cyan(`  ${a.title}`));
+      if (a.subtitle) console.log(`    ${a.subtitle}`);
+      console.log(`    URL: ${a.url}`);
+      if (a.sourceType) console.log(`    Source: ${a.sourceType}`);
+      console.log(`    Created: ${formatDate(a.createdAt)}`);
+      console.log();
+    }
+  }
+}
+
+// ============================================================================
 // Comment Commands
 // ============================================================================
 
@@ -1315,7 +1383,7 @@ issueCmd
   .option('--description <desc>', 'Issue description')
   .option('--project <id>', 'Project ID')
   .option('--assignee <id>', 'Assignee ID (use "me" for yourself)')
-  .option('--priority <number>', 'Priority (1=urgent, 4=low)')
+  .option('--priority <number>', 'Priority (1=urgent, 4=low)', (v: string) => parseInt(v, 10))
   .option('--labels <ids...>', 'Label IDs')
   .option('--parent <id>', 'Parent issue ID')
   .option('-j, --json', 'Output as JSON')
@@ -1328,10 +1396,16 @@ issueCmd
   .option('--description <desc>', 'New description')
   .option('--state <name>', 'New state name')
   .option('--assignee <id>', 'New assignee (use "me" or "none")')
-  .option('--priority <number>', 'New priority')
+  .option('--priority <number>', 'New priority', (v: string) => parseInt(v, 10))
   .option('--project <id>', 'Project ID')
   .option('-j, --json', 'Output as JSON')
   .action(updateIssue);
+
+issueCmd
+  .command('attachments <identifier>')
+  .description('List attachments/resources for an issue (e.g., KAR-123)')
+  .option('-j, --json', 'Output as JSON')
+  .action(getAttachments);
 
 // Team commands
 const teamCmd = program.command('team').description('Team operations');

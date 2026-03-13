@@ -48,6 +48,11 @@ npx tsx linear-cli.ts project update "https://linear.app/team/project/my-project
 # List/get issues
 npx tsx linear-cli.ts issue list --project <project-id>
 npx tsx linear-cli.ts issue get KAR-123 --json
+npx tsx linear-cli.ts issue get KAR-123 --full  # includes comments and attachments
+
+# List attachments/resources for an issue
+npx tsx linear-cli.ts issue attachments KAR-123
+npx tsx linear-cli.ts issue attachments KAR-123 --json
 
 # Teams, users, documents, etc.
 npx tsx linear-cli.ts team list
