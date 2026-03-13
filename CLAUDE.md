@@ -77,7 +77,7 @@ plugins/ks/scripts/quality-typecheck.sh
 | `/ks:implement-plan` | Execute an approved implementation plan |
 | `/ks:create_pr` | Create PRs with Linear ticket references |
 | `/ks:gh-cli` | GitHub CLI — view PRs, comments, reviews, CI checks |
-| `/ks:prd` | Generate PRD with user stories |
+| `/ks:create-user-stories` | Generate user stories from a PRD |
 | `/ks:build-prototype` | Build React prototype from PRD |
 | `/ks:write-tad` | Write Technical Architecture Document |
 | `/ks:prd-to-linear-tickets` | Convert PRD into Linear tickets |
@@ -85,13 +85,13 @@ plugins/ks/scripts/quality-typecheck.sh
 
 ## Agents
 
-All agents are **documentarians** — they describe what exists in the codebase without suggesting improvements or identifying problems.
+Research agents are **documentarians** — they describe what exists in the codebase without suggesting improvements or identifying problems. Other agents have active roles.
 
 | Agent | Purpose |
 |-------|---------|
-| `ks:codebase-locator` | Find WHERE files live (file discovery) |
-| `ks:codebase-analyzer` | Explain HOW code works (implementation details) |
-| `ks:codebase-pattern-finder` | Show existing patterns and usage examples |
+| `ks:codebase-locator` | Find WHERE files live (file discovery, read-only) |
+| `ks:codebase-analyzer` | Explain HOW code works (implementation details, read-only) |
+| `ks:codebase-pattern-finder` | Show existing patterns and usage examples (read-only) |
 | `ks:code-simplifier` | Refine code for clarity (has edit access) |
 | `ks:web-search-researcher` | External research via web search |
 
@@ -108,14 +108,13 @@ workflow/{username}/{project-slug}/
 ├── state.yaml              # Phase tracking (current phase, status, timestamps)
 └── resources/
     ├── user-context.md     # Phase 1
-    ├── codebase-research.md # Phase 2 (living document)
-    ├── prd.md              # Phase 3
+    ├── codebase-research.md # Phase 2 (incrementally updatable via re-running /ks:research_codebase)
+    ├── prd.md              # Phase 3 (initial) → Phase 6 (completed with product requirements)
     ├── user-stories.md     # Phase 4
     ├── prototype.md        # Phase 5
-    ├── product-requirements.md # Phase 6
     ├── tad.md              # Phase 7
     ├── linear-tickets.md   # Phase 8
-    ├── implementation-plan.md # Phase 9
+    ├── implementation-plan-01.md # Phase 9 (iteration 1, and -02, -03, etc.)
     └── handoffs/           # Between-phase documentation
 ```
 
@@ -127,7 +126,7 @@ Automated PR code review that checks for bugs, logic errors, and CLAUDE.md compl
 
 ### Serena MCP (Semantic Code Analysis)
 
-Provides LSP-powered semantic tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`) to the research agents (codebase-locator, codebase-analyzer, codebase-pattern-finder). Replaces noisy text-based grep for symbol navigation and import-tracing. Agents fall back to Grep/Glob/Read automatically when Serena is not running.
+Provides LSP-powered semantic tools for symbol navigation, reference tracing, and file structure inspection. When Serena is available, agents must prefer Serena tools over text-based alternatives.
 
 ## Critical Rules
 
