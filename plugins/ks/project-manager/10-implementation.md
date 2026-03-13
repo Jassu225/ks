@@ -1,6 +1,8 @@
 # Phase 10: Implementation
 
-This phase implements the approved plan from Phase 9. The `/ks:implement-plan` command will execute each plan phase, run verification, and pause for human testing.
+This phase implements the approved plan from Phase 9 using the `/ks:implement-plan` command, which orchestrates parallel subagents to execute the plan efficiently.
+
+This phase supports **iteration** — it runs once per Phase 9 iteration, always picking up the latest numbered plan file. See the Phase 9-10 Iteration section in `project-manager.md` for the full mechanism.
 
 ## Command
 `/ks:implement-plan {project-directory-path}`
@@ -8,41 +10,31 @@ This phase implements the approved plan from Phase 9. The `/ks:implement-plan` c
 ## Phase Name (for state.yaml)
 `implementation`
 
+## What the Command Does
+
+The main agent acts as an **orchestrator** — it does not read the plan or codebase itself. It spawns an analysis subagent to Ultrathink → asks clarifying questions → creates a task list → executes tasks using up to 5 parallel subagents per phase, with human verification between phases.
+
+The command handles the full workflow: plan analysis, parallel subagent execution, per-phase verification, and post-implementation steps (PR creation via `/ks:create_pr`, automated code review, and user congratulation).
+
 ## Execution Steps
 
-1. Run `/ks:implement-plan {project-directory-path}`
-2. The command will:
-   - Read the implementation plan at `{project-directory-path}/resources/implementation-plan.md`
-   - Execute each phase in the plan sequentially
-   - Run automated verification (lint, type check, tests) after each phase
-   - Pause for human manual verification between phases
-   - Update plan checkboxes as work is completed
-   - Create commits after each verified phase
-3. After all plan phases are complete, create a PR using `/ks:create_pr`
-4. **Code review**: After the PR is created, spawn a sub-agent to run the automated code review:
-   ```
-   Task(subagent_type: "general-purpose", prompt: "Run /code-review:code-review to review all changes in the current PR. Report back with any issues found.")
-   ```
-   Address any high-confidence issues the sub-agent reports before finalizing.
-
-## Post-Completion Steps
-
-1. Congratulate the user: "Project implementation complete! All phases have been successfully executed."
-
-## Example Command
-```
-/ks:implement-plan workflow/jaswanth/basic-ability-to-rearrange-budget-category-rows-43d039de15eb
-```
+1. **Determine the iteration number** from `state.yaml`. The iteration number is the length of Phase 9's `iterations` array. If no `iterations` array exists, this is iteration 1.
+2. **Find the plan file**: Use the iteration number to locate `{project-directory-path}/resources/implementation-plan-{NN}.md` (e.g., `implementation-plan-01.md` for iteration 1).
+3. Run `/ks:implement-plan {project-directory-path}` — the command reads the plan file path from the convention above.
 
 ## Output Files
 - Code changes committed to the repository
-- `{project-dir}/resources/implementation-plan.md` - Updated with checkboxes marked complete
+- `{project-dir}/resources/implementation-plan-{NN}.md` - Updated with checkboxes marked complete
 
-## Special Instructions
-- This is the final phase - implementation of actual code
-- Automated verification runs after each plan phase
-- Human verification required between phases
-- Commits created after each verified phase
+## Post-Command Bookkeeping
+
+After `/ks:implement-plan` completes (all phases committed and PR created), the **project-manager** handles the remaining bookkeeping:
+
+1. Mark phase 10 as `COMPLETED` in `state.yaml`
+2. Run `/ks:create_handoff` to generate the final handoff document
 
 ## Next Phase
-None - this is the final phase. Congratulate the user on completing the project!
+
+After completion, the user may:
+- **Start a new iteration**: Go back to Phase 9 to create another plan (iteration bumps automatically)
+- **Finish**: This was the final phase — project is done

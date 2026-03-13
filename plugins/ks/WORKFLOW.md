@@ -54,9 +54,9 @@ The project manager reads `state.yaml` and detects the workflow type:
 | 1 | Context Creation | `/ks:user-context-generator` | yes |
 | 2 | Codebase Research | `/ks:research_codebase` | yes |
 | 3 | Initial PRD Draft | `/ks:write-problem-statement` | — |
-| 4 | PRD User Stories | `/ks:prd` | — |
-| 5 | Prototype Creation | `/ks:build-prototype` | — |
-| 6 | Product Requirements | `/ks:add-product-requirements` | — |
+| 4 | PRD User Stories | `/ks:create-user-stories` | — |
+| 5 | Prototype Build & Summary | `/ks:build-prototype` | — |
+| 6 | Complete PRD | `/ks:add-product-requirements` | — |
 | 7 | TAD Creation | `/ks:write-tad` | — |
 | 8 | Linear Tickets Creation | `/ks:prd-to-linear-tickets` | — |
 | 9 | Implementation Plan | `/ks:create_plan` | yes |
@@ -72,15 +72,15 @@ For each phase, the project manager will:
 2. Ask if you want to proceed or skip
 3. Update `state.yaml` to `IN_PROGRESS`
 4. Execute the phase command
-5. Generate a handoff document via `/ks:create_handoff`
-6. Confirm completion and update `state.yaml` to `COMPLETED`
+5. Confirm completion and update `state.yaml` to `COMPLETED`
+6. Generate a handoff document via `/ks:create_handoff`
 7. Ask if you're ready for the next phase
 
 Phases can be skipped — they are marked as `SKIPPED` in `state.yaml`.
 
 ## Phase States
 
-Each phase tracks its status: `NOT_STARTED` | `IN_PROGRESS` | `COMPLETED` | `SKIPPED` | `BLOCKED` | `FAILED`
+Each phase tracks its status: `NOT_STARTED` | `IN_PROGRESS` | `COMPLETED` | `SKIPPED` | `REVISITING` | `INVALIDATED`
 
 ## Workflow Directory Layout
 
@@ -90,19 +90,29 @@ workflow/{username}/{project-slug}/
 └── resources/
     ├── user-context.md     # Phase 1
     ├── codebase-research.md # Phase 2
-    ├── prd.md              # Phase 3
+    ├── prd.md              # Phase 3 (initial) → Phase 6 (completed with product requirements)
     ├── user-stories.md     # Phase 4
     ├── prototype.md        # Phase 5
-    ├── product-requirements.md # Phase 6
     ├── tad.md              # Phase 7
     ├── linear-tickets.md   # Phase 8
-    ├── implementation-plan.md # Phase 9
+    ├── implementation-plan-01.md # Phase 9 (iteration 1, and -02, -03, etc.)
     └── handoffs/           # Between-phase documentation
 ```
+
+## Session Management
+
+Start a new session for each phase. Use handoff documents to transfer context between sessions.
+
+| Phases | Launch Command |
+|--------|---------------|
+| 1, 3, 4, 5, 6, 7, 8 | `claude-ks` |
+| 2, 9 | `claude-ks-serena` |
+| 10 | `claude-ks-serena --plugin code-review@claude-plugins-official` |
+
+Phases 2, 9, and 10 require Serena for semantic code analysis. Phase 10 also includes the code review plugin for automated PR review at the end.
 
 ## Key Boundaries
 
 - **Phase 9 is planning only** — no code changes happen until Phase 10
-- **Codebase research (Phase 2)** produces a living document updated throughout the workflow
+- **Codebase research (Phase 2)** produces an incrementally updatable document — re-run `/ks:research_codebase` to refresh it with new findings at any point
 - **Handoffs** are generated between phases to document decisions and context
-- **On error**, the project manager stops and waits for your input

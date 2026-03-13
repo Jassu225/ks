@@ -15,10 +15,10 @@ This phase creates the user context file. The state.yaml already exists in the p
 
 ## Post-Completion Steps
 
-1. Tell the user: "Phase 2 (Codebase Research) uses semantic code analysis. Please start a new session with `claude-ks-serena` to proceed."
+1. Tell the user: "Phase 2 (Codebase Research) uses semantic code analysis. Please start a new session with: `cd {cwd} && claude-ks-serena`" (where `{cwd}` is the current working directory of this Claude Code session)
 
 ## Output Files
 - `{project-dir}/resources/user-context.md` - User context document
 
 ## Next Phase
-Phase 2: Codebase Research — user should launch with `claude-ks-serena`.
+Phase 2: Codebase Research — user should launch with `cd {cwd} && claude-ks-serena`.

@@ -20,11 +20,11 @@ This phase creates Linear tickets from the user stories. This phase is optional 
 
 ## Post-Completion Steps
 
-1. Tell the user: "Phase 9 (Implementation Plan Creation) uses semantic code analysis. Please start a new session with `claude-ks-serena` to proceed."
+1. Tell the user: "Phase 9 (Implementation Plan Creation) uses semantic code analysis. Please start a new session with: `cd {cwd} && claude-ks-serena \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`" (where `{cwd}` is the current working directory of this Claude Code session)
 
 ## Example Command
 ```
-/prd-to-linear-tickets workflow/jaswanth/basic-ability-to-rearrange-budget-category-rows-43d039de15eb
+/ks:prd-to-linear-tickets workflow/jaswanth/basic-ability-to-rearrange-budget-category-rows-43d039de15eb
 ```
 
 ## Output Files
@@ -36,4 +36,4 @@ This phase creates Linear tickets from the user stories. This phase is optional 
 - The command will show a preview and ask for approval before creating tickets
 
 ## Next Phase
-Phase 9: Implementation Plan Creation — user should launch with `claude-ks-serena`.
+Phase 9: Implementation Plan Creation — user should launch with `cd {cwd} && claude-ks-serena "/ks:project-manager Let's work on ./{project-directory-path}/ project"`.
