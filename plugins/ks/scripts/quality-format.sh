@@ -23,12 +23,12 @@ CHECK_OUTPUT=$(echo "$ALL_FILES" | tr '\n' '\0' | xargs -0 pnpm exec prettier --
 CHECK_EXIT=$?
 
 if [ $CHECK_EXIT -ne 0 ]; then
-  echo ""
-  echo "=========================================="
-  echo "[Prettier] Formatting issues remain:"
-  echo "=========================================="
-  echo "$CHECK_OUTPUT"
-  exit 1
+  echo "" >&2
+  echo "==========================================" >&2
+  echo "[Prettier] Formatting issues remain:" >&2
+  echo "==========================================" >&2
+  echo "$CHECK_OUTPUT" >&2
+  exit 2
 fi
 
 exit 0

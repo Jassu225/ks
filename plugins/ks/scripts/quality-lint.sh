@@ -23,12 +23,12 @@ LINT_OUTPUT=$(echo "$ALL_FILES" | tr '\n' '\0' | xargs -0 pnpm exec eslint 2>&1)
 LINT_EXIT=$?
 
 if [ $LINT_EXIT -ne 0 ]; then
-  echo ""
-  echo "=========================================="
-  echo "[ESLint] Unfixable lint issues found:"
-  echo "=========================================="
-  echo "$LINT_OUTPUT"
-  exit 1
+  echo "" >&2
+  echo "==========================================" >&2
+  echo "[ESLint] Unfixable lint issues found:" >&2
+  echo "==========================================" >&2
+  echo "$LINT_OUTPUT" >&2
+  exit 2
 fi
 
 exit 0

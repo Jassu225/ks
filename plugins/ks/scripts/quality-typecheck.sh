@@ -25,7 +25,31 @@ cat > "$TEMP_TSCONFIG" << EOF
 }
 EOF
 
-pnpm tsc --noEmit --project "$TEMP_TSCONFIG" 2>&1 || true
+TSC_OUTPUT=$(pnpm tsc --noEmit --project "$TEMP_TSCONFIG" 2>&1)
+TSC_EXIT=$?
 rm -f "$TEMP_TSCONFIG"
+
+if [ $TSC_EXIT -ne 0 ]; then
+  # Filter tsc output to only show errors from files we actually changed,
+  # since tsc resolves imports transitively and may report errors in unrelated files
+  FILTERED_OUTPUT=""
+  while IFS= read -r line; do
+    for file in $ALL_FILES; do
+      if echo "$line" | grep -q "$file"; then
+        FILTERED_OUTPUT="$FILTERED_OUTPUT$line"$'\n'
+        break
+      fi
+    done
+  done <<< "$TSC_OUTPUT"
+
+  if [ -n "$FILTERED_OUTPUT" ]; then
+    echo "" >&2
+    echo "==========================================" >&2
+    echo "[TypeScript] Type errors found:" >&2
+    echo "==========================================" >&2
+    echo "$FILTERED_OUTPUT" >&2
+    exit 2
+  fi
+fi
 
 exit 0
