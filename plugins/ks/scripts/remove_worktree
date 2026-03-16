@@ -32,11 +32,34 @@ error() {
     echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
-# Get the git repository root from where the script was invoked
-MAIN_REPO_DIR="$(git -C "$INVOKE_DIR" rev-parse --show-toplevel 2>/dev/null)" || {
-    echo -e "${RED}[ERROR]${NC} Not in a git repository: ${INVOKE_DIR}" >&2
+# Load .config for KS_PROJECT_ROOT_PATH
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONFIG_FILE="$(cd "$SCRIPT_DIR/.." && pwd)/.config"
+KS_PROJECT_ROOT=""
+if [[ -f "$CONFIG_FILE" ]]; then
+    KS_PROJECT_ROOT=$(grep "^KS_PROJECT_ROOT_PATH=" "$CONFIG_FILE" | cut -d'=' -f2- || true)
+    # Fallback to legacy key
+    [[ -z "$KS_PROJECT_ROOT" ]] && KS_PROJECT_ROOT=$(grep "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" | cut -d'=' -f2- || true)
+fi
+
+if [[ -z "$KS_PROJECT_ROOT" ]]; then
+    echo -e "${RED}[ERROR]${NC} KS_PROJECT_ROOT_PATH not configured in .config" >&2
+    echo "Run ./init to configure the project root path." >&2
+    exit 1
+fi
+
+# Resolve INVOKE_DIR to its real path for comparison
+RESOLVED_INVOKE_DIR="$(cd "$INVOKE_DIR" && pwd -P)"
+RESOLVED_KS_ROOT="$(cd "$KS_PROJECT_ROOT" 2>/dev/null && pwd -P)" || {
+    echo -e "${RED}[ERROR]${NC} KS_PROJECT_ROOT_PATH does not exist: ${KS_PROJECT_ROOT}" >&2
     exit 1
 }
+
+if [[ "$RESOLVED_INVOKE_DIR" != "$RESOLVED_KS_ROOT" ]]; then
+    echo -e "${RED}[ERROR]${NC} Must be run from KS project root: ${KS_PROJECT_ROOT}" >&2
+    echo "  Current directory: ${INVOKE_DIR}" >&2
+    exit 1
+fi
 
 # Parse arguments (handle -D flag in any position)
 DELETE_BRANCH=false
@@ -86,20 +109,14 @@ if [[ ! "$WORKTREE_PATH" = /* ]]; then
     WORKTREE_PATH="$(cd "$(dirname "$WORKTREE_PATH")" 2>/dev/null && pwd)/$(basename "$WORKTREE_PATH")" || WORKTREE_PATH="$(pwd)/$1"
 fi
 
-# Check if we're in a git repository
-if ! git -C "$MAIN_REPO_DIR" rev-parse --git-dir > /dev/null 2>&1; then
-    error "Not a git repository: ${MAIN_REPO_DIR}"
-    exit 1
-fi
-
 # Check if the worktree exists in git's worktree list
-WORKTREE_INFO=$(git -C "$MAIN_REPO_DIR" worktree list --porcelain | grep -A2 "worktree $WORKTREE_PATH$" || true)
+WORKTREE_INFO=$(git -C "$KS_PROJECT_ROOT" worktree list --porcelain | grep -A2 "worktree $WORKTREE_PATH$" || true)
 
 if [[ -z "$WORKTREE_INFO" ]]; then
     error "Worktree not found: ${WORKTREE_PATH}"
     echo ""
     echo "Available worktrees:"
-    git -C "$MAIN_REPO_DIR" worktree list
+    git -C "$KS_PROJECT_ROOT" worktree list
     exit 1
 fi
 
@@ -124,9 +141,91 @@ if [[ "$DELETE_BRANCH" = true ]]; then
 fi
 echo ""
 
+# ============================================================================
+# Pre-removal: clean up, check for changes, and copy workflow back
+# ============================================================================
+
+# Step 1: cd into the worktree and restore .claude/
+info "Cleaning up worktree..."
+cd "$WORKTREE_PATH"
+git restore --source=HEAD -- .claude/ 2>/dev/null || true
+success "Restored .claude/ to clean state"
+
+# Step 2: Check for uncommitted changes (staged, unstaged, and untracked)
+DIRTY=""
+if [[ -n "$(git status --porcelain)" ]]; then
+    DIRTY=true
+fi
+
+if [[ -n "$DIRTY" ]]; then
+    error "Worktree has uncommitted changes. Clean up before removing."
+    echo ""
+    git status --short
+    echo ""
+    echo "Commit or discard changes, then retry."
+    exit 1
+fi
+success "Worktree is clean"
+
+# Step 3: Find state.yaml with worktree_dir matching this worktree and copy workflow back
+# Build tilde-prefixed path for matching (worktree_dir uses ~ for $HOME)
+TILDE_WORKTREE_PATH="${WORKTREE_PATH/#$HOME/\~}"
+
+# Search for state.yaml files with matching worktree_dir
+STATE_FILE=""
+while IFS= read -r candidate; do
+    if grep -q "worktree_dir:.*${TILDE_WORKTREE_PATH}" "$candidate" 2>/dev/null; then
+        STATE_FILE="$candidate"
+        break
+    fi
+done < <(find "$WORKTREE_PATH/workflow" -name "state.yaml" 2>/dev/null)
+
+if [[ -n "$STATE_FILE" ]]; then
+    info "Found workflow state: ${STATE_FILE}"
+
+    # Extract username from whoami.username in state.yaml
+    # Works for both project and ticket workflows (whoami is nested under project: or ticket:)
+    LINEAR_USERNAME=$(grep -A4 "whoami:" "$STATE_FILE" | grep "username:" | head -1 | sed 's/.*username:[[:space:]]*//' | sed 's/^["'"'"']//;s/["'"'"']$//')
+
+    if [[ -n "$LINEAR_USERNAME" ]]; then
+        # Determine the workflow project folder (parent of state.yaml)
+        WORKFLOW_PROJECT_DIR="$(dirname "$STATE_FILE")"
+        WORKFLOW_PROJECT_NAME="$(basename "$WORKFLOW_PROJECT_DIR")"
+
+        # Determine destination: check if this is a ticket or project workflow
+        # Ticket workflows live under workflow/<username>/tickets/<identifier>/
+        PARENT_OF_PROJECT="$(basename "$(dirname "$WORKFLOW_PROJECT_DIR")")"
+        if [[ "$PARENT_OF_PROJECT" == "tickets" ]]; then
+            DEST_DIR="$KS_PROJECT_ROOT/workflow/$LINEAR_USERNAME/tickets/$WORKFLOW_PROJECT_NAME"
+        else
+            DEST_DIR="$KS_PROJECT_ROOT/workflow/$LINEAR_USERNAME/$WORKFLOW_PROJECT_NAME"
+        fi
+
+        info "Copying workflow back to main repo..."
+        info "  From: ${WORKFLOW_PROJECT_DIR}"
+        info "  To:   ${DEST_DIR}"
+        mkdir -p "$DEST_DIR"
+        cp -r "$WORKFLOW_PROJECT_DIR/"* "$DEST_DIR/"
+        success "Workflow copied to main repo"
+    else
+        error "Could not extract username from state.yaml"
+        exit 1
+    fi
+else
+    error "No state.yaml with matching worktree_dir found in ${WORKTREE_PATH}/workflow/"
+    echo "Workflow data would be lost. Aborting removal."
+    exit 1
+fi
+
+# Step 4: cd back to main project root before removal
+cd "$KS_PROJECT_ROOT"
+
+# ============================================================================
 # Remove the worktree
+# ============================================================================
+
 info "Removing git worktree..."
-if ! git -C "$MAIN_REPO_DIR" worktree remove "$WORKTREE_PATH"; then
+if ! git -C "$KS_PROJECT_ROOT" worktree remove "$WORKTREE_PATH"; then
     error "Failed to remove worktree"
     echo ""
     echo "If the worktree has uncommitted changes, use:"
@@ -138,7 +237,7 @@ success "Git worktree removed"
 # Delete the branch if -D was provided
 if [[ "$DELETE_BRANCH" = true ]] && [[ -n "$BRANCH_NAME" ]]; then
     info "Deleting branch '${BRANCH_NAME}'..."
-    if ! git -C "$MAIN_REPO_DIR" branch -D "$BRANCH_NAME"; then
+    if ! git -C "$KS_PROJECT_ROOT" branch -D "$BRANCH_NAME"; then
         error "Failed to delete branch: ${BRANCH_NAME}"
         exit 1
     fi
