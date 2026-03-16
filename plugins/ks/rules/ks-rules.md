@@ -54,6 +54,10 @@ When Serena is running, **all agents must prefer Serena tools over text-based al
 
 When running the `ks:code-simplifier` agent, always read its agent definition file first and include ALL of its simplification rules explicitly in the prompt. Do not rely on the agent to pick up these rules on its own — enumerate every rule from the definition so nothing gets missed.
 
+## Workflow State Files
+
+When updating `state.yaml`, refer to the corresponding JSON schema: `plugins/ks/scripts/state.schema.json` (project workflow) or `plugins/ks/scripts/ticket-state.schema.json` (ticket workflow).
+
 ## KarmaSuite Conventions
 
 ### General Rules

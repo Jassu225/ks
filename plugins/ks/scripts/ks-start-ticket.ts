@@ -12,7 +12,7 @@
  * Environment: LINEAR_API_KEY must be set (loaded from .env file)
  */
 
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import { LinearClient, Issue, User } from '@linear/sdk';
 import { WebClient } from '@slack/web-api';
 import inquirer from 'inquirer';
@@ -21,6 +21,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import { execSync, spawn } from 'child_process';
+
+const __script_dir = path.dirname(new URL(import.meta.url).pathname);
+dotenv.config({ path: ['.env', path.resolve(__script_dir, '..', '.config')] });
 
 // ============================================================================
 // Types
@@ -34,6 +37,7 @@ interface SlackThread {
 }
 
 interface TicketWorkflowState {
+  worktree_dir: string | null;
   ticket: {
     id: string;
     identifier: string;
@@ -241,6 +245,7 @@ async function generateTicketWorkflowState(
   const labels = await issue.labels();
 
   return {
+    worktree_dir: null,
     ticket: {
       id: issue.id,
       identifier: issue.identifier,
@@ -321,7 +326,10 @@ function formatYaml(state: TicketWorkflowState): string {
     const line = lines[i];
 
     // Add comments before specific sections
-    if (line.startsWith('ticket:')) {
+    if (line.startsWith('worktree_dir:')) {
+      formattedLines.push('# Git worktree directory (updated after worktree creation)');
+      formattedLines.push(line);
+    } else if (line.startsWith('ticket:')) {
       formattedLines.push(line);
     } else if (line.match(/^\s{2}summary:/)) {
       formattedLines.push('');
@@ -379,7 +387,18 @@ function formatYaml(state: TicketWorkflowState): string {
 // Worktree Creation
 // ============================================================================
 
-function createWorktreeAndLaunchClaude(branchName: string, workflowRelPath: string): void {
+function tildeify(absolutePath: string): string {
+  const home = process.env.HOME || '';
+  return home && absolutePath.startsWith(home) ? '~' + absolutePath.slice(home.length) : absolutePath;
+}
+
+function updateWorktreeDir(outputPath: string, worktreePath: string): void {
+  const content = fs.readFileSync(outputPath, 'utf-8');
+  const updated = content.replace(/^worktree_dir:.*$/m, `worktree_dir: "${tildeify(worktreePath)}"`);
+  fs.writeFileSync(outputPath, updated, 'utf-8');
+}
+
+function createWorktreeAndLaunchClaude(branchName: string, workflowRelPath: string, outputPath: string): void {
   const scriptDir = path.dirname(new URL(import.meta.url).pathname);
   const createWorktreeScript = path.join(scriptDir, 'create-worktree');
 
@@ -401,6 +420,9 @@ function createWorktreeAndLaunchClaude(branchName: string, workflowRelPath: stri
     }
 
     const worktreePath = worktreePathMatch[1].trim();
+
+    // Update state file with worktree directory
+    updateWorktreeDir(outputPath, worktreePath);
 
     // Launch claude with KS plugin in the worktree
     console.log(chalk.blue('\nLaunching Claude with KS plugin in worktree...'));
@@ -533,7 +555,7 @@ ${chalk.cyan('Example:')}
     console.log(chalk.cyan(`\n  Workflow: ./${workflowRelPath}/`));
 
     // Create worktree and launch Claude-KS
-    createWorktreeAndLaunchClaude(branchName, workflowRelPath);
+    createWorktreeAndLaunchClaude(branchName, workflowRelPath, outputPath);
 
   } catch (error) {
     console.error(chalk.red(`\n✗ Error: ${error instanceof Error ? error.message : String(error)}`));

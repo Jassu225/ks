@@ -7,6 +7,10 @@
   "required": ["project", "phases"],
   "additionalProperties": false,
   "properties": {
+    "worktree_dir": {
+      "type": "string",
+      "description": "Absolute path to the git worktree directory, with ~ for home (e.g., '~/karmasuite/karmasuite-worktree/my-feature')"
+    },
     "project": {
       "type": "object",
       "description": "Linear project information and ticket references",
