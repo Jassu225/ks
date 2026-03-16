@@ -9,6 +9,10 @@ if ! git rev-parse --is-inside-work-tree &>/dev/null; then
   exit 0
 fi
 
+# Ensure all git commands run from repo root so paths are consistent
+_QF_ORIG_DIR="$PWD"
+cd "$(git rev-parse --show-toplevel)" || exit 0
+
 # Get staged TypeScript files
 STAGED_FILES=$(git diff --cached --name-only 2>/dev/null | grep -E '\.(ts|tsx)$' || true)
 
@@ -21,6 +25,9 @@ UNTRACKED_FILES=$(git ls-files --others --exclude-standard 2>/dev/null | grep -E
 # Get files changed on this branch vs main (catches already-committed files)
 DEFAULT_BRANCH="main"
 BRANCH_FILES=$(git diff --name-only "$DEFAULT_BRANCH"...HEAD 2>/dev/null | grep -E '\.(ts|tsx)$' || true)
+
+# Restore original directory
+cd "$_QF_ORIG_DIR"
 
 # Combine, deduplicate, and filter to only existing files
 ALL_FILES=""
