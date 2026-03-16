@@ -8,13 +8,16 @@
  * Environment: SLACK_TOKEN must be set (loaded from .env file)
  */
 
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import { WebClient } from '@slack/web-api';
 import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import { createReadStream, readFileSync, readdirSync } from 'fs';
-import { basename, join, dirname } from 'path';
+import { basename, join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
+
+const __script_dir = dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: ['.env', resolve(__script_dir, '..', '.config')] });
 
 // ============================================================================
 // Client Initialization

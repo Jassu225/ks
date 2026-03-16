@@ -66,7 +66,10 @@ echo ""
 echo "=== Configuring project root ==="
 CONFIG_FILE="$PLUGIN_DIR/.config"
 CURRENT_ROOT=""
-if [ -f "$CONFIG_FILE" ] && grep -q "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" 2>/dev/null; then
+if [ -f "$CONFIG_FILE" ] && grep -q "^KS_PROJECT_ROOT_PATH=" "$CONFIG_FILE" 2>/dev/null; then
+  CURRENT_ROOT=$(grep "^KS_PROJECT_ROOT_PATH=" "$CONFIG_FILE" | cut -d'=' -f2-)
+elif [ -f "$CONFIG_FILE" ] && grep -q "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" 2>/dev/null; then
+  # Fallback to legacy key
   CURRENT_ROOT=$(grep "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" | cut -d'=' -f2-)
 fi
 
@@ -84,12 +87,12 @@ elif [ ! -d "$PROJECT_ROOT" ]; then
 fi
 
 if [ -n "$PROJECT_ROOT" ]; then
-  if [ -f "$CONFIG_FILE" ] && grep -q "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" 2>/dev/null; then
-    sed -i '' "s|^PROJECT_ROOT_PATH=.*|PROJECT_ROOT_PATH=$PROJECT_ROOT|" "$CONFIG_FILE"
+  if [ -f "$CONFIG_FILE" ] && grep -q "^KS_PROJECT_ROOT_PATH=" "$CONFIG_FILE" 2>/dev/null; then
+    sed -i '' "s|^KS_PROJECT_ROOT_PATH=.*|KS_PROJECT_ROOT_PATH=$PROJECT_ROOT|" "$CONFIG_FILE"
   else
-    echo "PROJECT_ROOT_PATH=$PROJECT_ROOT" >> "$CONFIG_FILE"
+    echo "KS_PROJECT_ROOT_PATH=$PROJECT_ROOT" >> "$CONFIG_FILE"
   fi
-  echo "Saved PROJECT_ROOT_PATH=$PROJECT_ROOT to $CONFIG_FILE"
+  echo "Saved KS_PROJECT_ROOT_PATH=$PROJECT_ROOT to $CONFIG_FILE"
 fi
 
 echo ""

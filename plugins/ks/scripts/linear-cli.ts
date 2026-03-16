@@ -8,7 +8,13 @@
  * Environment: LINEAR_API_KEY must be set (loaded from .env file)
  */
 
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __script_dir = dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: ['.env', resolve(__script_dir, '..', '.config')] });
+
 import { LinearClient, Issue, Project, Team, User, Document, Comment, IssueLabel, Cycle } from '@linear/sdk';
 import { Command, Option } from 'commander';
 import chalk from 'chalk';
