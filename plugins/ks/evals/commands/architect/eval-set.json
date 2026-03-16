@@ -1,0 +1,102 @@
+[
+  {
+    "query": "/ks:architect plan workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Explicit command invocation — plan mode"
+  },
+  {
+    "query": "/ks:architect code workflow/jaswanth/budget-category-reordering",
+    "should_trigger": true,
+    "note": "Explicit command invocation — code mode"
+  },
+  {
+    "query": "/ks:architect code",
+    "should_trigger": true,
+    "note": "Explicit command invocation — code mode without project path"
+  },
+  {
+    "query": "Review the implementation plan before we start coding",
+    "should_trigger": true,
+    "note": "Indirect plan review request"
+  },
+  {
+    "query": "Can you do an architecture review of the current changes?",
+    "should_trigger": true,
+    "note": "Architecture review request for code"
+  },
+  {
+    "query": "Review my code changes as an architect",
+    "should_trigger": true,
+    "note": "Explicit role-based code review request"
+  },
+  {
+    "query": "Check if the implementation plan follows our codebase patterns",
+    "should_trigger": true,
+    "note": "Pattern compliance review — plan mode"
+  },
+  {
+    "query": "I want a senior review of this plan before we execute it",
+    "should_trigger": true,
+    "note": "Senior review request for plan"
+  },
+  {
+    "query": "Architect review the diff for pattern compliance and impact",
+    "should_trigger": true,
+    "note": "Explicit architect review with quality criteria"
+  },
+  {
+    "query": "Check if my changes break any consumers or downstream code",
+    "should_trigger": true,
+    "note": "Consumer impact analysis request — core new behavior"
+  },
+  {
+    "query": "Review the plan and check if all call sites are accounted for",
+    "should_trigger": true,
+    "note": "Plan review with consumer tracing focus"
+  },
+  {
+    "query": "I added an optional parameter to a shared function, can you check if all callers are handled?",
+    "should_trigger": true,
+    "note": "Specific consumer impact scenario — optional parameter"
+  },
+  {
+    "query": "Create an implementation plan for KAR-456",
+    "should_trigger": false,
+    "note": "Plan creation, not review — should trigger create_plan"
+  },
+  {
+    "query": "Implement the plan at workflow/jaswanth/budget-category-reordering",
+    "should_trigger": false,
+    "note": "Implementation, not review — should trigger implement-plan"
+  },
+  {
+    "query": "Create a PR for branch feature/KAR-456",
+    "should_trigger": false,
+    "note": "PR creation, not architecture review — should trigger create_pr"
+  },
+  {
+    "query": "Research the codebase for allocation patterns",
+    "should_trigger": false,
+    "note": "Research, not review — should trigger research_codebase"
+  },
+  {
+    "query": "Fix the typo in the README",
+    "should_trigger": false,
+    "note": "Simple edit, no architectural review needed"
+  },
+  {
+    "query": "Simplify the code I just wrote",
+    "should_trigger": false,
+    "note": "Code simplification — should use code-simplifier agent"
+  },
+  {
+    "query": "Find examples of how tRPC routers are structured",
+    "should_trigger": false,
+    "note": "Pattern finding, not reviewing — should use codebase-pattern-finder"
+  },
+  {
+    "query": "Deploy to production",
+    "should_trigger": false,
+    "note": "Deployment, not review"
+  }
+]

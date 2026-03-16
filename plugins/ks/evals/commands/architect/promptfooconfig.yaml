@@ -1,0 +1,286 @@
+# Output quality evals for /ks:architect — Consumer Impact Analysis behavior
+#
+# These test that the architect correctly identifies, traces, and classifies
+# downstream consumers when code is being modified.
+#
+# Run: npx promptfoo@latest eval -c plugins/ks/evals/commands/architect/promptfooconfig.yaml
+
+description: "Architect — Consumer Impact Analysis"
+
+prompts:
+  - |
+    You are the Architect reviewing code changes. For every modified export,
+    trace all consumers and classify each as: Must update, Should update, or Verified OK.
+
+    {{scenario}}
+
+    Provide your architect review with a Consumer Impact Analysis section.
+
+providers:
+  - id: anthropic:messages:claude-sonnet-4-20250514
+    config:
+      max_tokens: 4096
+
+tests:
+  # -------------------------------------------------------------------
+  # Scenario 1: New optional parameter added — some callers updated, some not
+  # -------------------------------------------------------------------
+  - description: "Optional param added to exported function — mixed caller updates"
+    vars:
+      scenario: |
+        ## Code Change
+        The function `formatCurrency(amount: number)` in `packages/utils/currency.ts`
+        was changed to `formatCurrency(amount: number, locale?: string)`.
+
+        The diff shows 3 files were updated to pass `locale`:
+        - `apps/web/src/pages/BudgetPage.tsx` — passes `locale` from user settings
+        - `apps/web/src/pages/ReportPage.tsx` — passes `locale` from user settings
+        - `apps/web/src/components/AllocationTable.tsx` — passes `locale` from user settings
+
+        But grep shows 5 additional files import and call `formatCurrency` WITHOUT passing `locale`:
+        - `apps/web/src/pages/DashboardPage.tsx` — displays currency to end users
+        - `apps/web/src/pages/InvoicePage.tsx` — displays currency on invoices for international clients
+        - `apps/web/src/components/FundSummaryCard.tsx` — displays currency to end users
+        - `packages/engines/src/allocation-engine.ts` — internal calculation, result not displayed
+        - `packages/engines/src/test-helpers.ts` — test utility
+
+    assert:
+      - type: llm-rubric
+        value: >
+          The response MUST identify all 5 non-updated consumers by name/file.
+          It must NOT silently ignore any consumer.
+      - type: llm-rubric
+        value: >
+          The response must classify DashboardPage, InvoicePage, and FundSummaryCard
+          as "Should update" (or equivalent) because they display currency to end users
+          who may have locale preferences.
+      - type: llm-rubric
+        value: >
+          The response must classify allocation-engine.ts as "Verified OK" (or equivalent)
+          because it is an internal calculation where locale is irrelevant.
+      - type: llm-rubric
+        value: >
+          The response must classify test-helpers.ts as "Verified OK" (or equivalent)
+          because it is a test utility where locale is not meaningful.
+      - type: llm-rubric
+        value: >
+          The response must contain a structured "Consumer Impact Analysis" section
+          (or equivalent heading) that lists consumers with their classification.
+
+  # -------------------------------------------------------------------
+  # Scenario 2: Return type change on a shared hook
+  # -------------------------------------------------------------------
+  - description: "Hook return type changed — consumers may destructure incorrectly"
+    vars:
+      scenario: |
+        ## Code Change
+        The hook `useBudgetData()` in `apps/web/src/hooks/useBudgetData.ts`
+        previously returned `{ data, isLoading, error }`.
+        It now returns `{ data, isLoading, error, refetch }` and the type of `data`
+        changed from `Budget[]` to `{ budgets: Budget[], total: number }`.
+
+        The diff shows 2 files were updated:
+        - `apps/web/src/pages/BudgetPage.tsx` — destructures `{ budgets, total }` from `data`
+        - `apps/web/src/pages/BudgetOverviewPage.tsx` — destructures `{ budgets, total }` from `data`
+
+        But grep shows 3 more files use this hook WITHOUT being updated:
+        - `apps/web/src/pages/AllocationPage.tsx` — does `data.map(...)` treating data as array
+        - `apps/web/src/components/BudgetSelector.tsx` — does `data.length` and `data.find(...)`
+        - `apps/web/src/components/BudgetChart.tsx` — passes `data` to a chart component expecting `Budget[]`
+
+    assert:
+      - type: llm-rubric
+        value: >
+          The response must classify AllocationPage, BudgetSelector, and BudgetChart
+          as "Must update" (or equivalent) because they treat `data` as `Budget[]`
+          but it is now `{ budgets, total }` — these will break at runtime.
+      - type: llm-rubric
+        value: >
+          The response must specifically call out that `.map()`, `.length`, `.find()`
+          will fail because `data` is no longer an array.
+      - type: llm-rubric
+        value: >
+          The response should flag this as a blocking issue that must be fixed
+          before the change can be committed/merged.
+
+  # -------------------------------------------------------------------
+  # Scenario 3: Prisma model field renamed
+  # -------------------------------------------------------------------
+  - description: "Database field renamed — queries and types need updating"
+    vars:
+      scenario: |
+        ## Code Change
+        In `prisma/schema.prisma`, the `Budget` model's field `categoryName` was
+        renamed to `category_label` (with `@map("category_label")`).
+
+        The diff updated the Prisma schema and 2 files:
+        - `packages/server/src/routers/budget.ts` — queries use `category_label`
+        - `packages/server/src/services/budget-service.ts` — uses `category_label`
+
+        But grep for "categoryName" shows 4 more files still reference the old name:
+        - `packages/server/src/services/report-service.ts` — `select: { categoryName: true }`
+        - `packages/server/src/services/export-service.ts` — maps `budget.categoryName` to CSV column
+        - `apps/web/src/types/budget.ts` — TypeScript interface has `categoryName: string`
+        - `packages/engines/src/budget-engine.ts` — accesses `budget.categoryName` in calculations
+
+    assert:
+      - type: llm-rubric
+        value: >
+          The response must classify all 4 non-updated files as "Must update"
+          because they reference a renamed field and will break.
+      - type: llm-rubric
+        value: >
+          The response must flag the TypeScript interface in budget.ts as needing
+          update since it defines the type contract other code depends on.
+      - type: llm-rubric
+        value: >
+          This should be flagged as a blocking issue — the rename is incomplete
+          and will cause runtime errors in the non-updated files.
+
+  # -------------------------------------------------------------------
+  # Scenario 4: API endpoint response shape changed
+  # -------------------------------------------------------------------
+  - description: "tRPC endpoint response shape changed — frontend consumers affected"
+    vars:
+      scenario: |
+        ## Code Change
+        The tRPC procedure `budget.getAll` in `packages/server/src/routers/budget.ts`
+        previously returned `Budget[]`. It now returns `{ items: Budget[], cursor: string | null }`
+        to support pagination.
+
+        The diff updated:
+        - `packages/server/src/routers/budget.ts` — new return shape
+        - `apps/web/src/pages/BudgetPage.tsx` — uses `.items` and handles `cursor`
+
+        Frontend grep for `budget.getAll` or `trpc.budget.getAll` shows 4 more consumers:
+        - `apps/web/src/pages/DashboardPage.tsx` — does `data.map(b => ...)` expecting array
+        - `apps/web/src/components/BudgetDropdown.tsx` — does `data?.length` and `data?.map`
+        - `apps/web/src/hooks/useBudgetSummary.ts` — does `data.reduce(...)` for totals
+        - `apps/web/src/pages/ReportPage.tsx` — spreads `[...data]` into local state
+
+    assert:
+      - type: llm-rubric
+        value: >
+          All 4 non-updated consumers must be classified as "Must update" because
+          they treat the response as an array but it is now an object with `.items`.
+      - type: llm-rubric
+        value: >
+          The response must identify that array methods (.map, .length, .reduce, spread)
+          will fail on the new object shape.
+      - type: llm-rubric
+        value: >
+          This must be flagged as blocking — the API contract changed and unconverted
+          consumers will break.
+
+  # -------------------------------------------------------------------
+  # Scenario 5: Exported component props interface extended — non-breaking but incomplete
+  # -------------------------------------------------------------------
+  - description: "Component props extended with optional prop — some consumers should adopt"
+    vars:
+      scenario: |
+        ## Code Change
+        The shared component `<CurrencyDisplay amount={100} />` in
+        `packages/react-components/src/CurrencyDisplay.tsx` added an optional
+        `showSign?: boolean` prop that renders +/- prefix for positive/negative amounts.
+
+        The diff updated 2 files:
+        - `apps/web/src/pages/AllocationPage.tsx` — passes `showSign={true}` for allocation deltas
+        - `apps/web/src/components/TransactionRow.tsx` — passes `showSign={true}` for transaction amounts
+
+        Grep shows 6 more files use `<CurrencyDisplay` without `showSign`:
+        - `apps/web/src/pages/BudgetPage.tsx` — displays budget amounts (always positive)
+        - `apps/web/src/pages/DashboardPage.tsx` — displays net change values (can be negative)
+        - `apps/web/src/components/FundCard.tsx` — displays fund balance (always positive)
+        - `apps/web/src/components/AllocationDelta.tsx` — displays allocation changes (can be negative)
+        - `apps/web/src/pages/ReportPage.tsx` — displays P&L values (can be negative)
+        - `apps/web/src/components/InvoiceLineItem.tsx` — displays line item amounts (always positive)
+
+    assert:
+      - type: llm-rubric
+        value: >
+          The response must classify DashboardPage (net change), AllocationDelta
+          (allocation changes), and ReportPage (P&L values) as "Should update"
+          because they display values that can be negative and would benefit from
+          the sign prefix for clarity.
+      - type: llm-rubric
+        value: >
+          The response must classify BudgetPage (always positive), FundCard
+          (always positive), and InvoiceLineItem (always positive) as "Verified OK"
+          because their values are always positive and the sign prefix is irrelevant.
+      - type: llm-rubric
+        value: >
+          The response must NOT flag this as blocking — it is an optional prop
+          and existing consumers will not break. But it should flag the "Should update"
+          items as important recommendations.
+
+  # -------------------------------------------------------------------
+  # Scenario 6: No consumers affected — clean change
+  # -------------------------------------------------------------------
+  - description: "Internal-only change with no downstream consumers"
+    vars:
+      scenario: |
+        ## Code Change
+        The private helper function `calculateWeightedAverage()` inside
+        `packages/engines/src/allocation-engine.ts` was refactored to use a more
+        numerically stable algorithm. The function is not exported — it's only
+        called within the same file.
+
+        The diff only modifies `allocation-engine.ts`.
+        Grep for `calculateWeightedAverage` finds 0 results outside this file.
+
+    assert:
+      - type: llm-rubric
+        value: >
+          The response must state that no downstream consumers were found and
+          no consumer impact analysis is needed (or that all consumers are internal).
+      - type: llm-rubric
+        value: >
+          The response must NOT fabricate or hallucinate consumers that don't exist.
+          It should confirm the change is self-contained.
+
+  # -------------------------------------------------------------------
+  # Scenario 7: Type/interface change with transitive consumers
+  # -------------------------------------------------------------------
+  - description: "Shared type changed — transitive impact through re-exports"
+    vars:
+      scenario: |
+        ## Code Change
+        The type `BudgetStatus` in `packages/shared/src/types.ts` changed from:
+        `type BudgetStatus = 'draft' | 'active' | 'closed'`
+        to:
+        `type BudgetStatus = 'draft' | 'active' | 'closed' | 'archived'`
+
+        The diff updated:
+        - `packages/shared/src/types.ts` — added 'archived' to union
+        - `packages/server/src/services/budget-service.ts` — handles 'archived' in switch statement
+        - `apps/web/src/pages/BudgetPage.tsx` — renders archived status badge
+
+        Grep for `BudgetStatus` shows 5 more files:
+        - `packages/server/src/routers/budget.ts` — Zod enum validation: `z.enum(['draft', 'active', 'closed'])`
+        - `packages/engines/src/budget-engine.ts` — switch statement on status (no default case)
+        - `apps/web/src/components/StatusBadge.tsx` — color map: `{ draft: 'gray', active: 'green', closed: 'red' }`
+        - `apps/web/src/hooks/useBudgetFilters.ts` — filter options array: `['draft', 'active', 'closed']`
+        - `apps/web/src/types/budget.ts` — re-exports `BudgetStatus` from shared (pass-through, no logic)
+
+    assert:
+      - type: llm-rubric
+        value: >
+          The Zod enum in budget.ts router must be classified as "Must update"
+          because it will reject 'archived' as an invalid value, breaking the API.
+      - type: llm-rubric
+        value: >
+          The switch statement in budget-engine.ts must be classified as "Must update"
+          (or at minimum "Should update") because a missing case with no default
+          means 'archived' budgets will be silently unhandled.
+      - type: llm-rubric
+        value: >
+          StatusBadge.tsx must be classified as "Should update" because 'archived'
+          has no color mapping and will likely render with no color or a fallback.
+      - type: llm-rubric
+        value: >
+          useBudgetFilters.ts must be classified as "Should update" because users
+          won't be able to filter by the new 'archived' status.
+      - type: llm-rubric
+        value: >
+          The re-export in types/budget.ts must be classified as "Verified OK"
+          because it's a pass-through with no logic to update.
