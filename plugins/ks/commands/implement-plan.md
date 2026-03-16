@@ -116,7 +116,7 @@ IMPORTANT: Be thorough. Every checkbox item in the plan must become a task. Grou
 3. **Review the analysis results:**
    - If the subagent returned clarifying questions, present them to the user using `AskUserQuestion` and wait for answers
    - Once all questions are resolved, proceed to task creation
-4. **Create the task list and begin execution** (see Task List & Subagent Workflow below)
+4. **Create the FULL task list BEFORE any implementation** (see Task List & Subagent Workflow below). **MANDATORY**: Every task from the analysis must be created via `TaskCreate` before spawning a single implementation subagent. Do NOT start implementing while still creating tasks. The complete task list is the contract — implementation begins only after it exists in full.
 
 ## Implementation Philosophy
 
@@ -140,7 +140,9 @@ How should I proceed?
 
 After the Ultrathink analysis, create a comprehensive task list and execute it using subagents.
 
-### Step 1: Create the Full Task List from Analysis
+### Step 1: Create the Full Task List from Analysis (MANDATORY — before ANY implementation)
+
+**CRITICAL**: The entire task list must be created before spawning any implementation subagent. No exceptions. This is the single source of truth for what will be implemented — skipping or deferring task creation leads to missed work, duplicated effort, and untracked changes.
 
 Using the analysis subagent's structured output, create tasks with `TaskCreate`:
 
@@ -297,13 +299,14 @@ If any of the following occur, flag to the user for review:
 
 1. **You are the orchestrator** - Delegate deep reading and analysis to subagents. You MUST verify files touched by multiple subagents or cross-cutting concerns (shared interfaces, type changes that ripple across modules, files modified by more than one task). You MAY spot-check individual task outputs that don't overlap with other tasks. Do NOT do deep analysis or read entire research docs yourself.
 2. **Ultrathink via subagent** - The analysis subagent does the deep thinking. You receive its structured output and act on it.
-3. **Follow the plan** - The plan has been approved, don't deviate without explicit user approval
-4. **One phase at a time** - Complete and verify each phase before moving on. Phases are sequential.
-5. **Parallel within phases** - Non-colliding tasks within a phase run in parallel via subagents (max 5)
-6. **Human verification per phase** - Pause for manual testing after each phase completes (unless told otherwise)
-7. **Subagents don't commit** - Only the orchestrator (you) commits, after user verifies the phase
-8. **Communicate clearly** - When stuck, explain what you tried and what went wrong
-9. **Don't skip verification** - All automated checks must pass before human verification
+3. **Full task list before any code** - Every task from the analysis MUST be created via `TaskCreate` before spawning a single implementation subagent. No partial task lists, no "create as you go". The task list is the contract.
+4. **Follow the plan** - The plan has been approved, don't deviate without explicit user approval
+5. **One phase at a time** - Complete and verify each phase before moving on. Phases are sequential.
+6. **Parallel within phases** - Non-colliding tasks within a phase run in parallel via subagents (max 5)
+7. **Human verification per phase** - Pause for manual testing after each phase completes (unless told otherwise)
+8. **Subagents don't commit** - Only the orchestrator (you) commits, after user verifies the phase
+9. **Communicate clearly** - When stuck, explain what you tried and what went wrong
+10. **Don't skip verification** - All automated checks must pass before human verification
 
 ## Post-Implementation
 

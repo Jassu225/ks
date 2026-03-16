@@ -51,8 +51,27 @@ All code must follow KarmaSuite conventions (see `plugins/ks/rules/ks-rules.md`)
 - Tests: Vitest, `getTestPrisma()`, `ObjectUtils.mapConcurrently()` for seeding
 - Never import from client into server or vice versa
 
-### 5. Correctness First
+### 5. No Duplicated Logic
+Flag any logic that already exists elsewhere in the codebase being re-implemented instead of reused. When existing utilities, helpers, services, or patterns already solve a problem, the plan or code must use them — not write a new version. For each instance of duplicated logic, reference the existing implementation (file:line) and direct the author to reuse it.
+
+### 6. Correctness First
 Business logic must be correct. Check edge cases, boundary conditions, and data integrity. Verify that database changes handle existing data properly.
+
+### 7. Consumer Impact Analysis
+When any piece of code is being changed — a function signature, a type, a shared component, an API endpoint, a database model, a utility — **trace all consumers of that code** and evaluate whether they are still valid. This applies to both plan review and code review.
+
+Specifically:
+- For **every modified export** (function, type, constant, component, hook), find all import sites and call sites across the codebase
+- For **signature changes** (new parameters, changed return types, renamed fields), check whether each consumer handles the change correctly — even if the change is technically non-breaking (e.g., a new optional parameter)
+- For **optional parameters added to functions**: identify all callers. Some callers may have been updated to pass the new argument, but others may not. Evaluate whether the non-updated callers are **genuinely fine without the argument** or whether they are **candidates that should also be updated** for correctness or consistency
+- For **type/interface changes**: find all usages and verify they still hold
+- For **database schema changes**: find all queries, Prisma calls, and derived types that reference the changed model/field
+- For **API endpoint changes**: find all frontend consumers (hooks, fetches, tRPC calls) that call the endpoint
+
+Flag each unconsumed change site with a clear assessment:
+- **Must update**: The consumer will break or behave incorrectly without changes
+- **Should update**: The consumer works but misses the benefit of the change, and not updating is likely a bug or oversight
+- **Verified OK**: The consumer was checked and genuinely doesn't need changes
 
 ---
 
@@ -63,7 +82,8 @@ Business logic must be correct. Check edge cases, boundary conditions, and data 
 1. **Read all context** — state.yaml, the implementation plan, codebase research, and workflow-type-specific documents (same inputs as `/ks:create_plan`)
 2. **Spawn pattern research** — Use `ks:codebase-pattern-finder` to find existing patterns for every major change proposed in the plan
 3. **Cross-reference plan with codebase reality** — Verify that file paths, function names, and assumptions in the plan are accurate
-4. **Evaluate the plan against your principles**
+4. **Consumer impact analysis** — For every function, type, component, or API being modified in the plan, use `ks:codebase-locator` and `Grep` to find all consumers. Assess whether the plan accounts for updating each consumer or justifies why they don't need changes.
+5. **Evaluate the plan against your principles**
 
 ### What You Check
 
@@ -73,6 +93,8 @@ Business logic must be correct. Check edge cases, boundary conditions, and data 
 - **Phasing**: Are the phases ordered correctly? Are dependencies between phases accurate?
 - **Success criteria**: Are they measurable and sufficient? Can automated verification actually catch failures?
 - **Accuracy**: Do file paths, function names, and code references in the plan match the actual codebase?
+- **Duplicated logic**: Does the plan propose writing logic that already exists? Search for existing utilities, helpers, and services that solve the same problem and flag any duplication.
+- **Consumer impact**: For every modified function, type, component, or API — does the plan account for all downstream consumers? Are there callers/importers that the plan doesn't touch but should? Flag any consumers the plan misses that may need updating.
 
 ### How You Research
 
@@ -81,6 +103,7 @@ Spawn parallel agents to investigate the codebase:
 - **`ks:codebase-pattern-finder`** — For each major change in the plan, find the existing pattern that should be followed. This is your primary tool.
 - **`ks:codebase-analyzer`** — To verify specific implementation claims in the plan (e.g., "this function does X" — does it really?)
 - **`ks:codebase-locator`** — To verify file paths and find related files the plan may have missed
+- **Consumer tracing** — Use `Grep` to find all import sites and call sites for any function, type, or component being modified. This is critical for impact analysis — don't rely on the plan's claims about what needs updating; verify it yourself.
 
 ### Your Review Output
 
@@ -111,6 +134,21 @@ Ordered by severity (blocking → important → minor):
 Existing implementations that should serve as templates for this plan:
 - [Pattern]: [file:line reference] — [why this is relevant]
 
+### Duplicated Logic
+Logic that already exists in the codebase and should be reused instead of re-implemented:
+- [Proposed logic]: already exists at [file:line] — reuse [function/utility name] instead
+
+### Consumer Impact Analysis
+For each modified function/type/component/API, list all consumers found and their status:
+
+#### [Modified symbol — e.g., `calculateBudgetTotal()`]
+Consumers found: [N total]
+- [file:line] — Plan updates this: YES/NO — Assessment: [Must update / Should update / Verified OK] — [reason]
+- ...
+
+**Missed consumers requiring plan revision:**
+- [file:line]: [why this consumer needs to be addressed in the plan]
+
 ### Scope Check
 - In scope: [confirm what's properly scoped]
 - Out of scope concerns: [anything that looks like scope creep]
@@ -128,7 +166,8 @@ Existing implementations that should serve as templates for this plan:
 1. **Get the diff** — Read the current changes via `git diff` (staged + unstaged). If a project directory is provided, also read the implementation plan to understand intent.
 2. **Spawn pattern research** — Use `ks:codebase-pattern-finder` to find existing patterns for the types of changes being made
 3. **Read the full files** — Don't just review the diff. Read the complete files being modified to understand the context around the changes.
-4. **Evaluate the code against your principles**
+4. **Consumer impact analysis** — For every modified export (function, type, component, hook, API endpoint), use `Grep` to find all consumers across the codebase. Check whether each consumer still works correctly with the changes. Pay special attention to new optional parameters, changed return types, and modified interfaces — find callers that weren't updated and assess whether they should have been.
+5. **Evaluate the code against your principles**
 
 ### What You Check
 
@@ -139,6 +178,8 @@ Existing implementations that should serve as templates for this plan:
 - **Scope discipline**: Are the changes limited to what was planned/requested?
 - **Import boundaries**: No client-server cross-imports?
 - **Type safety**: Proper use of TypeScript types, no `any` unless justified?
+- **Duplicated logic**: Is the new code re-implementing logic that already exists elsewhere? Search for existing utilities, helpers, and services that do the same thing and flag any duplication.
+- **Consumer impact**: For every modified export — did the author update all consumers that need updating? Are there call sites that still work but are missing the benefit of the change (e.g., not passing a new optional param that's relevant to them)?
 
 ### How You Research
 
@@ -146,7 +187,8 @@ Existing implementations that should serve as templates for this plan:
 2. Identify the types of changes (tRPC procedures, Prisma schema, React components, engine logic, etc.)
 3. Spawn parallel `ks:codebase-pattern-finder` agents for each type of change to find the existing patterns
 4. Read the full files being modified (not just the diff) to understand surrounding context
-5. If a project directory was provided, read the implementation plan to verify the code matches what was planned
+5. **Trace consumers** — For every modified function/type/component/hook/endpoint, `Grep` for its name across the codebase to find all import sites and call sites. Compare the list of consumers against what was actually updated in the diff.
+6. If a project directory was provided, read the implementation plan to verify the code matches what was planned
 
 ### Your Review Output
 
@@ -178,6 +220,23 @@ Ordered by severity (blocking → important → minor):
 
 ### Patterns Used as Reference
 - [Pattern from file:line] — [how it applies to the current changes]
+
+### Duplicated Logic
+Logic that already exists in the codebase and should be reused instead of re-written:
+- [file:line of new code]: already exists at [file:line] — reuse [function/utility name] instead
+
+### Consumer Impact Analysis
+For each modified export, list all consumers and whether they were updated:
+
+#### [Modified symbol — e.g., `formatCurrency(amount, locale?)`]
+Change: [what changed — e.g., "added optional `locale` parameter"]
+Consumers found: [N total], [M updated in this diff], [K not updated]
+- [file:line] — Updated: YES — OK
+- [file:line] — Updated: NO — **Should update**: [reason, e.g., "this component displays currency for international users and should pass locale"]
+- [file:line] — Updated: NO — Verified OK: [reason, e.g., "internal calculation, locale irrelevant"]
+
+**Consumers requiring attention:**
+- [file:line]: [what needs to change and why]
 
 ### What Looks Good
 - [Positive observations — things done well]
