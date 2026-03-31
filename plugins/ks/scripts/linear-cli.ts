@@ -8,16 +8,15 @@
  * Environment: LINEAR_API_KEY must be set (loaded from .env file)
  */
 
-import dotenv from 'dotenv';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
-
-const __script_dir = dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: ['.env', resolve(__script_dir, '..', '.config')] });
-
 import { LinearClient, Issue, Project, Team, User, Document, Comment, IssueLabel, Cycle } from '@linear/sdk';
 import { Command, Option } from 'commander';
 import chalk from 'chalk';
+
+import { loadEnv } from './lib/env.js';
+import { getLinearClient } from './lib/linear-client.js';
+
+loadEnv();
+
 // Mimics @linear/sdk ProjectUpdateHealthType - SDK only exports as type, not runtime value
 enum ProjectUpdateHealthType {
   AtRisk = 'atRisk',
@@ -30,13 +29,7 @@ enum ProjectUpdateHealthType {
 // ============================================================================
 
 function getClient(): LinearClient {
-  const apiKey = process.env.LINEAR_API_KEY;
-  if (!apiKey) {
-    console.error(chalk.red('Error: LINEAR_API_KEY environment variable is not set'));
-    console.error(chalk.yellow('Get your API key from: https://linear.app/settings/api'));
-    process.exit(1);
-  }
-  return new LinearClient({ apiKey });
+  return getLinearClient();
 }
 
 // ============================================================================
@@ -260,6 +253,7 @@ async function listProjectUpdates(projectIdOrSlug: string, options: { limit?: nu
 async function createProjectUpdate(projectIdOrSlug: string, options: {
   body: string;
   health?: ProjectUpdateHealthType;
+  attachments?: string[];
   json?: boolean;
 }): Promise<void> {
   const client = getClient();
@@ -272,11 +266,27 @@ async function createProjectUpdate(projectIdOrSlug: string, options: {
     process.exit(1);
   }
 
+  // Append attachments section to body if provided
+  let body = options.body;
+  if (options.attachments && options.attachments.length > 0) {
+    const links = options.attachments.map(a => {
+      const sepIdx = a.indexOf('|');
+      if (sepIdx === -1) {
+        console.error(chalk.red(`Invalid attachment format: "${a}". Use "Title|URL".`));
+        process.exit(1);
+      }
+      const title = a.substring(0, sepIdx).trim();
+      const url = a.substring(sepIdx + 1).trim();
+      return `- [${title}](${url})`;
+    });
+    body += `\n\n---\n**Attachments**\n${links.join('\n')}`;
+  }
+
   let result;
   try {
     result = await client.createProjectUpdate({
       projectId,
-      body: options.body,
+      body,
       health: options.health
     });
   } catch (e: unknown) {
@@ -1145,6 +1155,109 @@ function displayAttachments(issueIdentifier: string, attachments: Array<{ id: st
   }
 }
 
+async function createAttachment(issueIdentifier: string, options: {
+  title: string;
+  url: string;
+  subtitle?: string;
+  iconUrl?: string;
+  metadata?: string;
+  json?: boolean;
+}): Promise<void> {
+  const client = getClient();
+  const issue = await findIssueByIdentifier(client, issueIdentifier);
+
+  if (!issue) {
+    console.error(chalk.red(`Issue not found: ${issueIdentifier}`));
+    process.exit(1);
+  }
+
+  const input: Record<string, unknown> = {
+    issueId: issue.id,
+    title: options.title,
+    url: options.url,
+  };
+  if (options.subtitle) input.subtitle = options.subtitle;
+  if (options.iconUrl) input.iconUrl = options.iconUrl;
+  if (options.metadata) input.metadata = JSON.parse(options.metadata);
+
+  const result = await client.createAttachment(input as Parameters<typeof client.createAttachment>[0]);
+  const attachment = await result.attachment;
+
+  if (!attachment) {
+    console.error(chalk.red('Failed to create attachment'));
+    process.exit(1);
+  }
+
+  const data = {
+    id: attachment.id,
+    title: attachment.title,
+    subtitle: attachment.subtitle,
+    url: attachment.url,
+    createdAt: attachment.createdAt,
+  };
+
+  if (options.json) {
+    output(data, true);
+  } else {
+    console.log(chalk.green(`\n✓ Created attachment on ${issue.identifier}`));
+    console.log(`  Title: ${data.title}`);
+    if (data.subtitle) console.log(`  Subtitle: ${data.subtitle}`);
+    console.log(`  URL: ${data.url}`);
+  }
+}
+
+async function updateAttachment(attachmentId: string, options: {
+  title: string;
+  subtitle?: string;
+  iconUrl?: string;
+  metadata?: string;
+  json?: boolean;
+}): Promise<void> {
+  const client = getClient();
+
+  const input: Record<string, unknown> = {
+    title: options.title,
+  };
+  if (options.subtitle) input.subtitle = options.subtitle;
+  if (options.iconUrl) input.iconUrl = options.iconUrl;
+  if (options.metadata) input.metadata = JSON.parse(options.metadata);
+
+  const result = await client.updateAttachment(attachmentId, input as Parameters<typeof client.updateAttachment>[1]);
+  const attachment = await result.attachment;
+
+  if (!attachment) {
+    console.error(chalk.red('Failed to update attachment'));
+    process.exit(1);
+  }
+
+  const data = {
+    id: attachment.id,
+    title: attachment.title,
+    subtitle: attachment.subtitle,
+    url: attachment.url,
+  };
+
+  if (options.json) {
+    output(data, true);
+  } else {
+    console.log(chalk.green(`\n✓ Updated attachment ${attachmentId}`));
+    console.log(`  Title: ${data.title}`);
+    if (data.subtitle) console.log(`  Subtitle: ${data.subtitle}`);
+    console.log(`  URL: ${data.url}`);
+  }
+}
+
+async function deleteAttachment(attachmentId: string, options: { json?: boolean }): Promise<void> {
+  const client = getClient();
+  await client.deleteAttachment(attachmentId);
+
+  if (options.json) {
+    output({ success: true, id: attachmentId }, true);
+  } else {
+    console.log(chalk.green(`\n✓ Deleted attachment ${attachmentId}`));
+  }
+}
+
 // ============================================================================
 // Comment Commands
 // ============================================================================
@@ -1342,6 +1455,7 @@ projectCmd
     new Option('-h, --health <status>', 'Project health status')
       .choices(Object.values(ProjectUpdateHealthType))
   )
+  .option('-a, --attachments <items...>', 'Attachments as "Title|URL" pairs, appended to body')
   .option('-j, --json', 'Output as JSON')
   .action((project, opts) => createProjectUpdate(project, opts));
 
@@ -1370,9 +1484,10 @@ issueCmd
   .option('-t, --team <key>', 'Filter by team key')
   .option('-a, --assignee <id>', 'Filter by assignee (use "me" for yourself)')
   .option('-s, --state <name>', 'Filter by state name')
+  .option('--status <name>', 'Alias for --state')
   .option('-l, --limit <number>', 'Limit results', '50')
   .option('-j, --json', 'Output as JSON')
-  .action((opts) => listIssues({ ...opts, limit: parseInt(opts.limit) }));
+  .action((opts) => listIssues({ ...opts, state: opts.state || opts.status, limit: parseInt(opts.limit) }));
 
 issueCmd
   .command('get <identifier>')
@@ -1401,11 +1516,14 @@ issueCmd
   .option('--title <title>', 'New title')
   .option('--description <desc>', 'New description')
   .option('--state <name>', 'New state name')
+  .option('--status <name>', 'Alias for --state')
   .option('--assignee <id>', 'New assignee (use "me" or "none")')
   .option('--priority <number>', 'New priority', (v: string) => parseInt(v, 10))
   .option('--project <id>', 'Project ID')
   .option('-j, --json', 'Output as JSON')
-  .action(updateIssue);
+  .action((identifier: string, opts: Record<string, unknown>) =>
+    updateIssue(identifier, { ...opts, state: opts.state || opts.status } as Parameters<typeof updateIssue>[1])
+  );
 
 issueCmd
   .command('attachments <identifier>')
@@ -1498,6 +1616,42 @@ labelCmd
   .option('-t, --team <key>', 'Filter by team')
   .option('-j, --json', 'Output as JSON')
   .action(listLabels);
+
+// Attachment commands
+const attachmentCmd = program.command('attachment').description('Attachment operations');
+
+attachmentCmd
+  .command('list <identifier>')
+  .description('List attachments for an issue (e.g., KAR-123)')
+  .option('-j, --json', 'Output as JSON')
+  .action(getAttachments);
+
+attachmentCmd
+  .command('create <identifier>')
+  .description('Create an attachment on an issue (e.g., KAR-123)')
+  .requiredOption('--title <title>', 'Attachment title')
+  .requiredOption('--url <url>', 'Attachment URL')
+  .option('--subtitle <subtitle>', 'Attachment subtitle')
+  .option('--icon-url <iconUrl>', 'Icon URL (jpg/png, 20x20px)')
+  .option('--metadata <json>', 'Metadata as JSON string')
+  .option('-j, --json', 'Output as JSON')
+  .action(createAttachment);
+
+attachmentCmd
+  .command('update <id>')
+  .description('Update an attachment by ID')
+  .requiredOption('--title <title>', 'Attachment title')
+  .option('--subtitle <subtitle>', 'Attachment subtitle')
+  .option('--icon-url <iconUrl>', 'Icon URL (jpg/png, 20x20px)')
+  .option('--metadata <json>', 'Metadata as JSON string')
+  .option('-j, --json', 'Output as JSON')
+  .action(updateAttachment);
+
+attachmentCmd
+  .command('delete <id>')
+  .description('Delete an attachment by ID')
+  .option('-j, --json', 'Output as JSON')
+  .action(deleteAttachment);
 
 // Comment commands
 const commentCmd = program.command('comment').description('Comment operations');

@@ -56,17 +56,39 @@ linear project updates <id-or-slug-or-url> --limit 5
 
 # Create a project status update
 linear project update <id-or-slug-or-url> --body "Update text" --health onTrack
+
+# Create a project update with attachments (appended as links in the body)
+linear project update <id-or-slug-or-url> --body "Sprint progress" --health onTrack \
+  --attachments "Design Doc|https://..." "PR #45|https://github.com/..."
 ```
 
 Health options: `onTrack`, `atRisk`, `offTrack`
 
 Note on project updates:
 - The `--body` field supports markdown. Use Linear ticket links (e.g., `[KAR-123](https://linear.app/karmasuite/issue/KAR-123)`) so Linear auto-links them in the update.
+- Use `--attachments` to append linked resources to the update body. Format: `"Title|URL"` (one or more).
 - Always show the user the update body and ask for confirmation before posting.
 
 Note on project text fields:
 - `--description` = short summary shown under the project title
 - `--content` = full project description in markdown (the "Description" section in the UI)
+
+### Attachments
+
+```bash
+# List attachments on an issue
+linear attachment list KAR-123
+
+# Create an attachment on an issue
+linear attachment create KAR-123 --title "Design Doc" --url "https://..." \
+  --subtitle "Optional subtitle"
+
+# Update an attachment
+linear attachment update <attachment-id> --title "New Title" --subtitle "Updated"
+
+# Delete an attachment
+linear attachment delete <attachment-id>
+```
 
 ### Comments
 
@@ -130,6 +152,7 @@ When the user asks to interact with Linear:
 6. **Editing projects**: Use `linear project edit <id>` with `--description` (summary) or `--content` (full description)
 7. **Commenting**: Use `linear comment create KAR-XXX "body"` — supports markdown
 8. **Managing documents**: Create with `linear document create`, update with `linear document update`, delete with `linear document delete`
+9. **Attachments**: Use `linear attachment create KAR-XXX --title "..." --url "..."` to link resources to issues. Use `--attachments` on `linear project update` to embed links in project status updates
 
 ## Notes
 
