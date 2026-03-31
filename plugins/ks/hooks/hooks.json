@@ -18,6 +18,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/quality-typecheck.sh",
             "timeout": 120
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/suggest-code-simplifier.sh",
+            "timeout": 10
           }
         ]
       }
@@ -40,6 +45,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/quality-typecheck.sh",
             "timeout": 120
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/suggest-code-simplifier.sh",
+            "timeout": 10
           }
         ]
       }
