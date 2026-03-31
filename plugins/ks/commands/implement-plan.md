@@ -21,6 +21,7 @@ You are the **orchestrator**. You delegate deep analysis and heavy reading to su
 - User context: `{project-directory-path}/resources/user-context.md`
 - User stories: `{project-directory-path}/resources/user-stories.md`
 - TAD: `{project-directory-path}/resources/tad.md`
+- Linear tickets: `{project-directory-path}/resources/linear-tickets.md`
 
 **Ticket workflow** (`ticket` key in state.yaml — phases 1, 2, 9, 10 only):
 - Linear ticket details: fetched via `linear issue get {ticket.identifier}` (the ticket identifier comes from `state.yaml`)
@@ -65,6 +66,7 @@ Read ALL of these documents completely (no limit/offset):
 **Project workflow** (state.yaml has `project` key):
 3. {project-directory-path}/resources/tad.md
 4. {project-directory-path}/resources/user-stories.md
+5. {project-directory-path}/resources/linear-tickets.md
 
 **Ticket workflow** (state.yaml has `ticket` key):
 3. Fetch Linear ticket details via: linear issue get {ticket.identifier} (identifier from state.yaml)

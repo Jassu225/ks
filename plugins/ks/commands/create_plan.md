@@ -25,7 +25,7 @@ You are tasked with creating detailed implementation plans for KarmaSuite featur
 - User stories: `{project-directory-path}/resources/user-stories.md`
 - Prototype summary: `{project-directory-path}/resources/prototype.md`
 - TAD document: `{project-directory-path}/resources/tad.md`
-- Linear tickets (if created): `{project-directory-path}/resources/linear-tickets.md`
+- Linear tickets: `{project-directory-path}/resources/linear-tickets.md`
 
 **Ticket workflow** (`ticket` key in state.yaml — phases 1, 2, 9, 10 only):
 - Linear ticket details: fetched via `linear issue get {ticket.identifier}` (the ticket identifier comes from `state.yaml`)
@@ -69,7 +69,7 @@ When this command is invoked:
    - Read `{project-directory-path}/resources/user-stories.md`
    - Read `{project-directory-path}/resources/prototype.md`
    - Read `{project-directory-path}/resources/tad.md`
-   - Read `{project-directory-path}/resources/linear-tickets.md` (if exists)
+   - Read `{project-directory-path}/resources/linear-tickets.md`
    - Read `{project-directory-path}/resources/codebase-research.md`
 
    **For ticket workflows — fetch ticket details from Linear:**
