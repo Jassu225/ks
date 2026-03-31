@@ -14,6 +14,8 @@ You are tasked with converting Features from resources/user-stories.md into Line
 - State file: `{project-directory-path}/state.yaml` (for project ID and URL)
 - User context: `{project-directory-path}/resources/user-context.md`
 - User stories: `{project-directory-path}/resources/user-stories.md`
+- TAD: `{project-directory-path}/resources/tad.md`
+- Research file: `{project-directory-path}/resources/codebase-research.md`
 
 **Output:**
 - Linear tickets preview at `{project-directory-path}/resources/linear-tickets.md`
@@ -58,21 +60,30 @@ Example invocation:
    - User stories are grouped under Feature headings (e.g., `## Feature 1: Drag-and-Drop Reordering`)
    - Each user story has: ID (e.g., US-001), title, description, and acceptance criteria
 
-4. **Group user stories by Feature**:
+4. **Read TAD**:
+   - Read `{project-directory-path}/resources/tad.md` for technical architecture decisions
+   - Use the TAD to understand data model changes, RPC changes, component strategy, and technical complexity
+   - Factor TAD insights into story point estimation (e.g., a feature requiring schema migration + new RPC + UI changes is more effort than UI-only)
+
+5. **Read codebase research**:
+   - Read `{project-directory-path}/resources/codebase-research.md` for implementation context
+   - Use research findings to inform effort estimates (e.g., if similar patterns already exist, effort is lower; if new patterns are needed, effort is higher)
+
+6. **Group user stories by Feature**:
    - Identify all Features in the document
    - Group user stories under their parent Feature
    - Each Feature will become one Linear ticket
 
-5. **Fetch project context**:
+7. **Fetch project context**:
    - Run `linear project get <project-id> --json` (project ID from state.yaml)
    - If the project ID is invalid or not found, use `AskUserQuestion` to ask the user for the correct project ID, then retry
 
-6. **Create markdown preview**:
+8. **Create markdown preview**:
    - Create a markdown file at `{project-directory-path}/resources/linear-tickets.md`
    - For each Feature: title, consolidated user stories, and estimated story points
    - Ask user to review and approve before proceeding to create Linear tickets
 
-7. **Create Linear tickets**:
+9. **Create Linear tickets**:
    - Team: **Karmasuite** (ID: `8743465b-ed49-4fc6-a266-a4183b8e9f50`)
    - Project: Use the project ID from state.yaml
    - Priority: **3** (Medium)
@@ -110,6 +121,9 @@ For each Feature, use this format:
 
 [... additional user stories in this feature ...]
 
+## Technical Context
+[Relevant technical details from the TAD for this feature — e.g., data model changes, RPC changes, component strategy. Keep brief: 2-4 bullets max. Omit if no TAD-specific details apply to this feature.]
+
 ## Context
 - **Project**: [Project name from Linear]
 - **User Stories**: [List of US IDs, e.g., US-001, US-002, US-003]
@@ -127,24 +141,30 @@ For each Feature, use this format:
    - If not provided, ask user for the path
 2. Read `{project-directory-path}/state.yaml` to get project ID
 3. Read `{project-directory-path}/resources/user-context.md` for customer problem context
-4. Fetch project details from Linear using project ID
+4. Read `{project-directory-path}/resources/user-stories.md`
+5. Read `{project-directory-path}/resources/tad.md` for technical architecture and complexity
+6. Read `{project-directory-path}/resources/codebase-research.md` for implementation context
+7. Fetch project details from Linear using project ID
    - If project not found, ask user for correct project ID
-5. Read `{project-directory-path}/resources/user-stories.md`
-6. Parse markdown and identify Features (## Feature X: Name)
-7. Group user stories under their parent Feature
-8. Estimate story points for each Feature (sum of effort for all user stories)
-9. Create markdown preview file at `{project-directory-path}/resources/linear-tickets.md` containing:
-   - One ticket per Feature with consolidated user stories and estimated points
-10. Ask user to review and approve the markdown preview before proceeding
-11. Once approved, for each Feature:
+8. Parse markdown and identify Features (## Feature X: Name)
+9. Group user stories under their parent Feature
+10. Estimate story points for each Feature, factoring in:
+    - Sum of effort for all user stories in that feature
+    - Technical complexity from TAD (schema changes, new RPCs, new components)
+    - Implementation context from research (existing patterns to reuse vs new patterns needed)
+11. Create markdown preview file at `{project-directory-path}/resources/linear-tickets.md` containing:
+    - One ticket per Feature with consolidated user stories and estimated points
+12. Ask user to review and approve the markdown preview before proceeding
+13. Once approved, for each Feature:
     - Formulate title from the Feature name
     - Create description with:
       - Overview: Brief description of the feature
       - User Stories: Concise list of all user stories with their acceptance criteria
+      - Technical Context: Relevant TAD details for this feature (data model, RPC, component changes)
       - Context: Reference the project name and list of user story IDs
     - Assign story points based on feature estimate
     - Create the ticket using `linear issue create --title "<title>" --team KAR --description "<description>" --project <project-id> --priority 3`
-12. Report back to the user with a summary of created tickets (Feature names, IDs, and points)
+14. Report back to the user with a summary of created tickets (Feature names, IDs, and points)
 
 ## Important Notes
 

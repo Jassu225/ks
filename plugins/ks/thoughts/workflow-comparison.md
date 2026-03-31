@@ -127,6 +127,6 @@ Also: This phase is marked as **optional** in the implementation — users can s
 
 2. **Phase 5 practice vs tooling gap** — The prototype phase is the biggest gap between what the user does (Claude web) and what the tool provides (in-CLI prototype builder).
 
-3. **Phase 8 inputs are overstated** — Only `user-stories.md` is read, not TAD/context/research.
+3. ~~**Phase 8 inputs are overstated**~~ — **FIXED**: Now reads `user-context.md`, `tad.md`, and `codebase-research.md` in addition to `user-stories.md`. TAD informs technical complexity for story point estimation, and research informs implementation effort. Tickets include a Technical Context section with relevant TAD details.
 
 4. **Phase 10 spec is more complete than perceived** — The implementation command does define commit/PR/handoff steps, but the user feels it's insufficient in practice.
