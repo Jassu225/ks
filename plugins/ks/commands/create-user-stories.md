@@ -13,6 +13,7 @@ Create detailed user stories from an existing PRD that are clear, actionable, an
 
 **Input:** A project directory path provided via arguments: `$ARGUMENTS`
 - State file: `{project-directory-path}/state.yaml`
+- User context: `{project-directory-path}/resources/user-context.md`
 - Existing problem statement (optional): `{project-directory-path}/resources/prd.md`
 - Research file: `{project-directory-path}/resources/codebase-research.md`
 
@@ -28,12 +29,13 @@ Example invocation:
 ## The Job
 
 1. Read state.yaml from `{project-directory-path}/state.yaml` to get project info
-2. Read the existing problem statement (if exists) from `{project-directory-path}/resources/prd.md`
-3. Read and understand the research document at `{project-directory-path}/resources/codebase-research.md`
-4. Ask clarifying questions (with lettered options) iteratively until the user confirms they are satisfied
-5. Generate user stories based on answers
-6. Save to `{project-directory-path}/resources/user-stories.md`
-7. Ask the user to review and iterate until satisfied
+2. Read the user context at `{project-directory-path}/resources/user-context.md` to understand the customer problem, current workflow, proposed solution, and key assumptions
+3. Read the existing problem statement (if exists) from `{project-directory-path}/resources/prd.md`
+4. Read and understand the research document at `{project-directory-path}/resources/codebase-research.md`
+5. Ask clarifying questions (with lettered options) iteratively until the user confirms they are satisfied
+6. Generate user stories based on answers
+7. Save to `{project-directory-path}/resources/user-stories.md`
+8. Ask the user to review and iterate until satisfied
 
 **Important:** Do NOT start implementing. Just create the user stories.
 

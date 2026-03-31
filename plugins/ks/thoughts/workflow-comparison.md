@@ -123,7 +123,7 @@ Also: This phase is marked as **optional** in the implementation — users can s
 
 ## Recurring Patterns in Discrepancies
 
-1. **`user-context.md` listed as input too broadly** — Most commands (phases 3-9) don't read it directly. They rely on the PRD, research, and iterative Q&A instead. Only phase 2 (`research_codebase`) and the ticket workflow's phase 9 actually read it.
+1. ~~**`user-context.md` listed as input too broadly**~~ — **FIXED**: All phases 3-9 now read `user-context.md` as an input, matching the user's expectation that every phase has access to the original customer problem context.
 
 2. **Phase 5 practice vs tooling gap** — The prototype phase is the biggest gap between what the user does (Claude web) and what the tool provides (in-CLI prototype builder).
 

@@ -47,6 +47,7 @@ The PRD is ready for review when you can answer "yes" to all of these:
 
 **Input:** A project directory path provided via arguments: `$ARGUMENTS`
 - State file: `{project-directory-path}/state.yaml`
+- User context: `{project-directory-path}/resources/user-context.md`
 - Research file: `{project-directory-path}/resources/codebase-research.md`
 
 **Output:** PRD document at `{project-directory-path}/resources/prd.md`
@@ -60,11 +61,12 @@ Example invocation:
 1. Read state.yaml from `{project-directory-path}/state.yaml` to get:
    - Project ID and name
    - Project slug
-2. Read the research document at `{project-directory-path}/resources/codebase-research.md`
-3. Draft the PRD and save it to `{project-directory-path}/resources/prd.md`
-4. Present the draft to the user and ask for feedback
-5. Iterate: Update the prd.md file based on user feedback, continue until user is satisfied
-6. When the user explicitly approves the PRD:
+2. Read the user context at `{project-directory-path}/resources/user-context.md` to understand the customer problem, current workflow, proposed solution, and key assumptions
+3. Read the research document at `{project-directory-path}/resources/codebase-research.md`
+4. Draft the PRD and save it to `{project-directory-path}/resources/prd.md`
+5. Present the draft to the user and ask for feedback
+6. Iterate: Update the prd.md file based on user feedback, continue until user is satisfied
+7. When the user explicitly approves the PRD:
    - Run `linear project edit <project-id> --content "<full content of prd.md>"` (Markdown format)
 
 ---

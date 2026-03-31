@@ -12,6 +12,7 @@ This command reads the prototype summary and research documents, generates prior
 
 **Input:** A project directory path provided via arguments: `$ARGUMENTS`
 - State file: `{project-directory-path}/state.yaml` (for project ID and URL)
+- User context: `{project-directory-path}/resources/user-context.md`
 - Existing PRD: `{project-directory-path}/resources/prd.md` (from Phase 3)
 - Prototype summary: `{project-directory-path}/resources/prototype.md`
 - Research file: `{project-directory-path}/resources/codebase-research.md`
@@ -31,6 +32,7 @@ Example invocation:
    - Read `{project-directory-path}/state.yaml` to get project ID and URL
 
 2. **Read Documents**
+   - Read the user context at `{project-directory-path}/resources/user-context.md` to understand the customer problem, current workflow, proposed solution, and key assumptions
    - Read the research document at `{project-directory-path}/resources/codebase-research.md`
    - Read the prototype summary from `{project-directory-path}/resources/prototype.md`
    - Fetch the current Linear project description using the URL from state.yaml

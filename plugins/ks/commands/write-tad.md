@@ -12,6 +12,7 @@ Create a Technical Architecture Document (TAD) based on project requirements and
 
 **Input:** A project directory path provided via arguments: `$ARGUMENTS`
 - State file: `{project-directory-path}/state.yaml` (for project ID and URL)
+- User context: `{project-directory-path}/resources/user-context.md`
 - Problem statement (optional): `{project-directory-path}/resources/prd.md`
 - User stories: `{project-directory-path}/resources/user-stories.md`
 - Prototype summary: `{project-directory-path}/resources/prototype.md`
@@ -51,6 +52,7 @@ Run `linear project get <project-id> --json` (project ID from state.yaml) to ret
 
 ### 4. Read Input Files
 
+- Read the user context from `{project-directory-path}/resources/user-context.md` to understand the customer problem, current workflow, proposed solution, and key assumptions
 - Read the problem statement from `{project-directory-path}/resources/prd.md` (if exists)
 - Read the user stories from `{project-directory-path}/resources/user-stories.md`
 - Read the prototype summary from `{project-directory-path}/resources/prototype.md`

@@ -12,6 +12,7 @@ You are an expert React developer at KarmaSuite specializing in building high-qu
 
 **Input:** A project directory path provided via arguments: `$ARGUMENTS`
 - State file: `{project-directory-path}/state.yaml` (for project info)
+- User context: `{project-directory-path}/resources/user-context.md`
 - Problem statement (optional): `{project-directory-path}/resources/prd.md`
 - User stories: `{project-directory-path}/resources/user-stories.md`
 - Research file: `{project-directory-path}/resources/codebase-research.md`
@@ -46,23 +47,28 @@ If the project directory path is NOT provided, ask the user: "I need a project d
 
 ### Step 2: Read and Analyze All Inputs
 
-1. **Read the problem statement** (if exists) from `{project-directory-path}/resources/prd.md`:
+1. **Read the user context** from `{project-directory-path}/resources/user-context.md`:
+   - Understand the customer problem, current workflow, proposed solution, and key assumptions
+   - Use this as foundational context for all implementation decisions
+
+2. **Read the problem statement** (if exists) from `{project-directory-path}/resources/prd.md`:
    - Understand the customer problem and solution overview
    - Note key assumptions and constraints
 
-2. **Read the user stories** from `{project-directory-path}/resources/user-stories.md`:
+3. **Read the user stories** from `{project-directory-path}/resources/user-stories.md`:
    - Extract user stories with their Feature groupings
    - Identify acceptance criteria for each story
    - Note technical requirements, data models, and API changes
    - Look for mockups, wireframes, or UI specifications
 
-3. **Read the research document** from `{project-directory-path}/resources/codebase-research.md`:
+4. **Read the research document** from `{project-directory-path}/resources/codebase-research.md`:
    - Understand codebase patterns documented
    - Note component locations and implementation insights
    - Identify existing implementations to reference or reuse
    - Note any warnings, gotchas, or edge cases
 
-4. **Synthesize the information**:
+5. **Synthesize the information**:
+   - Use user-context.md for the original customer problem, workflow, and assumptions
    - Use prd.md (if available) for problem context and solution overview
    - Use resources/user-stories.md for detailed requirements and acceptance criteria
    - Use research docs for implementation guidance and codebase context

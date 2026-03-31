@@ -20,6 +20,7 @@ You are tasked with creating detailed implementation plans for KarmaSuite featur
 **Additional inputs depend on workflow type** (detected from `state.yaml` root key):
 
 **Project workflow** (`project` key in state.yaml — all 10 phases):
+- User context: `{project-directory-path}/resources/user-context.md`
 - Problem statement (optional): `{project-directory-path}/resources/prd.md`
 - User stories: `{project-directory-path}/resources/user-stories.md`
 - Prototype summary: `{project-directory-path}/resources/prototype.md`
@@ -63,6 +64,7 @@ When this command is invoked:
 4. **Read input files based on workflow type**:
 
    **For project workflows — read all project files:**
+   - Read `{project-directory-path}/resources/user-context.md`
    - Read `{project-directory-path}/resources/prd.md` (if exists)
    - Read `{project-directory-path}/resources/user-stories.md`
    - Read `{project-directory-path}/resources/prototype.md`
@@ -84,6 +86,7 @@ When this command is invoked:
 
    **For project workflows:**
    - State file to get project info (ID, name, URL)
+   - User context for original customer problem, workflow, solution, and assumptions
    - PRD for problem context (if exists)
    - User stories for detailed requirements
    - Prototype summary for implementation decisions already made
@@ -239,6 +242,7 @@ After structure approval:
 **For project workflows:**
 - **Project**: {project name from state.yaml}
 - **Linear URL**: {project URL from state.yaml}
+- **User Context**: `{project-directory-path}/resources/user-context.md`
 - **User Stories**: `{project-directory-path}/resources/user-stories.md`
 - **TAD**: `{project-directory-path}/resources/tad.md`
 - **Research**: `{project-directory-path}/resources/codebase-research.md`
