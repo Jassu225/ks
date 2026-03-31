@@ -115,7 +115,9 @@ Approved?: No
 
 ## Supporting the feature flag
 
-{do we need a feature flag for this new/improved feature? are we concerned about it being particularly complex to support? how will we add it to the Front End and Back End?}
+{**Project workflows: this section is mandatory.** Project workflows land code via per-phase PRs, so all new functionality must be gated behind a feature flag. Describe the feature flag strategy: what flag name to use, how it gates the feature on both Front End and Back End, and how to ensure partial implementations are invisible to users until the flag is enabled.}
+
+{For other workflows: do we need a feature flag for this new/improved feature? are we concerned about it being particularly complex to support? how will we add it to the Front End and Back End?}
 ```
 
 **Important**:

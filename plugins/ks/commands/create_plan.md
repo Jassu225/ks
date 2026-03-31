@@ -470,6 +470,12 @@ When the plan is complete:
 
 7. **Follow KarmaSuite Conventions** (see the "KarmaSuite Conventions" section in `plugins/ks/rules/ks-rules.md` for the full list of conventions and domain-specific patterns)
 
+8. **Feature Flag First (project workflows only)**:
+   - Project workflows land code via per-phase PRs, so all new functionality must be gated behind a feature flag
+   - **Phase 1 of the implementation plan must include feature flag setup** — create the flag and gate the entry points before any functional code is added
+   - The feature flag strategy should come from the TAD (`tad.md`). If the TAD doesn't specify one, research existing feature flag patterns in the codebase and include the strategy in the plan.
+   - The final phase should include enabling the flag or documenting the flag name for manual enablement after review
+
 ## Success Criteria Guidelines
 
 **Always separate into two categories:**

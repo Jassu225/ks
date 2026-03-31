@@ -116,6 +116,8 @@ Approved?:
 - (write a list of all the doubts, edge cases and open discussions)
 ```
 
+**Project workflows:** Always check `- [x] needs Feature Flag?`. Project workflows land code via per-phase PRs, so incomplete features must be gated behind a feature flag to prevent exposing partial functionality to users.
+
 ---
 
 ### Quality Reference
