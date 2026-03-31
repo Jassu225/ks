@@ -129,4 +129,4 @@ Also: This phase is marked as **optional** in the implementation — users can s
 
 3. ~~**Phase 8 inputs are overstated**~~ — **FIXED**: Now reads `user-context.md`, `tad.md`, and `codebase-research.md` in addition to `user-stories.md`. TAD informs technical complexity for story point estimation, and research informs implementation effort. Tickets include a Technical Context section with relevant TAD details.
 
-4. **Phase 10 spec is more complete than perceived** — The implementation command does define commit/PR/handoff steps, but the user feels it's insufficient in practice.
+4. ~~**Phase 10 spec is more complete than perceived**~~ — **FIXED**: Project workflows now create a PR per phase against the project branch, with a final consolidated PR to main. Ticket workflows retain the single-PR-at-the-end flow.

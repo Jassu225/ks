@@ -18,6 +18,7 @@ You are the **orchestrator**. You delegate deep analysis and heavy reading to su
 **Additional inputs depend on workflow type** (detected from `state.yaml` root key):
 
 **Project workflow** (`project` key in state.yaml — all 10 phases):
+- User context: `{project-directory-path}/resources/user-context.md`
 - User stories: `{project-directory-path}/resources/user-stories.md`
 - TAD: `{project-directory-path}/resources/tad.md`
 
@@ -228,13 +229,20 @@ Automated verification:
 - Formatting/Linting/Typecheck: handled by hooks (runs automatically on stop)
 - [ ] Tests: [PASS/FAIL]
 
-Please verify the implementation. Once verified, I'll commit and proceed to Phase [N+1].
+Please verify the implementation. Once verified, I'll commit, create a PR (project workflows), and proceed to Phase [N+1].
 ```
 
 3. **Wait for user confirmation** — do NOT proceed until the user approves
 4. **Commit** all changes for this phase with the appropriate message format
 5. **Update plan checkboxes** for the completed phase using the Edit tool
-6. **Proceed to next phase** — repeat from Step 2a
+6. **Create a PR for this phase (project workflows only)**:
+   - Create a branch for this phase if not already on one: `{project-slug}/phase-{N}` (e.g., `budget-category-reordering/phase-1`)
+   - Push the branch and create a PR against the **project branch** (`{project-slug}`, e.g., `budget-category-reordering`) using `/ks:create_pr`
+   - The PR title should include the phase number and a summary of what was done (e.g., "Phase 1: Add sort_order column to budget categories")
+   - Wait for user to confirm the PR looks good before proceeding
+   - After PR is approved/merged, switch to the project branch and pull the latest changes before starting the next phase
+   - **Ticket workflows skip this step** — they create a single PR in Post-Implementation
+7. **Proceed to next phase** — repeat from Step 2a
 
 ## Resuming Work
 
@@ -312,13 +320,28 @@ If any of the following occur, flag to the user for review:
 
 After ALL phases are complete and committed:
 
-1. **Create a PR** using `/ks:create_pr`
+### Project Workflows
+
+Each phase already has its own PR against the project branch. After the final phase PR is merged:
+
+1. **Create a final PR** from the project branch (`{project-slug}`) to `main` using `/ks:create_pr`
+   - This PR represents the complete feature — all phases consolidated
 2. **Run automated code review** by spawning a sub-agent:
    ```
    Agent(subagent_type: "general-purpose", prompt: "Run /code-review:code-review to review all changes in the current PR. Report back with any issues found.")
    ```
    Address any high-confidence issues before finalizing.
 3. **Congratulate the user**: "Project implementation complete! All phases have been successfully executed."
+
+### Ticket Workflows
+
+1. **Create a PR** using `/ks:create_pr`
+2. **Run automated code review** by spawning a sub-agent:
+   ```
+   Agent(subagent_type: "general-purpose", prompt: "Run /code-review:code-review to review all changes in the current PR. Report back with any issues found.")
+   ```
+   Address any high-confidence issues before finalizing.
+3. **Congratulate the user**: "Ticket implementation complete! All phases have been successfully executed."
 
 ## Remember
 
