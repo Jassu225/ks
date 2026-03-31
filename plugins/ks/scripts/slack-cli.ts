@@ -8,7 +8,6 @@
  * Environment: SLACK_TOKEN must be set (loaded from .env file)
  */
 
-import dotenv from 'dotenv';
 import { WebClient } from '@slack/web-api';
 import { Command, Option } from 'commander';
 import chalk from 'chalk';
@@ -16,8 +15,9 @@ import { createReadStream, readFileSync, readdirSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
-const __script_dir = dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: ['.env', resolve(__script_dir, '..', '.config')] });
+import { loadEnv } from './lib/env.js';
+
+loadEnv();
 
 // ============================================================================
 // Client Initialization
@@ -1366,6 +1366,7 @@ async function listEmoji(options: { json?: boolean }): Promise<void> {
 interface TemplateFrontMatter {
   name: string;
   description: string;
+  [key: string]: string;
 }
 
 function getTemplatesDir(): string {
@@ -1405,7 +1406,7 @@ function parseFrontMatter(content: string): { frontMatter: TemplateFrontMatter |
   if (!frontMatter.name || !frontMatter.description) return { frontMatter: null, body: content };
 
   return {
-    frontMatter: { name: frontMatter.name, description: frontMatter.description },
+    frontMatter: frontMatter as TemplateFrontMatter,
     body,
   };
 }
@@ -1434,6 +1435,10 @@ function listTemplates(): void {
     if (frontMatter) {
       console.log(`  ${chalk.cyan(frontMatter.name)}`);
       console.log(`  ${chalk.dim(frontMatter.description)}`);
+      for (const [key, value] of Object.entries(frontMatter)) {
+        if (key === 'name' || key === 'description') continue;
+        console.log(`  ${chalk.dim(key + ':')} ${value}`);
+      }
       console.log(`  ${chalk.dim('File:')} ${file}`);
     } else {
       console.log(`  ${chalk.cyan(file)}`);
@@ -1456,16 +1461,7 @@ function viewTemplate(filename: string): void {
     process.exit(1);
   }
 
-  const { frontMatter, body } = parseFrontMatter(content);
-
-  if (frontMatter) {
-    console.log(chalk.bold(`\n${frontMatter.name}`));
-    console.log(chalk.dim(frontMatter.description));
-    console.log();
-  }
-
-  console.log(body.trim());
-  console.log();
+  console.log(content);
 }
 
 // ============================================================================

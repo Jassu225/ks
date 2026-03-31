@@ -1,0 +1,291 @@
+{
+  "name": "KS Log Command",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ks-log",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "c8a1f2e0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+      "name": "Slack Slash Command",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "ks-log-webhook-001"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst headers = $input.first().json.headers;\nconst slackSignature = headers['x-slack-signature'];\n\nif (slackSignature) {\n  // ── Slack signing verification ──\n  const binData = await this.helpers.getBinaryDataBuffer(0, 'data');\n  const rawBody = await this.helpers.binaryToString(binData);\n\n  const signingSecret = $env.SLACK_SIGNING_SECRET;\n  const timestamp = headers['x-slack-request-timestamp'];\n\n  if (Math.abs(Math.floor(Date.now() / 1000) - parseInt(timestamp)) > 300) {\n    throw new Error('Request too old');\n  }\n\n  const sigBasestring = `v0:${timestamp}:${rawBody}`;\n  const computed = 'v0=' + crypto\n    .createHmac('sha256', signingSecret)\n    .update(sigBasestring, 'utf8')\n    .digest('hex');\n\n  if (!crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(slackSignature))) {\n    throw new Error('Invalid Slack signature');\n  }\n} else {\n  // ── API key verification (for Claude Code) ──\n  const authHeader = headers['authorization'] || '';\n  const expectedKey = $env.CLAUDE_CODE_N8N_API_KEY;\n\n  if (!expectedKey || authHeader !== `Bearer ${expectedKey}`) {\n    throw new Error('Unauthorized: invalid or missing API key');\n  }\n}\n\nreturn $input.all();"
+      },
+      "id": "d9b2e3f1-2b3c-4d4e-9f5a-6b7c8d9e0f1a",
+      "name": "Verify Auth",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "noData",
+        "options": {}
+      },
+      "id": "e0c3f4a2-3c4d-4e5f-0a6b-7c8d9e0f1a2b",
+      "name": "Acknowledge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst headers = input.headers;\nconst body = input.body;\nconst isSlack = !!headers['x-slack-signature'];\n\nlet rawText, userName, responseUrl;\n\nif (isSlack) {\n  rawText = (body.text || '').trim();\n  userName = body.user_name || 'unknown';\n  responseUrl = body.response_url || '';\n} else {\n  rawText = (body.text || '').trim();\n  userName = body.user || 'claude-code';\n  responseUrl = '';\n}\n\n// Parse status and task from text\nconst validStatuses = ['STARTED', 'PAUSED', 'RESUMED'];\nconst parts = rawText.split(/\\s+/);\nconst firstWord = (parts[0] || '').toUpperCase();\nconst isValidStatus = validStatuses.includes(firstWord);\n\nconst status = isValidStatus ? firstWord : '';\nconst task = isValidStatus ? parts.slice(1).join(' ') : rawText;\n\nconst now = new Date();\nconst timestamp = now.toISOString();\n\nreturn [{\n  json: {\n    isValidStatus,\n    isSlack,\n    status,\n    task,\n    rawText,\n    userName,\n    responseUrl,\n    timestamp,\n  }\n}];"
+      },
+      "id": "f1d4a5b3-4d5e-4f6a-1b7c-8d9e0f1a2b3c",
+      "name": "Validate & Extract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": ""
+          },
+          "conditions": [
+            {
+              "id": "valid-status-check",
+              "leftValue": "={{ $json.isValidStatus }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a2e5b6c4-5e6f-4a7b-2c8d-9e0f1a2b3c4d",
+      "name": "Valid Status?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_URL",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.timestamp }}",
+            "User": "={{ $json.userName }}",
+            "Status": "={{ $json.status }}",
+            "Task": "={{ $json.task }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "User",
+              "displayName": "User",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Task",
+              "displayName": "Task",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b3f6c7d5-6f7a-4b8c-3d9e-0f1a2b3c4d5e",
+      "name": "Append to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1100,
+        -100
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Post confirmation to Slack only if this came from a Slack slash command\nconst responseUrl = $('Validate & Extract').item.json.responseUrl;\nconst status = $('Validate & Extract').item.json.status;\nconst task = $('Validate & Extract').item.json.task;\n\nif (responseUrl) {\n  const taskSuffix = task ? ` ${task}` : '';\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: responseUrl,\n    body: {\n      response_type: 'ephemeral',\n      text: `\\u2705 Logged: *${status}*${taskSuffix}`,\n    },\n    json: true,\n  });\n}\n\nreturn [{ json: { success: true } }];"
+      },
+      "id": "c4a7d8e6-7a8b-4c9d-4e0f-1a2b3c4d5e6f",
+      "name": "Send Confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Post error to Slack only if this came from a Slack slash command\nconst responseUrl = $('Validate & Extract').item.json.responseUrl;\nconst rawText = $('Validate & Extract').item.json.rawText;\n\nif (responseUrl) {\n  const hint = rawText\n    ? `\\u274c Invalid status: \"${rawText}\".\\nUsage: \\`/log STARTED\\`, \\`/log PAUSED\\`, or \\`/log RESUMED\\``\n    : `\\u274c Please provide a status.\\nUsage: \\`/log STARTED\\`, \\`/log PAUSED\\`, or \\`/log RESUMED\\``;\n\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: responseUrl,\n    body: {\n      response_type: 'ephemeral',\n      text: hint,\n    },\n    json: true,\n  });\n}\n\nreturn [{ json: { success: false } }];"
+      },
+      "id": "d5b8e9f7-8b9c-4d0e-5f1a-2b3c4d5e6f7a",
+      "name": "Send Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        120
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Slack Slash Command": {
+      "main": [
+        [
+          {
+            "node": "Verify Auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Auth": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge": {
+      "main": [
+        [
+          {
+            "node": "Validate & Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Extract": {
+      "main": [
+        [
+          {
+            "node": "Valid Status?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Status?": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "Send Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {},
+  "tags": [
+    {
+      "name": "slack"
+    },
+    {
+      "name": "log"
+    }
+  ]
+}

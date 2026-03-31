@@ -56,7 +56,7 @@ When running the `ks:code-simplifier` agent, always read its agent definition fi
 
 ## Workflow State Files
 
-When updating `state.yaml`, refer to the corresponding JSON schema: `plugins/ks/scripts/state.schema.json` (project workflow) or `plugins/ks/scripts/ticket-state.schema.json` (ticket workflow).
+When updating `state.yaml`, refer to the corresponding JSON schema. To locate them, read the `$KS_PHASE_FILES_DIR` environment variable (run `echo $KS_PHASE_FILES_DIR` via Bash), then find the schemas at `$KS_PHASE_FILES_DIR/../scripts/project-state.schema.json` (project workflow) or `$KS_PHASE_FILES_DIR/../scripts/ticket-state.schema.json` (ticket workflow).
 
 ## KarmaSuite Conventions
 
@@ -69,12 +69,21 @@ When updating `state.yaml`, refer to the corresponding JSON schema: `plugins/ks/
 - Never import from client into server or vice versa
 - Testing: Vitest with proper database setup
 
+## Slack Templates
+- When a Slack template specifies a channel, ALWAYS use that channel. Never offer alternative channels as options. Just confirm the message content and send to the template's channel.
+
 ### For Database Changes
 1. Update Prisma schema (alphabetically ordered, @map annotations)
 2. Run migration: `cd packages/prisma && pnpm migrate:dev`
 3. Update related TypeScript types
 4. Add/update tRPC procedures
 5. Test with: `cd packages/prisma && pnpm migrate:reset:test`
+
+### For Database Views
+When creating a new view or modifying an existing one, **do not edit `database_views.sql` directly**. Instead:
+1. Create a new Prisma migration manually — `mkdir` a new timestamped directory under `packages/prisma/prisma/migrations/` (e.g., `20260317120000_update_portfolio_summary_view`)
+2. Write the updated `CREATE OR REPLACE VIEW` SQL in the new migration's `migration.sql`
+3. This ensures the change is tracked as a migration and applied in order during deployments
 
 ### For Engine/Business Logic
 1. Locate in `packages/engines/src/`

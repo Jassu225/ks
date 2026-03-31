@@ -160,7 +160,8 @@ echo "" >&2
 if [[ -d "${MAIN_REPO_DIR}/.claude" ]]; then
     info "Removing .claude folder from main repo before worktree creation..."
     rm -rf "${MAIN_REPO_DIR}/.claude"
-    success "Removed .claude folder from main repo"
+    git -C "$MAIN_REPO_DIR" checkout -- .claude/agents/test-writer.md 2>/dev/null || true
+    success "Removed .claude folder from main repo (restored agents/test-writer.md)"
 fi
 
 # Create the worktrees base directory if it doesn't exist
@@ -251,11 +252,12 @@ else
     warn ".scripts/ folder not found in main repo, skipping"
 fi
 
-# Delete .claude folder if it exists
+# Delete .claude folder if it exists (preserves agents/test-writer.md)
 info "Removing .claude folder from worktree..."
 if [[ -d "${WORKTREE_PATH}/.claude" ]]; then
     rm -rf "${WORKTREE_PATH}/.claude"
-    success "Removed .claude folder"
+    git -C "$WORKTREE_PATH" checkout -- .claude/agents/test-writer.md 2>/dev/null || true
+    success "Removed .claude folder (restored agents/test-writer.md)"
 else
     info ".claude folder not present, skipping"
 fi
