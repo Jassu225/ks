@@ -25,7 +25,7 @@ echo ""
 echo "=== Configuring shell ==="
 ZSHRC="$HOME/.zshrc"
 
-# Set DEV and KS_PHASE_FILES_DIR in scripts/.env
+# Set DEV and KS_PLUGIN_DIR in scripts/.env
 ENV_FILE="$SCRIPTS_DIR/.env"
 if [ "$DEV_MODE" = true ]; then
   if [ -f "$ENV_FILE" ]; then
@@ -39,19 +39,16 @@ if [ "$DEV_MODE" = true ]; then
     echo "DEV=true" > "$ENV_FILE"
   fi
   echo "Set DEV=true in $ENV_FILE"
-  PHASE_FILES_PATH="$PLUGIN_DIR/project-manager"
-else
-  PHASE_FILES_PATH="$HOME/.claude/plugins/ks/project-manager"
 fi
 
-# Set KS_PHASE_FILES_DIR in scripts/.env
-if [ -f "$ENV_FILE" ] && grep -q "^KS_PHASE_FILES_DIR=" "$ENV_FILE" 2>/dev/null; then
-  sed -i '' "s|^KS_PHASE_FILES_DIR=.*|KS_PHASE_FILES_DIR=$PHASE_FILES_PATH|" "$ENV_FILE"
+# Set KS_PLUGIN_DIR in scripts/.env
+if [ -f "$ENV_FILE" ] && grep -q "^KS_PLUGIN_DIR=" "$ENV_FILE" 2>/dev/null; then
+  sed -i '' "s|^KS_PLUGIN_DIR=.*|KS_PLUGIN_DIR=$PLUGIN_DIR|" "$ENV_FILE"
 else
   [ -s "$ENV_FILE" ] && [ -n "$(tail -c 1 "$ENV_FILE")" ] && echo "" >> "$ENV_FILE"
-  echo "KS_PHASE_FILES_DIR=$PHASE_FILES_PATH" >> "$ENV_FILE"
+  echo "KS_PLUGIN_DIR=$PLUGIN_DIR" >> "$ENV_FILE"
 fi
-echo "Set KS_PHASE_FILES_DIR=$PHASE_FILES_PATH in $ENV_FILE"
+echo "Set KS_PLUGIN_DIR=$PLUGIN_DIR in $ENV_FILE"
 
 # Add scripts to PATH (replace old c-scripts PATH if present)
 PATH_LINE="export PATH=\"$SCRIPTS_DIR:\$PATH\""

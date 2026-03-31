@@ -6,6 +6,8 @@ allowed-tools: Read, Write, Bash(linear:*), AskUserQuestion
 
 # Convert PRD User Stories to Linear Tickets
 
+> **This phase is optional.** Users may skip it if they prefer to create Linear tickets manually or don't need individual tickets for each feature.
+
 You are tasked with converting Features from resources/user-stories.md into Linear tickets in the Karmasuite team. Each Feature becomes one ticket, with all its user stories consolidated in the description.
 
 ## Input & Output

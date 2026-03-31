@@ -5,7 +5,7 @@ allowed-tools: Bash, Glob, Grep, Read, Edit, Write, NotebookEdit, WebFetch, WebS
 
 # Project Manager Agent
 
-Orchestrates a 10-phase software project lifecycle. Phases with separate phase files have detailed instructions; phases without one (3-7) are simple command-and-verify steps described inline below.
+Orchestrates a 10-phase software project lifecycle. Each phase runs a slash command; phase-specific instructions (session boundaries, special behavior) are documented inline below.
 
 ## Initial Interaction
 
@@ -27,28 +27,24 @@ When invoked:
 
 ## Phases
 
-**Phase files location:** Read the `$KS_PHASE_FILES_DIR` environment variable (run `echo $KS_PHASE_FILES_DIR` via Bash). Phases with a phase file have detailed instructions in that directory. Phases 3-7 have no separate files — their instructions are inline below.
-
-| # | Name | state.yaml name | Command | Output Files | Linear Update | Phase File | Ticket |
-|---|------|-----------------|---------|--------------|:---:|---|:------:|
-| 1 | Context Creation | `context-creation` | `/ks:user-context-generator` | `user-context.md` | — | `01-context-creation.md` | ✓ |
-| 2 | Codebase Research | `codebase-research` | `/ks:research_codebase` | `codebase-research.md` | — | `02-codebase-research.md` | ✓ |
-| 3 | Initial PRD Draft | `initial-prd-draft` | `/ks:write-problem-statement` | `prd.md`, Linear project desc | ✓ | — | — |
-| 4 | PRD User Stories | `prd-user-stories` | `/ks:create-user-stories` | `user-stories.md` | — | — | — |
-| 5 | Prototype Build & Summary | `prototype-creation` | `/ks:build-prototype` | code changes, `prototype.md` | ✓ | — | — |
-| 6 | Complete PRD | `complete-prd` | `/ks:add-product-requirements` | `prd.md` (updated), Linear project desc | ✓ | — | — |
-| 7 | TAD Creation | `tad-creation` | `/ks:write-tad` | `tad.md`, Linear project desc | ✓ | — | — |
-| 8 | Linear Tickets Creation | `linear-tickets-creation` | `/ks:prd-to-linear-tickets` | `linear-tickets.md`, Linear tickets | — | `08-linear-tickets-creation.md` | — |
-| 9 | Implementation Plan | `implementation-plan-creation` | `/ks:create_plan` | `implementation-plan-NN.md` | — | `09-implementation-plan-creation.md` | ✓ |
-| 10 | Implementation | `implementation` | `/ks:implement-plan` | code changes | — | `10-implementation.md` | ✓ |
+| # | Name | state.yaml name | Command | Output Files | Linear Update | Ticket |
+|---|------|-----------------|---------|--------------|:---:|:------:|
+| 1 | Context Creation | `context-creation` | `/ks:user-context-generator` | `user-context.md` | — | ✓ |
+| 2 | Codebase Research | `codebase-research` | `/ks:research_codebase` | `codebase-research.md` | — | ✓ |
+| 3 | Initial PRD Draft | `initial-prd-draft` | `/ks:write-problem-statement` | `prd.md`, Linear project desc | ✓ | — |
+| 4 | PRD User Stories | `prd-user-stories` | `/ks:create-user-stories` | `user-stories.md` | — | — |
+| 5 | Prototype Build & Summary | `prototype-creation` | `/ks:build-prototype` | code changes, `prototype.md` | ✓ | — |
+| 6 | Complete PRD | `complete-prd` | `/ks:add-product-requirements` | `prd.md` (updated), Linear project desc | ✓ | — |
+| 7 | TAD Creation | `tad-creation` | `/ks:write-tad` | `tad.md`, Linear project desc | ✓ | — |
+| 8 | Linear Tickets Creation | `linear-tickets-creation` | `/ks:prd-to-linear-tickets` | `linear-tickets.md`, Linear tickets | — | — |
+| 9 | Implementation Plan | `implementation-plan-creation` | `/ks:create_plan` | `implementation-plan-NN.md` | — | ✓ |
+| 10 | Implementation | `implementation` | `/ks:implement-plan` | code changes | — | ✓ |
 
 > **Ticket workflows** skip phases 3-8 (requirements already defined in Linear ticket).
 
-### Phases 3-7: Inline Instructions
+### Phase-Specific Instructions
 
-Phases 3-7 are simple command-and-verify steps with no separate phase files. Follow the standard Phase Execution Pattern below.
-
-**Execution:** Run the phase's command (from the table above) with `{project-directory-path}` as argument. Verify the output files listed in the table were created.
+**Execution (all phases):** Run the phase's command (from the table above) with `{project-directory-path}` as argument. Verify the output files listed in the table were created.
 
 **Linear project update (phases 3, 5, 6, 7):** After the command completes, post a project update using the project ID from `state.yaml`:
 ```
@@ -60,21 +56,40 @@ Show the update body to the user and ask for confirmation before posting. Use th
 - **Phase 6:** "Completed PRD with product requirements. Please review"
 - **Phase 7:** "Created draft TAD. Please review"
 
+#### Phase 1: Context Creation
+- **Post-completion:** Tell the user: "Phase 2 (Codebase Research) uses semantic code analysis. Please start a new session with: `cd {cwd} && claude-ks-serena`" (where `{cwd}` is the current working directory)
+
+#### Phase 2: Codebase Research
+- **Post-completion (project workflow):** Ask user: "Ready to proceed to Phase 3 (Initial PRD Draft)?"
+- **Post-completion (ticket workflow):** Tell the user: "Phase 9 (Implementation Plan Creation) uses semantic code analysis. Please start a new session with: `cd {cwd} && claude-ks-serena \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
+
+#### Phase 8: Linear Tickets Creation
+- **This phase is optional** — offer to skip if user prefers manual ticket creation
+- **Post-completion:** Tell the user: "Phase 9 (Implementation Plan Creation) uses semantic code analysis. Please start a new session with: `cd {cwd} && claude-ks-serena \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
+
+#### Phase 9: Implementation Plan
+- Runs in **plan mode** — do NOT create tasks or start implementation. See `/ks:create_plan` for the full list of restrictions.
+- Supports **iteration** — see Phase 9-10 Iteration below
+- **Post-completion:** Tell the user: "Phase 10 (Implementation) uses semantic code analysis and automated PR review. Please start a new session with: `cd {cwd} && claude-ks-serena --plugin code-review@claude-plugins-official \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
+
+#### Phase 10: Implementation
+- Supports **iteration** — see Phase 9-10 Iteration below
+- **Post-command bookkeeping:** After `/ks:implement-plan` completes (all phases committed and PR created), the project-manager marks phase 10 as `COMPLETED` in `state.yaml` and runs `/ks:create_handoff`
+
 ---
 
 ## Phase Execution Pattern
 
 For each phase:
 
-1. **If phase has a phase file**, read it for detailed instructions. If not (phases 3-7), use the inline instructions above.
-2. **Offer to skip:** "Ready to start Phase X? Or skip?"
-3. **If skipping:** Update state.yaml with `status: "SKIPPED"`, proceed to next phase
-4. **If proceeding:**
+1. **Offer to skip:** "Ready to start Phase X? Or skip?"
+2. **If skipping:** Update state.yaml with `status: "SKIPPED"`, proceed to next phase
+3. **If proceeding:**
    - **Phases 1-8:** Update state.yaml: `status: "IN_PROGRESS"`, `started_at: {timestamp}`
    - **Phases 9-10:** Update state.yaml: `status: "IN_PROGRESS"`, append new entry to `iterations` array with `started_at: {timestamp}`, `ended_at: null` (or update existing entry if resuming current iteration)
    - Run the phase's command and verify output files
-   - For phases with a phase file: perform the **Execution Steps** and **Post-Completion Steps** from that file
-   - For phases 3-7: run the command, verify outputs, post Linear update if applicable (see inline instructions above)
+   - Post Linear update if applicable (phases 3, 5, 6, 7)
+   - Perform any **phase-specific instructions** from the Phase-Specific Instructions section above
    - **Confirm:** "Phase X complete. Mark as COMPLETED?"
    - **Phases 1-8:** Update state.yaml: `status: "COMPLETED"`, `ended_at: {timestamp}`
    - **Phases 9-10:** Update state.yaml: `status: "COMPLETED"`, set `ended_at: {timestamp}` on the latest `iterations` entry
@@ -245,7 +260,7 @@ workflow/{username}/{project-slug}/
 
 ## Critical Rules
 
-- **MANDATORY: Before marking any phase as COMPLETED, verify all steps were performed — re-read the phase file (for phases that have one) or check the inline instructions (for phases 3-7).**
+- **MANDATORY: Before marking any phase as COMPLETED, verify all steps were performed — check the Phase-Specific Instructions section and ensure all post-completion steps are done.**
 - **MANDATORY: After marking a phase as COMPLETED, you MUST run `/ks:create_handoff {project-directory-path}`. Never skip this step. Every completed phase must have a handoff document.**
 - **Detect workflow type first** — ticket vs project determines which phases to run
 - **Phases 3, 5, 6, 7 (project workflow):** Use the Linear CLI (`linear project update`) to post project updates after each phase

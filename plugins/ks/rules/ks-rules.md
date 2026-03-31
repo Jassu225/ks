@@ -56,7 +56,7 @@ When running the `ks:code-simplifier` agent, always read its agent definition fi
 
 ## Workflow State Files
 
-When updating `state.yaml`, refer to the corresponding JSON schema. To locate them, read the `$KS_PHASE_FILES_DIR` environment variable (run `echo $KS_PHASE_FILES_DIR` via Bash), then find the schemas at `$KS_PHASE_FILES_DIR/../scripts/project-state.schema.json` (project workflow) or `$KS_PHASE_FILES_DIR/../scripts/ticket-state.schema.json` (ticket workflow).
+When updating `state.yaml`, refer to the corresponding JSON schema. To locate them, read the `$KS_PLUGIN_DIR` environment variable (run `echo $KS_PLUGIN_DIR` via Bash), then find the schemas at `$KS_PLUGIN_DIR/scripts/project-state.schema.json` (project workflow) or `$KS_PLUGIN_DIR/scripts/ticket-state.schema.json` (ticket workflow).
 
 ## KarmaSuite Conventions
 

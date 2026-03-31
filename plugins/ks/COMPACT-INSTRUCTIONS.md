@@ -2,4 +2,4 @@
 
 Context that MUST survive context compression.
 
-- **Project Manager phases**: Never forget that phase files exist in `project-manager/`. Always re-read the phase file from `project-manager/` before marking any phase as COMPLETED. Never rely on memory for phase execution steps.
+- **Project Manager phases**: All phase instructions are inline in `project-manager.md`. Always check the Phase-Specific Instructions section before marking any phase as COMPLETED. Never rely on memory for phase execution steps.
