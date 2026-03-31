@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://karmasuite.com/schemas/state.schema.json",
+  "$id": "https://karmasuite.com/schemas/project-state.schema.json",
   "title": "KarmaSuite Workflow State",
   "description": "Schema for KarmaSuite project workflow state files",
   "type": "object",
