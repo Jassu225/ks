@@ -12,29 +12,24 @@
  * Environment: LINEAR_API_KEY must be set (loaded from .env file)
  */
 
-import dotenv from 'dotenv';
-import { LinearClient, Issue, User } from '@linear/sdk';
-import { WebClient } from '@slack/web-api';
+import { Issue, User } from '@linear/sdk';
 import inquirer from 'inquirer';
 import * as yaml from 'yaml';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
-import { execSync, spawn } from 'child_process';
 
-const __script_dir = path.dirname(new URL(import.meta.url).pathname);
-dotenv.config({ path: ['.env', path.resolve(__script_dir, '..', '.config')] });
+import { loadEnv } from './lib/env.js';
+import { getLinearClient, getPriorityName } from './lib/linear-client.js';
+import type { SlackThread, Phase, PrReviewThread } from './lib/workflow-types.js';
+import { parseSlackMessageUrl } from './lib/slack.js';
+import { createWorktreeAndLaunchClaude } from './lib/worktree.js';
+
+loadEnv();
 
 // ============================================================================
 // Types
 // ============================================================================
-
-interface SlackThread {
-  channel_id: string;
-  channel_name: string;
-  ts: string;
-  url: string | null;
-}
 
 interface TicketWorkflowState {
   worktree_dir: string | null;
@@ -77,30 +72,10 @@ interface TicketWorkflowState {
   };
   slack: {
     project_thread: SlackThread | null;
-    pr_review_threads: Array<{ channel_id: string; channel_name: string; ts: string; url: string | null; pr_url: string | null }>;
+    pr_review_threads: PrReviewThread[];
     release_thread: SlackThread | null;
   };
-  phases: Array<{
-    number: number;
-    name: string;
-    status: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED';
-    started_at: string | null;
-    ended_at: string | null;
-  }>;
-}
-
-// ============================================================================
-// Linear Client
-// ============================================================================
-
-function getClient(): LinearClient {
-  const apiKey = process.env.LINEAR_API_KEY;
-  if (!apiKey) {
-    console.error(chalk.red('Error: LINEAR_API_KEY environment variable is not set'));
-    console.error(chalk.yellow('Get your API key from: https://linear.app/settings/api'));
-    process.exit(1);
-  }
-  return new LinearClient({ apiKey });
+  phases: Phase[];
 }
 
 // ============================================================================
@@ -135,9 +110,10 @@ function parseIssueUrl(url: string): ParsedIssueUrl {
 // Data Fetching
 // ============================================================================
 
-async function fetchIssueData(client: LinearClient, identifier: string): Promise<Issue> {
+async function fetchIssueData(identifier: string): Promise<Issue> {
   console.log(chalk.blue('Fetching issue information...'));
 
+  const client = getLinearClient();
   const issue = await client.issue(identifier);
 
   if (!issue) {
@@ -148,50 +124,8 @@ async function fetchIssueData(client: LinearClient, identifier: string): Promise
 }
 
 // ============================================================================
-// Priority Mapping
+// Slack Thread Resolution
 // ============================================================================
-
-function getPriorityName(priority: number | null | undefined): string {
-  const priorityMap: Record<number, string> = {
-    0: 'None',
-    1: 'Urgent',
-    2: 'High',
-    3: 'Medium',
-    4: 'Low'
-  };
-  return priority !== null && priority !== undefined ? priorityMap[priority] || 'None' : 'None';
-}
-
-// ============================================================================
-// Slack URL Parsing
-// ============================================================================
-
-async function parseSlackMessageUrl(url: string): Promise<SlackThread> {
-  // Format: https://{workspace}.slack.com/archives/{channel_id}/p{timestamp}
-  const match = url.match(/slack\.com\/archives\/([A-Z0-9]+)\/p(\d+)/i);
-  if (!match) {
-    throw new Error('Invalid Slack message URL. Expected format: https://{workspace}.slack.com/archives/{channel}/p{timestamp}');
-  }
-  const channel_id = match[1];
-  const rawTs = match[2];
-  // Insert dot before last 6 digits: 1234567890123456 → 1234567890.123456
-  const ts = rawTs.slice(0, -6) + '.' + rawTs.slice(-6);
-
-  // Resolve channel name from Slack API
-  let channel_name = '';
-  const slackToken = process.env.SLACK_TOKEN;
-  if (slackToken) {
-    try {
-      const slack = new WebClient(slackToken);
-      const result = await slack.conversations.info({ channel: channel_id });
-      channel_name = result.channel?.name ? `#${result.channel.name}` : '';
-    } catch {
-      // Non-fatal — channel name is best-effort
-    }
-  }
-
-  return { channel_id, channel_name, ts, url };
-}
 
 async function extractSlackThreadFromIssue(issue: Issue): Promise<SlackThread | null> {
   try {
@@ -204,7 +138,7 @@ async function extractSlackThreadFromIssue(issue: Issue): Promise<SlackThread | 
       }
     }
   } catch {
-    // Attachments fetch failed — fall through to manual prompt
+    // Attachments fetch failed -- fall through to manual prompt
   }
   return null;
 }
@@ -218,7 +152,7 @@ async function getProjectThread(issue: Issue): Promise<SlackThread | null> {
     return thread;
   }
 
-  // Not found — ask the user
+  // Not found -- ask the user
   console.log(chalk.gray('  No Slack thread found in ticket attachments.'));
   const { slackUrl } = await inquirer.prompt([{
     type: 'input',
@@ -384,82 +318,6 @@ function formatYaml(state: TicketWorkflowState): string {
 }
 
 // ============================================================================
-// Worktree Creation
-// ============================================================================
-
-function tildeify(absolutePath: string): string {
-  const home = process.env.HOME || '';
-  return home && absolutePath.startsWith(home) ? '~' + absolutePath.slice(home.length) : absolutePath;
-}
-
-function updateWorktreeDir(outputPath: string, worktreePath: string): void {
-  const content = fs.readFileSync(outputPath, 'utf-8');
-  const updated = content.replace(/^worktree_dir:.*$/m, `worktree_dir: "${tildeify(worktreePath)}"`);
-  fs.writeFileSync(outputPath, updated, 'utf-8');
-}
-
-function createWorktreeAndLaunchClaude(branchName: string, workflowRelPath: string, outputPath: string): void {
-  const scriptDir = path.dirname(new URL(import.meta.url).pathname);
-  const createWorktreeScript = path.join(scriptDir, 'create-worktree');
-
-  console.log(chalk.blue('\nCreating git worktree...'));
-
-  try {
-    // Run create-worktree and capture output
-    const targetDir = process.env.KS_ORIGINAL_DIR || process.cwd();
-    const output = execSync(`"${createWorktreeScript}" "${branchName}"`, {
-      encoding: 'utf-8',
-      stdio: ['inherit', 'pipe', 'inherit'],
-      cwd: targetDir
-    });
-
-    // Parse the WORKTREE_PATH from output
-    const worktreePathMatch = output.match(/WORKTREE_PATH=(.+)/);
-    if (!worktreePathMatch) {
-      throw new Error('Could not determine worktree path from create-worktree output');
-    }
-
-    const worktreePath = worktreePathMatch[1].trim();
-
-    // Update state file with worktree directory
-    updateWorktreeDir(outputPath, worktreePath);
-
-    // Launch claude with KS plugin in the worktree
-    console.log(chalk.blue('\nLaunching Claude with KS plugin in worktree...'));
-    console.log(chalk.yellow(`\n💡 Start your conversation with:`));
-    console.log(chalk.bold(`   /ks:project-manager Let's work on ./${workflowRelPath}/ project\n`));
-    process.chdir(worktreePath);
-
-    // Launch claude-ks (dev: load plugin from repo) or plain claude (production)
-    const claudeArgs: string[] = [];
-    if (process.env.DEV === 'true') {
-      const repoRoot = execSync('git rev-parse --show-toplevel', { cwd: scriptDir, encoding: 'utf-8' }).trim();
-      claudeArgs.push('--plugin-dir', path.join(repoRoot, 'plugins', 'ks'));
-    }
-    claudeArgs.push(`/ks:project-manager Let's work on ./${workflowRelPath}/ project`);
-    const claude = spawn('claude', claudeArgs, {
-      stdio: 'inherit'
-    });
-
-    claude.on('error', (err) => {
-      console.error(chalk.red(`Failed to launch claude: ${err.message}`));
-      process.exit(1);
-    });
-
-    claude.on('close', (code) => {
-      process.exit(code || 0);
-    });
-
-  } catch (error) {
-    if (error instanceof Error && 'status' in error) {
-      console.error(chalk.red(`\n✗ Failed to create worktree`));
-      process.exit(1);
-    }
-    throw error;
-  }
-}
-
-// ============================================================================
 // Main
 // ============================================================================
 
@@ -502,7 +360,7 @@ ${chalk.cyan('Example:')}
     const { identifier, slug } = parseIssueUrl(issueUrl);
 
     // Initialize client and fetch current user
-    const client = getClient();
+    const client = getLinearClient();
     console.log(chalk.blue('Fetching current user...'));
     const viewer = await client.viewer;
     const username = viewer.displayName || viewer.name;
@@ -514,7 +372,7 @@ ${chalk.cyan('Example:')}
     console.log(chalk.gray(`Output: ${outputPath}\n`));
 
     // Fetch issue
-    const issue = await fetchIssueData(client, identifier);
+    const issue = await fetchIssueData(identifier);
     console.log(chalk.green(`✓ Found issue: ${issue.identifier} - ${issue.title}`));
 
     // Get branch name from Linear (falls back to identifier if not available)
