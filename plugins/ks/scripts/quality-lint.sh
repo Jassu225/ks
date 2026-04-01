@@ -16,10 +16,10 @@ echo "[ESLint] Linting $FILE_COUNT files"
 echo "=========================================="
 
 # Step 1: Auto-fix what we can (swallow exit code — we check properly in step 2)
-echo "$ALL_FILES" | tr '\n' '\0' | xargs -0 pnpm exec eslint --fix 2>&1 || true
+echo "$ALL_FILES" | tr '\n' '\0' | KS_SORT_IMPORTS=true xargs -0 pnpm exec eslint --fix 2>&1 || true
 
 # Step 2: Re-check for remaining issues that --fix couldn't resolve
-LINT_OUTPUT=$(echo "$ALL_FILES" | tr '\n' '\0' | xargs -0 pnpm exec eslint 2>&1)
+LINT_OUTPUT=$(echo "$ALL_FILES" | tr '\n' '\0' | KS_SORT_IMPORTS=true xargs -0 pnpm exec eslint 2>&1)
 LINT_EXIT=$?
 
 if [ $LINT_EXIT -ne 0 ]; then
