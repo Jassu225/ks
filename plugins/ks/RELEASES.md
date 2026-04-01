@@ -1,5 +1,9 @@
 # Releases
 
+## 2026-04-01
+
+- **Statusline script**: Custom statusline showing context window usage, git branch, and rate limit info (5h/7d windows with color-coded usage and reset countdowns). Wraps to two lines when branch name exceeds 32 characters.
+
 ## 2026-03-31 – 2026-04-01
 
 - Neon branch protection hook
