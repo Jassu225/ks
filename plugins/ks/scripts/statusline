@@ -1,0 +1,103 @@
+#!/bin/bash
+
+# Read JSON from stdin
+input=$(cat)
+
+# Calculate context usage
+context_size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
+usage=$(echo "$input" | jq '.context_window.current_usage // null')
+
+if [ "$usage" != "null" ]; then
+    current_tokens=$(echo "$usage" | jq '.input_tokens + .cache_creation_input_tokens + .cache_read_input_tokens')
+    context_pct=$((current_tokens * 100 / context_size))
+else
+    current_tokens=0
+    context_pct=0
+fi
+
+# Format tokens as "Xk/Yk"
+current_k=$((current_tokens / 1000))
+total_k=$((context_size / 1000))
+
+# Get git branch
+git_branch=""
+if git rev-parse --git-dir > /dev/null 2>&1; then
+    git_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+fi
+
+# Extract rate limit info (only available for Pro/Max after first API response)
+five_h_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+five_h_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
+seven_d_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+seven_d_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
+
+# Format reset time as human-readable countdown
+format_reset() {
+    local reset_epoch="$1"
+    local now
+    now=$(date +%s)
+    local diff=$((reset_epoch - now))
+    if [ "$diff" -le 0 ]; then
+        echo "now"
+        return
+    fi
+    local days=$((diff / 86400))
+    local hours=$(( (diff % 86400) / 3600 ))
+    local mins=$(( (diff % 3600) / 60 ))
+    if [ "$days" -gt 0 ]; then
+        echo "${days}d ${hours}h ${mins}m"
+    elif [ "$hours" -gt 0 ]; then
+        echo "${hours}h ${mins}m"
+    else
+        echo "${mins}m"
+    fi
+}
+
+# Color based on usage percentage: green < 50, yellow 50-79, red >= 80
+usage_color() {
+    local pct="$1"
+    local int_pct
+    int_pct=$(printf '%.0f' "$pct")
+    if [ "$int_pct" -ge 80 ]; then
+        echo "196"  # red
+    elif [ "$int_pct" -ge 50 ]; then
+        echo "220"  # yellow
+    else
+        echo "114"  # green
+    fi
+}
+
+# Build rate limits string
+rate_limits=""
+if [ -n "$five_h_pct" ] || [ -n "$seven_d_pct" ]; then
+    if [ -n "$five_h_pct" ]; then
+        color=$(usage_color "$five_h_pct")
+        rate_limits=$(printf '\033[38;5;%sm5h: %.0f%%\033[0m' "$color" "$five_h_pct")
+        if [ -n "$five_h_reset" ]; then
+            rate_limits+=$(printf '\033[38;5;245m(%s)\033[0m' "$(format_reset "$five_h_reset")")
+        fi
+    fi
+    if [ -n "$seven_d_pct" ]; then
+        color=$(usage_color "$seven_d_pct")
+        rate_limits+=$(printf ' \033[38;5;%sm7d: %.0f%%\033[0m' "$color" "$seven_d_pct")
+        if [ -n "$seven_d_reset" ]; then
+            rate_limits+=$(printf '\033[38;5;245m(%s)\033[0m' "$(format_reset "$seven_d_reset")")
+        fi
+    fi
+fi
+
+# Line 1: context + git branch (+ rate limits if branch is short)
+printf '\033[38;5;183m%dk/%dk (%d%%)\033[0m' "$current_k" "$total_k" "$context_pct"
+
+if [ -n "$git_branch" ]; then
+    printf ' | \033[38;5;36m\356\234\245 %s\033[0m' "$git_branch"
+fi
+
+if [ -n "$rate_limits" ]; then
+    if [ -n "$git_branch" ] && [ "${#git_branch}" -gt 32 ]; then
+        # Line 2: rate limits on a new line when branch name is long
+        printf '\n%s' "$rate_limits"
+    else
+        printf ' | %s' "$rate_limits"
+    fi
+fi
