@@ -59,7 +59,7 @@ usage_color() {
     local int_pct
     int_pct=$(printf '%.0f' "$pct")
     if [ "$int_pct" -ge 80 ]; then
-        echo "196"  # red
+        echo "167"  # muted red (dark-mode friendly)
     elif [ "$int_pct" -ge 50 ]; then
         echo "220"  # yellow
     else

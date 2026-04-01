@@ -3,6 +3,8 @@
 ## 2026-04-01
 
 - **Statusline script**: Custom statusline showing context window usage, git branch, and rate limit info (5h/7d windows with color-coded usage and reset countdowns). Wraps to two lines when branch name exceeds 32 characters.
+- **Statusline**: Use muted red (`167`) instead of bright red (`196`) for high-usage color — easier on dark terminals
+- **Hooks**: Removed code-simplifier suggestion hook from Stop and SubagentStop events (command still available manually)
 
 ## 2026-03-31 – 2026-04-01
 

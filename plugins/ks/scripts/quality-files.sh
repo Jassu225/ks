@@ -22,16 +22,12 @@ UNSTAGED_FILES=$(git diff --name-only 2>/dev/null | grep -E '\.(ts|tsx)$' || tru
 # Get untracked TypeScript files
 UNTRACKED_FILES=$(git ls-files --others --exclude-standard 2>/dev/null | grep -E '\.(ts|tsx)$' || true)
 
-# Get files changed on this branch vs main (catches already-committed files)
-DEFAULT_BRANCH="main"
-BRANCH_FILES=$(git diff --name-only "$DEFAULT_BRANCH"...HEAD 2>/dev/null | grep -E '\.(ts|tsx)$' || true)
-
 # Restore original directory
 cd "$_QF_ORIG_DIR"
 
 # Combine, deduplicate, and filter to only existing files
 ALL_FILES=""
-for file in $STAGED_FILES $UNSTAGED_FILES $UNTRACKED_FILES $BRANCH_FILES; do
+for file in $STAGED_FILES $UNSTAGED_FILES $UNTRACKED_FILES; do
   if [ -f "$file" ]; then
     ALL_FILES="$ALL_FILES$file"$'\n'
   fi
