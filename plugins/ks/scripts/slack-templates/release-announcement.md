@@ -21,10 +21,14 @@ Post to **#released** when a feature or fix is deployed.
 *What changed:*
 {CHANGELOG_BULLETS}
 
+{{#if LOOM_URL}}
 *Demo:* {LOOM_URL}
 
+{{/if}}
 For more info, please refer to {PROJECT_THREAD}
 ```
+
+> **Note:** Omit the `*Demo:*` line entirely when no demo video is available.
 
 ## Variables
 
