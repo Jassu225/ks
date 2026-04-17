@@ -53,9 +53,11 @@ format_reset() {
     fi
 }
 
-# Color based on projected usage at reset (usage rate vs time left).
-# Projects pct_used to end of window via linear extrapolation.
-# Red if projected >= 100%, yellow >= 80%, green otherwise.
+# Compute color and elapsed-window percentage.
+# Echoes "<color> <pct_elapsed>" where pct_elapsed is empty when falling back.
+# pct_elapsed = the safe-usage budget at this moment (how much of the window has passed).
+# Color is driven by projected usage at reset (current_pct * 100 / pct_elapsed):
+# red >= 100%, yellow >= 80%, green otherwise.
 # Falls back to raw-pct thresholds when reset/window missing or window is too early (<10% elapsed).
 usage_color() {
     local pct="$1"
@@ -65,9 +67,9 @@ usage_color() {
     int_pct=$(printf '%.0f' "$pct")
 
     raw_color() {
-        if [ "$int_pct" -ge 80 ]; then echo "167"
-        elif [ "$int_pct" -ge 50 ]; then echo "220"
-        else echo "114"; fi
+        if [ "$int_pct" -ge 80 ]; then echo "167 "
+        elif [ "$int_pct" -ge 50 ]; then echo "220 "
+        else echo "114 "; fi
     }
 
     if [ -z "$reset_epoch" ] || [ -z "$window_seconds" ] || [ "$window_seconds" -le 0 ]; then
@@ -88,11 +90,11 @@ usage_color() {
 
     projected=$((int_pct * 100 / pct_elapsed))
     if [ "$projected" -ge 100 ]; then
-        echo "167"  # muted red
+        echo "167 $pct_elapsed"  # muted red
     elif [ "$projected" -ge 80 ]; then
-        echo "220"  # yellow
+        echo "220 $pct_elapsed"  # yellow
     else
-        echo "114"  # green
+        echo "114 $pct_elapsed"  # green
     fi
 }
 
@@ -100,15 +102,23 @@ usage_color() {
 rate_limits=""
 if [ -n "$five_h_pct" ] || [ -n "$seven_d_pct" ]; then
     if [ -n "$five_h_pct" ]; then
-        color=$(usage_color "$five_h_pct" "$five_h_reset" 18000)
-        rate_limits=$(printf '\033[38;5;%sm5h: %.0f%%\033[0m' "$color" "$five_h_pct")
+        read -r color budget < <(usage_color "$five_h_pct" "$five_h_reset" 18000)
+        rate_limits=$(printf '\033[38;5;%sm5h: %.0f%%' "$color" "$five_h_pct")
+        if [ -n "$budget" ]; then
+            rate_limits+=$(printf '/%s%%' "$budget")
+        fi
+        rate_limits+=$'\033[0m'
         if [ -n "$five_h_reset" ]; then
             rate_limits+=$(printf '\033[38;5;245m(%s)\033[0m' "$(format_reset "$five_h_reset")")
         fi
     fi
     if [ -n "$seven_d_pct" ]; then
-        color=$(usage_color "$seven_d_pct" "$seven_d_reset" 604800)
-        rate_limits+=$(printf ' \033[38;5;%sm7d: %.0f%%\033[0m' "$color" "$seven_d_pct")
+        read -r color budget < <(usage_color "$seven_d_pct" "$seven_d_reset" 604800)
+        rate_limits+=$(printf ' \033[38;5;%sm7d: %.0f%%' "$color" "$seven_d_pct")
+        if [ -n "$budget" ]; then
+            rate_limits+=$(printf '/%s%%' "$budget")
+        fi
+        rate_limits+=$'\033[0m'
         if [ -n "$seven_d_reset" ]; then
             rate_limits+=$(printf '\033[38;5;245m(%s)\033[0m' "$(format_reset "$seven_d_reset")")
         fi
