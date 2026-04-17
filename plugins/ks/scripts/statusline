@@ -53,14 +53,43 @@ format_reset() {
     fi
 }
 
-# Color based on usage percentage: green < 50, yellow 50-79, red >= 80
+# Color based on projected usage at reset (usage rate vs time left).
+# Projects pct_used to end of window via linear extrapolation.
+# Red if projected >= 100%, yellow >= 80%, green otherwise.
+# Falls back to raw-pct thresholds when reset/window missing or window is too early (<10% elapsed).
 usage_color() {
     local pct="$1"
+    local reset_epoch="$2"
+    local window_seconds="$3"
     local int_pct
     int_pct=$(printf '%.0f' "$pct")
-    if [ "$int_pct" -ge 80 ]; then
-        echo "167"  # muted red (dark-mode friendly)
-    elif [ "$int_pct" -ge 50 ]; then
+
+    raw_color() {
+        if [ "$int_pct" -ge 80 ]; then echo "167"
+        elif [ "$int_pct" -ge 50 ]; then echo "220"
+        else echo "114"; fi
+    }
+
+    if [ -z "$reset_epoch" ] || [ -z "$window_seconds" ] || [ "$window_seconds" -le 0 ]; then
+        raw_color; return
+    fi
+
+    local now time_remaining time_elapsed pct_elapsed projected
+    now=$(date +%s)
+    time_remaining=$((reset_epoch - now))
+    time_elapsed=$((window_seconds - time_remaining))
+    if [ "$time_elapsed" -le 0 ]; then
+        raw_color; return
+    fi
+    pct_elapsed=$((time_elapsed * 100 / window_seconds))
+    if [ "$pct_elapsed" -lt 10 ]; then
+        raw_color; return
+    fi
+
+    projected=$((int_pct * 100 / pct_elapsed))
+    if [ "$projected" -ge 100 ]; then
+        echo "167"  # muted red
+    elif [ "$projected" -ge 80 ]; then
         echo "220"  # yellow
     else
         echo "114"  # green
@@ -71,14 +100,14 @@ usage_color() {
 rate_limits=""
 if [ -n "$five_h_pct" ] || [ -n "$seven_d_pct" ]; then
     if [ -n "$five_h_pct" ]; then
-        color=$(usage_color "$five_h_pct")
+        color=$(usage_color "$five_h_pct" "$five_h_reset" 18000)
         rate_limits=$(printf '\033[38;5;%sm5h: %.0f%%\033[0m' "$color" "$five_h_pct")
         if [ -n "$five_h_reset" ]; then
             rate_limits+=$(printf '\033[38;5;245m(%s)\033[0m' "$(format_reset "$five_h_reset")")
         fi
     fi
     if [ -n "$seven_d_pct" ]; then
-        color=$(usage_color "$seven_d_pct")
+        color=$(usage_color "$seven_d_pct" "$seven_d_reset" 604800)
         rate_limits+=$(printf ' \033[38;5;%sm7d: %.0f%%\033[0m' "$color" "$seven_d_pct")
         if [ -n "$seven_d_reset" ]; then
             rate_limits+=$(printf '\033[38;5;245m(%s)\033[0m' "$(format_reset "$seven_d_reset")")
