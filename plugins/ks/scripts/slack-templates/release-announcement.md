@@ -26,9 +26,25 @@ Compose the main channel message and show it to the user. **Stop and wait for us
 {CHANGELOG_BULLETS}
 ```
 
+### Step 1.5: Request Screenshots for Visual Changes
+
+If any bullet in `{CHANGELOG_BULLETS}` describes a visual change (new UI element, layout shift, color/style update, icon, component appearance, or anything a user sees differently on screen), ask the user to provide screenshot file paths before posting. Example prompt:
+
+> The changelog includes visual changes. Please share screenshot file paths (one per change if possible) so I can attach them to the main message. Reply with paths or "skip".
+
+Collect the paths. If the user replies "skip" or provides none, proceed without attachments.
+
+**Attachments attach to the main message only — never to the thread reply.** All screenshots must be included in the Step 2 `slack message send` call as repeatable `--file` flags. Do not upload files in Step 4 and do not make a separate `file upload` call for the thread.
+
 ### Step 2: Post Main Message
 
-After the user confirms, post the main message to the channel. Save the returned `ts` for threading.
+After the user confirms, post the main message to the channel. If screenshots were provided, attach all of them to this single message using repeatable `--file` flags:
+
+```
+slack message send <channel> "<main message>" --file path1.png --file path2.png
+```
+
+Save the returned `ts` for threading in Step 4.
 
 ### Step 3: Show Thread Reply
 

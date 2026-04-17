@@ -490,10 +490,20 @@ async function sendMessage(channel: string, text: string, options: { threadTs?: 
         })),
       });
 
+      type ShareEntry = { ts?: string };
+      type Shares = { public?: Record<string, ShareEntry[]>; private?: Record<string, ShareEntry[]> };
+      const uploaded = result.files?.[0] as { files?: Array<{ shares?: Shares }>; shares?: Shares } | undefined;
+      const shares = uploaded?.shares ?? uploaded?.files?.[0]?.shares;
+      const shareEntry = shares?.public?.[channelId]?.[0] ?? shares?.private?.[channelId]?.[0];
+      const ts = shareEntry?.ts;
+
       if (options.json) {
-        output(result, true);
+        output({ ok: result.ok, channel: channelId, ts, files: result.files }, true);
       } else {
         console.log(chalk.green(`✓ Message sent with ${files.length} attachment${files.length === 1 ? '' : 's'} to ${channel}`));
+        if (ts) {
+          console.log(`  Timestamp: ${ts}`);
+        }
       }
       return;
     }
