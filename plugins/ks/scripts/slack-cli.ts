@@ -472,11 +472,31 @@ async function setChannelPurpose(channel: string, purpose: string, options: { js
 // Message Commands
 // ============================================================================
 
-async function sendMessage(channel: string, text: string, options: { threadTs?: string; blocks?: string; json?: boolean }): Promise<void> {
+async function sendMessage(channel: string, text: string, options: { threadTs?: string; blocks?: string; file?: string[]; json?: boolean }): Promise<void> {
   const client = getClient();
 
   try {
     const channelId = await resolveChannel(client, channel);
+    const files = options.file ?? [];
+
+    if (files.length > 0) {
+      const result = await client.filesUploadV2({
+        channel_id: channelId,
+        initial_comment: text,
+        thread_ts: options.threadTs,
+        file_uploads: files.map((p) => ({
+          file: createReadStream(p),
+          filename: basename(p),
+        })),
+      });
+
+      if (options.json) {
+        output(result, true);
+      } else {
+        console.log(chalk.green(`✓ Message sent with ${files.length} attachment${files.length === 1 ? '' : 's'} to ${channel}`));
+      }
+      return;
+    }
 
     const params: Record<string, unknown> = {
       channel: channelId,
@@ -806,7 +826,7 @@ async function getMe(options: { json?: boolean }): Promise<void> {
 // File Commands
 // ============================================================================
 
-async function uploadFile(channel: string, filePath: string, options: { title?: string; comment?: string; json?: boolean }): Promise<void> {
+async function uploadFile(channel: string, filePaths: string[], options: { title?: string; comment?: string; threadTs?: string; json?: boolean }): Promise<void> {
   const client = getClient();
 
   try {
@@ -814,16 +834,20 @@ async function uploadFile(channel: string, filePath: string, options: { title?: 
 
     const result = await client.filesUploadV2({
       channel_id: channelId,
-      file: createReadStream(filePath),
-      filename: basename(filePath),
-      title: options.title,
       initial_comment: options.comment,
+      thread_ts: options.threadTs,
+      file_uploads: filePaths.map((p, idx) => ({
+        file: createReadStream(p),
+        filename: basename(p),
+        title: filePaths.length === 1 && idx === 0 ? options.title : undefined,
+      })),
     });
 
     if (options.json) {
       output(result, true);
     } else {
-      console.log(chalk.green(`✓ Uploaded ${basename(filePath)} to ${channel}`));
+      const names = filePaths.map((p) => basename(p)).join(', ');
+      console.log(chalk.green(`✓ Uploaded ${names} to ${channel}`));
     }
   } catch (error) {
     const err = error as Error & { data?: { error?: string; response_metadata?: { messages?: string[] } } };
@@ -1552,6 +1576,7 @@ messageCmd
   .description('Send a message to a channel')
   .option('--thread-ts <ts>', 'Thread timestamp to reply to')
   .option('--blocks <json>', 'Block Kit blocks as JSON string')
+  .option('-f, --file <path>', 'Attach a file (repeatable for multiple attachments)', (v: string, acc: string[]) => acc.concat([v]), [] as string[])
   .option('-j, --json', 'Output as JSON')
   .action(sendMessage);
 
@@ -1605,10 +1630,11 @@ userCmd
 const fileCmd = program.command('file').description('File operations');
 
 fileCmd
-  .command('upload <channel> <file>')
-  .description('Upload a file to a channel')
-  .option('--title <title>', 'File title')
+  .command('upload <channel> <files...>')
+  .description('Upload one or more files to a channel')
+  .option('--title <title>', 'File title (only applied when uploading a single file)')
   .option('--comment <text>', 'Initial comment')
+  .option('--thread-ts <ts>', 'Thread timestamp to attach within a thread')
   .option('-j, --json', 'Output as JSON')
   .action(uploadFile);
 

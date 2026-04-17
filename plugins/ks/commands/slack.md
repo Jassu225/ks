@@ -46,6 +46,10 @@ slack message send general "Hello world"
 # Send with Block Kit (JSON string)
 slack message send general "fallback text" --blocks '[{"type":"section","text":{"type":"mrkdwn","text":"*Bold*"}}]'
 
+# Send with one or more file attachments (repeat --file for each)
+slack message send general "see attached" --file ./report.pdf
+slack message send general "see attached" --file ./a.pdf --file ./b.png --file ./c.csv
+
 # Reply in a thread (use message timestamp)
 slack message reply general 1234567890.123456 "Thread reply"
 
@@ -77,6 +81,9 @@ slack user me
 ```bash
 # Upload a file to a channel
 slack file upload general ./report.pdf --title "Monthly Report"
+
+# Upload multiple files in one message (variadic)
+slack file upload general ./a.pdf ./b.png ./c.csv --comment "Q2 assets"
 
 # List files (with filters)
 slack file list --channel general --limit 10
@@ -159,10 +166,10 @@ When the user asks to interact with Slack:
    - If no template matches, compose the message from scratch
    - **Mentioning users**: If the message should mention or address someone (e.g., the user says "ask John…", "tell Sarah…", "ping @username…"), resolve the person's name to a Slack user ID first by running `slack user info <name> --json` and extracting the `id` field. If the lookup fails (user not found), the name may be misspelled — run `slack user list --json` and find the closest match by comparing real names and display names. Then use `<@USER_ID>` in the message text so the person gets a proper Slack mention/notification. For example, if the user says "ask Jas about the deploy", resolve "Jas" → `U01ABCDEF`, then compose the message with `<@U01ABCDEF>` in the text.
    - **Always show the user the target channel and full message content, then ask for explicit confirmation before sending.**
-   - Once confirmed, use `slack message send <channel> "text"` — supports Block Kit via `--blocks`
+   - Once confirmed, use `slack message send <channel> "text"` — supports Block Kit via `--blocks`, attachments via repeatable `--file <path>`
 4. **Threading**: **Always show the user the target channel, thread, and full reply content, then ask for explicit confirmation before sending.** Once confirmed, use `slack message reply <channel> <ts> "text"`
 5. **Finding users**: Use `slack user list` or `slack user info <name/email/ID>`
-6. **Uploading files**: Use `slack file upload <channel> <path>` with optional `--title`
+6. **Uploading files**: Use `slack file upload <channel> <path...>` (one or many paths) with optional `--title` (single file), `--comment`, `--thread-ts`
 7. **Searching**: Use `slack search messages "query"` (requires user token)
 8. **Setting status**: Use `slack status set "text"` with `--emoji` (requires user token)
 
