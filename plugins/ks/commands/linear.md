@@ -8,6 +8,8 @@ allowed-tools: Bash(linear:*), Read
 
 Use the `linear` CLI (already in `$PATH`) to interact with Linear. All commands support `--json` / `-j` for machine-readable output.
 
+> **Run unsandboxed.** The `linear` CLI needs network access to `api.linear.app`, reads `LINEAR_API_KEY` from `plugins/ks/scripts/.env`, and uses `tsx` which opens a Unix IPC pipe in `/tmp`. All three are blocked in the default Claude Code sandbox (you'll see `EPERM` on the pipe or an empty-key error). Invoke `linear ...` with `dangerouslyDisableSandbox: true`, or have the user whitelist `Bash(linear:*)` outside the sandbox.
+
 ## Quick Reference
 
 ### Issues

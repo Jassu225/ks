@@ -8,6 +8,8 @@ allowed-tools: Bash(slack:*), Read
 
 Use the `slack` CLI (already in `$PATH`) to interact with Slack. All commands support `--json` / `-j` for machine-readable output. Channel and user arguments accept names or IDs.
 
+> **Run unsandboxed.** The `slack` CLI needs network access to `slack.com`, reads `SLACK_TOKEN` from `plugins/ks/scripts/.env`, and uses `tsx` which opens a Unix IPC pipe in `/tmp`. All three are blocked in the default Claude Code sandbox (you'll see `EPERM` on the pipe or an empty-token error). Invoke `slack ...` with `dangerouslyDisableSandbox: true`, or have the user whitelist `Bash(slack:*)` outside the sandbox.
+
 ## Quick Reference
 
 ### Channels
