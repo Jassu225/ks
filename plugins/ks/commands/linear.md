@@ -27,12 +27,13 @@ linear issue list --limit 20
 
 # Create an issue
 linear issue create --title "Fix bug" --team KAR --description "Details..." \
-  --project <project-id> --assignee me --priority 2
+  --project <project-id> --assignee me --priority 2 --estimate 3
 
 # Update an issue
 linear issue update KAR-123 --state "In Progress"
 linear issue update KAR-123 --assignee me --priority 1
 linear issue update KAR-123 --title "New title" --description "New desc"
+linear issue update KAR-123 --estimate 5
 ```
 
 ### Projects

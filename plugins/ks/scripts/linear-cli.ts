@@ -588,6 +588,7 @@ async function createIssue(options: {
   assignee?: string;
   state?: string;
   priority?: number;
+  estimate?: number;
   labels?: string[];
   parent?: string;
   json?: boolean;
@@ -619,6 +620,7 @@ async function createIssue(options: {
     description: options.description,
     projectId: options.project,
     priority: options.priority,
+    estimate: options.estimate,
     parentId: options.parent,
     assigneeId,
     labelIds: options.labels
@@ -651,6 +653,7 @@ async function updateIssue(identifier: string, options: {
   state?: string;
   assignee?: string;
   priority?: number;
+  estimate?: number;
   project?: string;
   json?: boolean;
 }): Promise<void> {
@@ -680,6 +683,7 @@ async function updateIssue(identifier: string, options: {
   if (options.title) updateInput.title = options.title;
   if (options.description) updateInput.description = options.description;
   if (options.priority !== undefined) updateInput.priority = options.priority;
+  if (options.estimate !== undefined) updateInput.estimate = options.estimate;
   if (options.project) updateInput.projectId = options.project;
 
   if (options.state) {
@@ -1505,6 +1509,7 @@ issueCmd
   .option('--project <id>', 'Project ID')
   .option('--assignee <id>', 'Assignee ID (use "me" for yourself)')
   .option('--priority <number>', 'Priority (1=urgent, 4=low)', (v: string) => parseInt(v, 10))
+  .option('--estimate <number>', 'Estimate (story points)', (v: string) => parseInt(v, 10))
   .option('--labels <ids...>', 'Label IDs')
   .option('--parent <id>', 'Parent issue ID')
   .option('-j, --json', 'Output as JSON')
@@ -1519,6 +1524,7 @@ issueCmd
   .option('--status <name>', 'Alias for --state')
   .option('--assignee <id>', 'New assignee (use "me" or "none")')
   .option('--priority <number>', 'New priority', (v: string) => parseInt(v, 10))
+  .option('--estimate <number>', 'New estimate (story points)', (v: string) => parseInt(v, 10))
   .option('--project <id>', 'Project ID')
   .option('-j, --json', 'Output as JSON')
   .action((identifier: string, opts: Record<string, unknown>) =>
