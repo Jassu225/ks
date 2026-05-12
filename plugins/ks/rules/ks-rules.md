@@ -119,3 +119,15 @@ When creating a new view or modifying an existing one, **do not edit `database_v
 1. Inngest functions in `apps/www/src/inngest/`
 2. Consider retry logic
 3. Monitor execution
+
+## Harness Drift Audit
+
+Run `ks-drift` monthly. Review output:
+
+- **Stale files** (skill/agent `.md` whose mtime is older than the threshold): open each and decide — refresh (re-stat with `touch` if still load-bearing), retire (delete), or rewrite.
+- **Dead exports** (knip): open each in karmasuite and delete or wire up.
+
+Quarterly:
+
+- Stress-test each command/agent against the current Opus baseline (Opus 4.7 at time of writing) — pick a representative scenario per skill, run it, note degraded outputs. Retire scaffolding no longer load-bearing.
+- Review `~/.claude/projects/-Users-jassu-karmasuite-karmasuite/memory/MEMORY.md` — promote recurring `feedback_*` memories to lint rules (Phase 1 mechanism) or skill instructions.

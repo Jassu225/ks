@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# ks-drift — report stale skills/agents + dead exports.
+#
+# Usage:
+#   ks-drift [stale-months]      (default: 6)
+#
+# Env:
+#   KS_PROJECT_ROOT_PATH  — karmasuite repo root (default: $HOME/karmasuite/karmasuite)
+#
+# Output:
+#   - Plugin skill / agent .md files whose mtime is older than the threshold.
+#   - knip dead-export report from the karmasuite repo.
+#
+# Cadence: run monthly per docs/Harness Drift Audit in rules/ks-rules.md.
+
+set -euo pipefail
+
+STALE_MONTHS="${1:-6}"
+REPO_PATH="${KS_PROJECT_ROOT_PATH:-$HOME/karmasuite/karmasuite}"
+PLUGIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Cross-platform mtime formatter (BSD stat on macOS, GNU stat on Linux).
+fmt_mtime() {
+    local f="$1"
+    stat -f "%Sm" -t "%Y-%m-%d" "$f" 2>/dev/null \
+        || stat -c "%y" "$f" 2>/dev/null | cut -d' ' -f1
+}
+
+echo "== Stale skills/agents (mtime > ${STALE_MONTHS} months) =="
+find "$PLUGIN_DIR/commands" "$PLUGIN_DIR/agents" -name "*.md" \
+    -mtime "+$((STALE_MONTHS * 30))" -print 2>/dev/null \
+    | while read -r f; do
+        echo "$(fmt_mtime "$f")  $f"
+    done | sort
+
+echo
+echo "== Dead exports (via knip) =="
+if [[ ! -d "$REPO_PATH" ]]; then
+    echo "SKIPPED: $REPO_PATH not found. Set KS_PROJECT_ROOT_PATH."
+    exit 0
+fi
+
+cd "$REPO_PATH"
+pnpm dlx knip --no-progress --reporter compact 2>&1 || true
