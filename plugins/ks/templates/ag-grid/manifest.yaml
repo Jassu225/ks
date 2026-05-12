@@ -1,0 +1,27 @@
+# Manifest for /ks:scaffold ag-grid
+#
+# Canonical source-of-truth: apps/www/src/client/components/FundsRemainingByFundTable
+# Files are read live from $KS_PROJECT_ROOT_PATH at scaffold time.
+
+canonical_root: "apps/www/src/client/components/FundsRemainingByFundTable"
+test_canonical_root: "apps/www/tests/client/components"
+
+replacements:
+    - { from: "FundsRemainingByFund", to: "{{Name}}" }
+    - { from: "fundsRemainingByFund", to: "{{name}}" }
+
+files:
+    - { from: "FundsRemainingByFundTable.tsx", to: "{{Name}}Table.tsx" }
+    - { from: "columns/baseColumns.tsx", to: "columns/baseColumns.tsx" }
+    - { from: "types-and-constants.ts", to: "types-and-constants.ts" }
+
+test_files:
+    - { from: "FundsRemainingByFund.baseColumns.test.tsx", to: "{{Name}}Table.baseColumns.test.tsx" }
+
+output_root: "apps/www/src/client/components/{{Name}}Table"
+test_output_root: "apps/www/tests/client/components"
+
+post_steps:
+    - "Wire the useQuery call to the appropriate tRPC procedure for this domain."
+    - "Update the column definitions in columns/baseColumns.tsx for the new domain model."
+    - "Import AG Grid primitives from @karmasuite/react-components (do NOT import ag-grid-react directly)."

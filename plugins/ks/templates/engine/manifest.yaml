@@ -1,0 +1,26 @@
+# Manifest for /ks:scaffold engine
+#
+# Canonical source-of-truth: packages/engines/src/getFundMilestoneBudgetCategories.ts
+# Files are read live from $KS_PROJECT_ROOT_PATH at scaffold time.
+
+canonical_root: "packages/engines/src"
+test_canonical_root: "packages/engines/tests"
+
+replacements:
+    - { from: "getFundMilestoneBudgetCategories", to: "{{name}}" }
+    - { from: "FundMilestoneBudgetCategories", to: "{{Name}}" }
+
+files:
+    - { from: "getFundMilestoneBudgetCategories.ts", to: "{{name}}.ts" }
+
+test_files:
+    - { from: "getAllocations/getAllocations.is-default.test.ts", to: "{{name}}.test.ts" }
+
+output_root: "packages/engines/src"
+test_output_root: "packages/engines/tests"
+
+post_steps:
+    - "Replace the placeholder Prisma query shape with the real query for this engine."
+    - "If the new engine is part of the public API, export it from packages/engines/src/index.ts."
+    - "Update tests with real fixtures; the scaffolded test uses getAllocations fixtures as a starting point."
+    - "Engines may only import @karmasuite/{prisma,utils,typings,general-ledger-external} and the permissive externals (zod, dayjs, common-tags, sql-template-tag, crypto, node:crypto). See KAR-12079 lint rules."

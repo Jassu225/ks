@@ -1,0 +1,35 @@
+# Manifest for /ks:scaffold trpc-router
+#
+# The scaffold command reads files from `canonical_root` (resolved against
+# $KS_PROJECT_ROOT_PATH at scaffold time — NOT copied here), applies the
+# `replacements` to each file body top-to-bottom, substitutes placeholders
+# in target filenames, and writes the result under `output_root`.
+#
+# Canonical source-of-truth: apps/www/src/server/api/routers/costCenters
+# Modifying the canonical evolves the scaffold. No `.tmpl` duplication.
+
+canonical_root: "apps/www/src/server/api/routers/costCenters"
+test_canonical_root: "apps/www/tests/server/api/routers/costCenters"
+
+# Applied to each file body top-to-bottom. Order matters: longer / more
+# specific replacements must precede their substrings.
+replacements:
+    - { from: "costCenters", to: "{{name}}" }
+    - { from: "CostCenter", to: "{{Name}}" }
+
+files:
+    - { from: "index.ts", to: "index.ts" }
+    - { from: "schemas.ts", to: "schemas.ts" }
+    - { from: "listCostCenters.ts", to: "list{{Name}}.ts" }
+    - { from: "createCostCenter.ts", to: "create{{Name}}.ts" }
+
+test_files:
+    - { from: "getCostCenter.test.ts", to: "get{{Name}}.test.ts" }
+
+output_root: "apps/www/src/server/api/routers/{{name}}"
+test_output_root: "apps/www/tests/server/api/routers/{{name}}"
+
+post_steps:
+    - "Wire the new router into apps/www/src/server/api/root.ts (add to the router map)."
+    - "Replace placeholder Zod schemas in schemas.ts with the real input/output shapes for this domain."
+    - "Replace seedData / mocked fixtures in the generated tests with real Prisma fixtures."

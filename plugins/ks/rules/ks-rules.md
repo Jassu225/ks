@@ -24,6 +24,10 @@ Use the `/ks:research_codebase` command for documenting and understanding existi
 
 Use the `/ks:create_plan` command for implementation planning. Plans should be approved before writing code.
 
+## Scaffolding
+
+Use the `/ks:scaffold` command to generate tRPC router / engine / AG Grid boilerplate from manifest-driven live templates. The command reads canonical files from `$KS_PROJECT_ROOT_PATH` at scaffold time (no `.tmpl` duplication) and applies replacements + filename substitutions to the target. Topologies: `trpc`, `engine`, `ag-grid`.
+
 ## Code Quality
 
 Do not run ESLint, Prettier, or TypeScript type checking manually — hooks handle formatting, linting, and type checking automatically on every Stop and SubagentStop event. The orchestrator (`/ks:implement-plan`) relies on these hooks rather than running formatting or linting explicitly. Tests must still be run explicitly during phase verification since hooks do not cover test execution.
