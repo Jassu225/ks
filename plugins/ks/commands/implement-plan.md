@@ -320,30 +320,60 @@ If any of the following occur, flag to the user for review:
 
 ## Post-Implementation
 
-After ALL phases are complete and committed:
+After ALL phases are complete and committed, every workflow runs the same three-step sequence: **architect gate → final PR → post-PR code review**. The architect gate is mandatory and runs BEFORE PR creation. Steps are defined once in **Shared Post-Implementation Steps** below; each workflow subsection only specifies its PR direction.
+
+### Shared Post-Implementation Steps
+
+These steps apply to both project and ticket workflows. Run them in order.
+
+#### Step 1: Architect Gate (MANDATORY — before PR creation)
+
+Invoke `/ks:architect code {project-directory-path}` (pass the same project directory path that was passed to `/ks:implement-plan`). The architect command is **read-only** — it produces a verdict only and never edits source. You (the orchestrator) are responsible for acting on the verdict.
+
+Wait for the architect's verdict, then act on it:
+
+- **APPROVED** — proceed to Step 2 (PR creation).
+- **NEEDS REVISION** — read each finding the architect surfaced. Address every finding by editing the relevant code (you are the orchestrator; spawn implementation subagents if the scope warrants it, otherwise edit directly). After all findings are addressed, re-run `/ks:architect code {project-directory-path}`. Repeat this loop until the verdict is APPROVED. **Do NOT proceed to Step 2 until the verdict is APPROVED.**
+- **REJECTED** — pause the workflow. Surface the architect's findings to the user verbatim. Ask the user how to proceed:
+  - **Abandon** the implementation.
+  - **Re-plan** by revisiting Phase 9 (`/ks:create_plan`) with the architect's findings as input.
+  - **Override** the rejection and proceed to Step 2 anyway. Override requires an explicit user message containing the exact phrase `override approved` — no implicit overrides, no paraphrases.
+
+Only after the gate clears (APPROVED, or explicit user override of REJECTED) do you proceed to Step 2.
+
+#### Step 2: Create Final PR
+
+Create the final PR via `/ks:create_pr`. PR direction is workflow-specific (see subsections below).
+
+#### Step 3: Post-PR Code Review
+
+After the PR is created, spawn a sub-agent to run `/code-review:code-review`:
+
+```
+Agent(subagent_type: "general-purpose", prompt: "Run /code-review:code-review to review all changes in the current PR. Report back with any issues found.")
+```
+
+Address any high-confidence issues before finalizing. (The architect gate in Step 1 caught architectural and acceptance-criteria issues; this post-PR review catches finer-grained code-quality issues against the rendered PR diff.)
 
 ### Project Workflows
 
-Each phase already has its own PR against the project branch. After the final phase PR is merged:
+Each phase already has its own PR against the project branch. After the final phase PR is merged, run the **Shared Post-Implementation Steps** above:
 
-1. **Create a final PR** from the project branch (`{project-slug}`) to `main` using `/ks:create_pr`
-   - This PR represents the complete feature — all phases consolidated
-2. **Run automated code review** by spawning a sub-agent:
-   ```
-   Agent(subagent_type: "general-purpose", prompt: "Run /code-review:code-review to review all changes in the current PR. Report back with any issues found.")
-   ```
-   Address any high-confidence issues before finalizing.
-3. **Congratulate the user**: "Project implementation complete! All phases have been successfully executed."
+- **Step 1**: Architect gate against `{project-directory-path}`.
+- **Step 2**: Final PR via `/ks:create_pr` from the project branch (`{project-slug}`) to `main`. This PR consolidates all phases into a single feature PR.
+- **Step 3**: Post-PR code review sub-agent.
+
+After Step 3 completes, congratulate the user: "Project implementation complete! All phases have been successfully executed."
 
 ### Ticket Workflows
 
-1. **Create a PR** using `/ks:create_pr`
-2. **Run automated code review** by spawning a sub-agent:
-   ```
-   Agent(subagent_type: "general-purpose", prompt: "Run /code-review:code-review to review all changes in the current PR. Report back with any issues found.")
-   ```
-   Address any high-confidence issues before finalizing.
-3. **Congratulate the user**: "Ticket implementation complete! All phases have been successfully executed."
+Ticket workflows do not produce per-phase PRs — they accumulate all commits on the ticket branch. After the final phase commit, run the **Shared Post-Implementation Steps** above:
+
+- **Step 1**: Architect gate against `{project-directory-path}`.
+- **Step 2**: PR via `/ks:create_pr` from the ticket branch to `main`.
+- **Step 3**: Post-PR code review sub-agent.
+
+After Step 3 completes, congratulate the user: "Ticket implementation complete! All phases have been successfully executed."
 
 ## Remember
 

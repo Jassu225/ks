@@ -275,6 +275,19 @@ The prototype from Phase 5 is committed in the working tree. For each area the p
 
 [A specification of the desired end state after this plan is complete, and how to verify it]
 
+## Acceptance Criteria (machine-readable)
+
+The architect evaluator grades against these criteria. Format: one line per criterion, each starts with `AC-N:`.
+
+AC-1: <observable, testable assertion>
+AC-2: <observable, testable assertion>
+…
+
+Each criterion must:
+- Reference a specific file/route/command or behavior.
+- Be objectively verifiable (no "looks good" criteria).
+- Map to at least one entry in the phase's "Success Criteria" section.
+
 ## What We're NOT Doing
 
 [Explicitly list out-of-scope items to prevent scope creep]

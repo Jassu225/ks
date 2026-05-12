@@ -38,7 +38,7 @@ When invoked:
 | 7 | TAD Creation | `tad-creation` | `/ks:write-tad` | `tad.md`, Linear project desc | ✓ | — |
 | 8 | Linear Tickets Creation | `linear-tickets-creation` | `/ks:prd-to-linear-tickets` | `linear-tickets.md`, Linear tickets | — | — |
 | 9 | Implementation Plan | `implementation-plan-creation` | `/ks:create_plan` | `implementation-plan-NN.md` | — | ✓ |
-| 10 | Implementation | `implementation` | `/ks:implement-plan` | code changes | — | ✓ |
+| 10 | Implementation | `implementation` | `/ks:implement-plan` ↳ runs `/ks:architect` gate before `/ks:create_pr` | code changes | — | ✓ |
 
 > **Ticket workflows** skip phases 3-8 (requirements already defined in Linear ticket).
 
@@ -74,7 +74,11 @@ Show the update body to the user and ask for confirmation before posting. Use th
 
 #### Phase 10: Implementation
 - Supports **iteration** — see Phase 9-10 Iteration below
-- **Post-command bookkeeping:** After `/ks:implement-plan` completes (all phases committed and PR created), the project-manager marks phase 10 as `COMPLETED` in `state.yaml` and runs `/ks:create_handoff`
+- **Mandatory architect gate** — `/ks:implement-plan` invokes `/ks:architect code {project-directory-path}` after all phase commits are in. Verdict policy:
+  - `APPROVED` → proceeds to `/ks:create_pr`.
+  - `NEEDS REVISION` → orchestrator reads each finding, addresses it, re-runs `/ks:architect code`. Does NOT proceed until APPROVED.
+  - `REJECTED` → orchestrator pauses, surfaces findings to the user, asks whether to abandon / re-plan / override. Override requires explicit `override approved` user message.
+- **Post-command bookkeeping:** After `/ks:architect` returns APPROVED and `/ks:create_pr` completes, the project-manager marks phase 10 as `COMPLETED` in `state.yaml` and runs `/ks:create_handoff`
 
 ---
 

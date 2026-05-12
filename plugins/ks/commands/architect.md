@@ -169,6 +169,26 @@ Consumers found: [N total]
 4. **Consumer impact analysis** — For every modified export (function, type, component, hook, API endpoint), use `Grep` to find all consumers across the codebase. Check whether each consumer still works correctly with the changes. Pay special attention to new optional parameters, changed return types, and modified interfaces — find callers that weren't updated and assess whether they should have been.
 5. **Evaluate the code against your principles**
 
+### Acceptance-Criteria Grading (code mode)
+
+1. Read `{project-directory-path}/resources/implementation-plan-{NN}.md` where NN is the latest iteration (length of Phase 9's `iterations` array in state.yaml; default 01).
+2. Extract the "Acceptance Criteria" section. Each line starting with `AC-N:` is a graded criterion.
+3. For each `AC-N:` line, verify against current state:
+   - Read referenced files / config / generated output.
+   - Run or check the relevant tests (do NOT modify them — architect is read-only).
+   - For frontend criteria, observe behavior via the browser tools wired into `/ks:review-changes` (Playwright CLI) if available; otherwise note as `SKIPPED (no browser harness)`.
+4. Tabulate result:
+
+   | Criterion | Verdict | Evidence |
+   | --------- | ------- | -------- |
+   | AC-1 | PASS / FAIL / SKIPPED (reason) | file:line or command output |
+   | …    | …                              | …                           |
+
+5. Verdict policy:
+   - All PASS → APPROVED candidate (proceed to consumer-impact analysis).
+   - Any FAIL → NEEDS REVISION, listing exactly which AC failed and why.
+   - SKIPPED without reason → NEEDS REVISION.
+
 ### What You Check
 
 - **Pattern consistency**: Does the new code follow the same patterns used elsewhere in the codebase for similar functionality?
