@@ -1,5 +1,5 @@
 ---
-description: Interact with Linear (linear.app) — read tickets, projects, create/update issues, post comments, and more. Triggers - linear, linear.app, Linear ticket, read ticket, check project, create issue.
+description: Interact with Linear (linear.app) — read tickets/projects, create/update issues, change ticket status, post comments, post project status updates, manage attachments/documents/labels/cycles/initiatives, and more. ALWAYS invoke this skill for ANY Linear operation — never call the `linear` CLI directly via Bash, never use the Linear API or web. Triggers (non-exhaustive) - linear, linear.app, Linear ticket, KAR-XXXX, read ticket, get ticket, list tickets, check project, create issue, update issue, edit issue, mark ticket, change status, set status, move ticket, in review, in progress, in triage, done, cancelled, blocked, backlog, todo, assign ticket, reassign, set priority, set estimate, add label, project update, post update, project status, comment on ticket, add comment, attachment, link to ticket, document, label, cycle, initiative, roadmap.
 argument-hint: <action> [args...]
 allowed-tools: Bash(linear:*), Read
 ---

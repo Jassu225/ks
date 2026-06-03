@@ -169,7 +169,11 @@ When the user asks to interact with Slack:
    - **Mentioning users**: If the message should mention or address someone (e.g., the user says "ask John…", "tell Sarah…", "ping @username…"), resolve the person's name to a Slack user ID first by running `slack user info <name> --json` and extracting the `id` field. If the lookup fails (user not found), the name may be misspelled — run `slack user list --json` and find the closest match by comparing real names and display names. Then use `<@USER_ID>` in the message text so the person gets a proper Slack mention/notification. For example, if the user says "ask Jas about the deploy", resolve "Jas" → `U01ABCDEF`, then compose the message with `<@U01ABCDEF>` in the text.
    - **Always show the user the target channel and full message content, then ask for explicit confirmation before sending.**
    - Once confirmed, use `slack message send <channel> "text"` — supports Block Kit via `--blocks`, attachments via repeatable `--file <path>`
-4. **Threading**: **Always show the user the target channel, thread, and full reply content, then ask for explicit confirmation before sending.** Once confirmed, use `slack message reply <channel> <ts> "text"`
+   - **Inspecting the response (avoid duplicate posts)**: `slack message send` (and `reply` / `update`) is a mutating call. The `--json` response is long (auth metadata, file blobs, scopes). Never re-run a mutating command just to "see more output" — each call posts again. Instead:
+     - Capture the full response in one go: `slack message send <channel> "text" --json > /tmp/slack_send.json 2>&1`, then `cat /tmp/slack_send.json | jq '{ok, ts, channel}'` (or read the file with the Read tool).
+     - Or pipe to `head` not `tail` — the `"ok"`, `"channel"`, `"ts"` fields appear at the top of the JSON response.
+     - If you suspect a send failed, verify with the non-mutating `slack channel history <channel> --limit 1` before retrying.
+4. **Threading**: **Always show the user the target channel, thread, and full reply content, then ask for explicit confirmation before sending.** Once confirmed, use `slack message reply <channel> <ts> "text"`. The same "never re-run to inspect output" rule from step 3 applies.
 5. **Finding users**: Use `slack user list` or `slack user info <name/email/ID>`
 6. **Uploading files**: Use `slack file upload <channel> <path...>` (one or many paths) with optional `--title` (single file), `--comment`, `--thread-ts`
 7. **Searching**: Use `slack search messages "query"` (requires user token)
@@ -182,4 +186,5 @@ When the user asks to interact with Slack:
 - Emoji names work with or without colons (`:thumbsup:` or `thumbsup`)
 - Search and status commands require a user token (`xoxp-`), not a bot token
 - Use `--json` when you need to parse output programmatically or extract IDs/timestamps
+- `--json` responses can be long (especially `message send` with attachments — includes file metadata and OAuth scopes). The `"ok"` / `"ts"` / `"channel"` fields are at the **top** of the response, so `head` works but `tail` will clip to noisy auth/scope blocks that can look like errors. Prefer redirecting to a temp file and inspecting it, or piping to `jq`. Re-running a `send` / `reply` / `update` / `delete` to "see more output" posts again — verify via `channel history` instead.
 - Token is read from `SLACK_TOKEN` in `scripts/.env`
