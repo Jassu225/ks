@@ -68,6 +68,15 @@ function prFromSlack(slack: unknown): PrRef | null {
   return null;
 }
 
+/** The "source" Slack thread permalink (slack.project_thread.url). */
+function slackThreadUrl(slack: unknown): string | null {
+  if (typeof slack !== 'object' || slack === null) return null;
+  const t = (slack as Record<string, unknown>).project_thread;
+  if (typeof t !== 'object' || t === null) return null;
+  const url = (t as Record<string, unknown>).url;
+  return typeof url === 'string' && url ? url : null;
+}
+
 /** Infer ticket vs project from the entity key, falling back to the path. */
 function inferType(doc: Record<string, unknown>, path: string): 'ticket' | 'project' {
   if (doc.ticket) return 'ticket';
@@ -112,6 +121,8 @@ export function parseStateYaml(path: string): ParsedWorkUnit | null {
       identifier,
       title: typeof entity.name === 'string' ? entity.name : identifier,
       linearStatus: status && typeof status.name === 'string' ? status.name : null,
+      linearUrl: typeof entity.url === 'string' && entity.url ? entity.url : null,
+      slackThreadUrl: slackThreadUrl(doc.slack),
       priority: priority
         ? {
             value: typeof priority.value === 'number' ? priority.value : null,
@@ -124,6 +135,7 @@ export function parseStateYaml(path: string): ParsedWorkUnit | null {
       phases: mapPhases(doc.phases),
       pr: prFromSlack(doc.slack),
       slack: doc.slack ?? null,
+      state: doc, // the entire parsed state.yaml, verbatim
     },
   };
 }

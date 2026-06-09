@@ -78,6 +78,9 @@ const checkpoints = new Checkpoints();
 const accs = new Map<string, SessionAcc>(); // sessionId → accumulator
 const sessionDocs = new Map<string, SessionDoc>(); // last materialized doc
 const units = new Map<string, WorkUnitDoc>(); // stateYamlPath → work-unit
+const stateMtimes = new Map<string, number>(); // stateYamlPath → last-parsed mtimeMs (read-I/O gate)
+const lastUnitSig = new Map<string, string>(); // unitId → last-written doc signature (write gate)
+let lastProjectSig: string | null = null; // last-written project doc signature (write gate)
 const worktreePathCache = new Map<string, string | null>(); // cwd → toplevel
 const pendingOverlays = new Map<string, Array<{ id: string; kind: string; since: string }>>();
 let knownWorktrees: string[] = conf.worktreePaths ?? [];
@@ -194,52 +197,78 @@ async function recomputeProject(): Promise<void> {
   // phase model + per-card column
   const withPhase = unitList.map((u) => ({ ...u, currentPhase: currentPhase(u) }));
 
-  // Dedup per unitId: every worktree carries a copy of every ticket's
-  // state.yaml, so the same unit shows up many times at different progress.
-  // Keep the most-advanced copy (highest current phase), preferring the one
-  // whose worktree is live, then the one with more phases.
+  // Dedup per unitId by SOURCE precedence: the same unit can appear in the main
+  // checkout AND in a worktree. The lifecycle is: a ticket's state.yaml lives in
+  // its worktree while in progress (main has only a stale stub), then on
+  // completion the workflow is copied back to main and the worktree is deleted.
+  // So a worktree copy is authoritative and always overrides the main copy; the
+  // main copy only wins once no worktree carries that unit (i.e. after cleanup).
+  // Among multiple worktree copies (rare), prefer a live worktree then the
+  // more-advanced one.
   const live = new Set(knownWorktrees);
   const isLive = (wt: string | null): boolean => !!(wt && live.has(realpathOr(wt)));
+  const user = cfg.workflowUser ?? deriveWorkflowUser();
+  const mainRoot = workflowDir(projectPath, user);
+  const isMainCopy = (u: (typeof withPhase)[number]): boolean =>
+    u.stateYamlPath.startsWith(mainRoot);
+  // rank tuple (higher wins): [from-worktree, worktree-live, phase#, #phases]
+  const rank = (u: (typeof withPhase)[number]): [number, number, number, number] => [
+    isMainCopy(u) ? 0 : 1,
+    isLive(u.worktreeDir) ? 1 : 0,
+    u.currentPhase?.number ?? -1,
+    u.phases.length,
+  ];
+  const gt = (a: number[], b: number[]): boolean => {
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return a[i] > b[i];
+    }
+    return false;
+  };
   const best = new Map<string, (typeof withPhase)[number]>();
   for (const u of withPhase) {
     const cur = best.get(u.unitId);
-    if (!cur) {
-      best.set(u.unitId, u);
-      continue;
-    }
-    const a: [number, number, number] = [u.currentPhase?.number ?? -1, isLive(u.worktreeDir) ? 1 : 0, u.phases.length];
-    const b: [number, number, number] = [cur.currentPhase?.number ?? -1, isLive(cur.worktreeDir) ? 1 : 0, cur.phases.length];
-    if (a[0] > b[0] || (a[0] === b[0] && (a[1] > b[1] || (a[1] === b[1] && a[2] > b[2])))) {
-      best.set(u.unitId, u);
-    }
+    if (!cur || gt(rank(u), rank(cur))) best.set(u.unitId, u);
   }
   const deduped = [...best.values()];
   const phaseModel = derivePhaseModel(deduped);
   // join sessions onto each card
   const joined = deduped.map((u) => joinUnit(u, sessions));
 
-  await writer.upsertProject({
+  // Write gate: only upsert docs that actually changed. recomputeProject runs on
+  // every state.yaml/session change but touches every unit, so without this a
+  // single edit re-writes the whole (ever-growing) set each time. The signature
+  // excludes updatedAt so an unchanged doc isn't seen as "new" via its stamp.
+  const projectDoc = {
     projectId,
     projectPath,
     commonDir: PROJECT_COMMON_DIR,
     workflowType: projectWorkflowType(joined),
     phaseModel,
     worktreePaths: knownWorktrees,
-    updatedAt: nowIso(),
-  });
+  };
+  const projectSig = JSON.stringify(projectDoc);
+  if (projectSig !== lastProjectSig) {
+    lastProjectSig = projectSig;
+    await writer.upsertProject({ ...projectDoc, updatedAt: nowIso() });
+  }
+
   // A card is worktree-backed only if its worktreeDir is a CURRENT git worktree
   // (old state.yaml records removed worktrees; leftover dirs still exist, so
   // existsSync isn't enough). Null it otherwise so the board hides the backlog.
   for (const u of joined) {
     const worktreeDir = isLive(u.worktreeDir) ? u.worktreeDir : null;
-    await writer.upsertWorkUnit(projectId, { ...u, worktreeDir, updatedAt: nowIso() });
+    const doc = { ...u, worktreeDir };
+    const sig = JSON.stringify(doc);
+    if (lastUnitSig.get(u.unitId) === sig) continue; // unchanged → skip the DB write
+    lastUnitSig.set(u.unitId, sig);
+    await writer.upsertWorkUnit(projectId, { ...doc, updatedAt: nowIso() });
   }
 }
 
 // ── state.yaml ingestion ────────────────────────────────────────────────────
-function ingestStateYaml(path: string): void {
+function ingestStateYaml(path: string, mtimeMs: number): void {
   const parsed = parseStateYaml(path);
-  if (!parsed) return; // mid-write / malformed → keep last good
+  if (!parsed) return; // mid-write / malformed → keep last good, retry next tick (mtime NOT recorded)
   const u: WorkUnitDoc = {
     ...parsed.doc,
     currentPhase: null,
@@ -249,6 +278,7 @@ function ingestStateYaml(path: string): void {
     updatedAt: nowIso(),
   };
   units.set(path, u);
+  stateMtimes.set(path, mtimeMs);
   scheduleProjectRecompute();
 }
 
@@ -376,7 +406,14 @@ function scanStateYaml(root: string): void {
         continue;
       }
       if (s.isDirectory()) stack.push(p);
-      else if (e === 'state.yaml') ingestStateYaml(p);
+      else if (e === 'state.yaml') {
+        // Read-I/O gate: only readFileSync + YAML-parse when the file actually
+        // changed since last parse. statSync above is cheap; the parse is not,
+        // and completed tickets' state.yaml in the main checkout never change
+        // yet accumulate forever. Unchanged + already-known → skip.
+        if (stateMtimes.get(p) === s.mtimeMs && units.has(p)) continue;
+        ingestStateYaml(p, s.mtimeMs);
+      }
     }
   }
 }
@@ -419,10 +456,15 @@ function startWatchers(): void {
   // both cheaper and far more robust.
   setInterval(scanAllStateYaml, 15_000);
 
-  // periodic worktree re-enumeration → add watches for new worktrees
+  // periodic worktree re-enumeration → add watches for new worktrees. When the
+  // worktree set changes (e.g. a completed worktree was removed), recompute so
+  // dead worktreeDirs get nulled — the state.yaml rescan no longer forces a
+  // recompute every tick now that it's mtime-gated.
   setInterval(() => {
+    const before = knownWorktrees.join('\n');
     const fresh = enumerateProjectDirs();
     sessionWatcher.add(fresh);
+    if (knownWorktrees.join('\n') !== before) scheduleProjectRecompute();
   }, 60_000);
 
   log('watching', dirs.length, 'session dir(s) + events; rescanning workflow state.yaml every 15s');
