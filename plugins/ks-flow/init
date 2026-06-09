@@ -1,0 +1,39 @@
+#!/bin/bash
+# ks-flow init — puts the `ks-flow` CLI on your PATH. Idempotent: re-running is
+# a no-op once the line is present. The daemon, PocketBase, and the board all
+# install/build themselves on first use (SessionStart bootstrap + `ks-flow
+# open`), so this script only handles the PATH wiring.
+set -e
+
+PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+BIN_DIR="$PLUGIN_DIR/bin"
+
+# Make sure the CLI is runnable.
+chmod +x "$BIN_DIR/ks-flow" 2>/dev/null || true
+
+# Default to zsh (the documented shell); fall back to bash if that's the login shell.
+case "${SHELL:-}" in
+  *bash) RC="$HOME/.bashrc" ;;
+  *) RC="$HOME/.zshrc" ;;
+esac
+
+echo "=== Configuring PATH ==="
+if grep -qF "$BIN_DIR" "$RC" 2>/dev/null; then
+  echo "ks-flow bin already on PATH in $RC — skipping"
+else
+  # Ensure a trailing newline before appending.
+  [ -s "$RC" ] && [ -n "$(tail -c 1 "$RC" 2>/dev/null)" ] && echo "" >>"$RC"
+  echo "export PATH=\"$BIN_DIR:\$PATH\"" >>"$RC"
+  echo "Added ks-flow bin to PATH in $RC"
+fi
+
+echo ""
+echo "=== Done ==="
+echo "Run 'source $RC' (or open a new terminal) to use the 'ks-flow' command."
+echo ""
+echo "Next:"
+echo "  1. Enable the plugin and set project_path (via /plugin). db_provider"
+echo "     can stay blank → it auto-selects PocketBase (zero-config, local)."
+echo "  2. Start a Claude session in that project — SessionStart bootstrap builds"
+echo "     the daemon, downloads PocketBase, and begins ingesting."
+echo "  3. ks-flow open   # build + launch the board, then open it in the browser"

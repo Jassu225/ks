@@ -1,0 +1,26 @@
+{
+  "name": "ks-flow-daemon",
+  "version": "0.1.0",
+  "description": "ks-flow ingester daemon: tails Claude Code session JSONL + ks workflow state.yaml into a provider-agnostic store",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "daemon": "node dist/daemon.js"
+  },
+  "bin": {
+    "ks-flow-daemon": "./dist/daemon.js"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "firebase-admin": "^12.7.0",
+    "pocketbase": "^0.27.0",
+    "yaml": "^2.4.1"
+  },
+  "optionalDependencies": {
+    "fsevents": "^2.3.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  }
+}

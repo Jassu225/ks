@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Reference template for the ks-flow ingester launchd agent.
+
+  The agent is actually rendered and (re)loaded by scripts/bootstrap.sh, which
+  fills in the absolute node path, the built daemon.js path, $CLAUDE_PLUGIN_DATA,
+  and the CLAUDE_PLUGIN_OPTION_* environment the daemon needs (these are not
+  available to a launchd job otherwise). This file documents the resulting shape.
+
+  Placeholders: @NODE_BIN@ @DAEMON_JS@ @DATA_DIR@ @NODE_DIR@
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.ksflow.ingester</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@NODE_BIN@</string>
+    <string>@DAEMON_JS@</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>@NODE_DIR@:/usr/local/bin:/usr/bin:/bin</string>
+    <key>CLAUDE_PLUGIN_DATA</key><string>@DATA_DIR@</string>
+    <!-- CLAUDE_PLUGIN_OPTION_* and FIRESTORE_EMULATOR_HOST injected here -->
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>@DATA_DIR@/daemon.log</string>
+  <key>StandardErrorPath</key><string>@DATA_DIR@/daemon.err.log</string>
+</dict>
+</plist>

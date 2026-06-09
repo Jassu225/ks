@@ -1,0 +1,90 @@
+{
+  "name": "ks-flow",
+  "version": "0.1.0",
+  "description": "Per-project Kanban board over your Claude Code sessions, with macOS notifications when a session blocks waiting for you",
+  "author": {
+    "name": "Jaswanth Sai Sattenapalli"
+  },
+  "defaultEnabled": false,
+  "userConfig": {
+    "project_path": {
+      "type": "directory",
+      "title": "Project path",
+      "description": "Main worktree / repo root to track. All of its git worktrees are tracked too; every other project on the machine is ignored.",
+      "required": true
+    },
+    "workflow_user": {
+      "type": "string",
+      "title": "Workflow username",
+      "description": "The workflow/<username>/ segment to watch for state.yaml files. Defaults to the username found in a state.yaml, else derived from git config."
+    },
+    "db_provider": {
+      "type": "string",
+      "title": "DB provider",
+      "description": "Backing store. Leave blank to auto-select: 'pocketbase' (zero-config local default — a bundled server, no GCP) unless a cloud Firestore project is configured, in which case 'firestore'. Set explicitly to 'pocketbase' or 'firestore' to force."
+    },
+    "pocketbase_port": {
+      "type": "number",
+      "title": "PocketBase port",
+      "description": "Localhost port for the bundled PocketBase server (db_provider=pocketbase). The daemon starts it; the board reads from it.",
+      "default": 8090
+    },
+    "firestore_mode": {
+      "type": "string",
+      "title": "Firestore mode",
+      "description": "'emulator' (local-only, no GCP) or 'cloud' (durable archive in a real Firestore project). Only used when db_provider=firestore.",
+      "default": "emulator"
+    },
+    "gcp_project_id": {
+      "type": "string",
+      "title": "GCP project id",
+      "description": "Firestore/Firebase project id (service-account 'project_id'). Required when firestore_mode=cloud."
+    },
+    "firestore_client_email": {
+      "type": "string",
+      "title": "Service-account client email",
+      "description": "Admin SDK service-account 'client_email' (daemon writer). Required when firestore_mode=cloud.",
+      "sensitive": true
+    },
+    "firestore_private_key": {
+      "type": "string",
+      "title": "Service-account private key",
+      "description": "Admin SDK service-account 'private_key' (PEM). Paste with literal \\n escapes on one line. Required when firestore_mode=cloud.",
+      "sensitive": true
+    },
+    "firestore_credentials": {
+      "type": "file",
+      "title": "Firestore service-account key (optional)",
+      "description": "Optional fallback: path to the full service-account JSON, used only if the client-email/private-key fields are unset.",
+      "sensitive": true
+    },
+    "firebase_api_key": {
+      "type": "string",
+      "title": "Firebase web API key",
+      "description": "Client-SDK apiKey for the board reader (public; from Project settings → web app). Required when firestore_mode=cloud. authDomain/storageBucket derive from gcp_project_id."
+    },
+    "firebase_app_id": {
+      "type": "string",
+      "title": "Firebase web app id",
+      "description": "Client-SDK appId for the board reader (optional; from the same web app config)."
+    },
+    "idle_minutes": {
+      "type": "number",
+      "title": "Idle threshold (minutes)",
+      "description": "A session with no timestamped activity for this many minutes is marked idle.",
+      "default": 30
+    },
+    "notify_throttle_sec": {
+      "type": "number",
+      "title": "Notify throttle (seconds)",
+      "description": "Suppress repeat notifications for the same session within this window.",
+      "default": 20
+    },
+    "board_port": {
+      "type": "number",
+      "title": "Board port",
+      "description": "Port the Next.js board listens on (ks-flow open).",
+      "default": 4317
+    }
+  }
+}
