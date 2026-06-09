@@ -34,5 +34,5 @@ Would appreciate a review when you get a chance. Thanks! :pray:
 |---|---|---|
 | `{PR_TITLE}` | Conventional commit PR title | `fix(issue-groups): (KAR-11291) improve error messages` |
 | `{PR_URL}` | GitHub PR URL | `https://github.com/karmasuite/karmasuite/pull/5643` |
-| `{CHANGELOG_BULLETS}` | Bullet list of key changes | `• Improved issue group labels...` |
+| `{CHANGELOG_BULLETS}` | Bullet list of key changes (functional/behavioral only — do NOT add test-coverage bullets) | `• Improved issue group labels...` |
 | `{PROJECT_THREAD}` | Slack project thread URL from `state.yaml` | `https://karmasuite.slack.com/archives/C05JACKMFJB/p1769783226197199` |
