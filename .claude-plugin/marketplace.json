@@ -17,6 +17,17 @@
       },
       "repository": "https://github.com/karmasuite/ks",
       "keywords": ["karmasuite", "linear", "workflow", "project-management"]
+    },
+    {
+      "name": "ks-flow",
+      "source": "./plugins/ks-flow",
+      "description": "Per-project Kanban board over your Claude Code sessions, with macOS notifications when a session blocks waiting for you",
+      "version": "0.1.0",
+      "author": {
+        "name": "Jaswanth Sai Sattenapalli"
+      },
+      "repository": "https://github.com/karmasuite/ks",
+      "keywords": ["claude-code", "kanban", "sessions", "notifications", "firestore"]
     }
   ]
 }

@@ -1,0 +1,20 @@
+rules_version = '2';
+
+// ks-flow security model:
+//   - The daemon writes with the Admin SDK, which BYPASSES these rules.
+//   - The browser board reads with the client SDK and is GOVERNED by them.
+//   - No write path is ever exposed to the browser.
+//
+// In cloud mode, restrict reads to the signed-in owner. In emulator mode the
+// emulator ignores auth on localhost, so these rules only matter for cloud.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /projects/{projectId}/{document=**} {
+      // Reads: owner only (set request.auth via Firebase Auth in the board).
+      // Tighten `OWNER_UID` to your uid, or wire custom claims, before exposing.
+      allow read: if request.auth != null;
+      // The browser never writes; only the Admin SDK does (rules bypassed).
+      allow write: if false;
+    }
+  }
+}

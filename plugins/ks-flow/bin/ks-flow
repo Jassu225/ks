@@ -1,0 +1,176 @@
+#!/bin/bash
+# ks-flow — CLI on PATH while the plugin is enabled.
+#
+#   ks-flow start             start the daemon (+ PocketBase); builds/installs on first run
+#   ks-flow open              build and open the board UI in the browser
+#   ks-flow close             stop the board UI server
+#   ks-flow stop              stop everything — board UI, daemon, and PocketBase
+#   ks-flow status            print daemon + ingestion status
+#   ks-flow daemon            run the ingester in the foreground (debug)
+#   ks-flow set-project PATH  re-point the tracked project (rewrites project.conf)
+set -euo pipefail
+
+PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/ks-flow-karmasuite}"
+DAEMON_DIR="$DATA_DIR/daemon"
+LABEL="com.ksflow.ingester"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+UID_NUM="$(id -u)"
+BOARD_PORT="${CLAUDE_PLUGIN_OPTION_board_port:-4317}"
+PB_PORT="${CLAUDE_PLUGIN_OPTION_pocketbase_port:-8090}"
+
+cmd="${1:-status}"
+case "$cmd" in
+  open)
+    WEB="$DATA_DIR/web"
+    # Rebuild when missing OR when the bundled board source changed — otherwise
+    # `open` would keep serving a stale build (the bug that shipped old UI).
+    NEED_BUILD=0
+    if [ ! -d "$WEB/node_modules" ] || [ ! -d "$WEB/.next" ]; then
+      NEED_BUILD=1
+    else
+      for d in app components lib; do
+        diff -qr "$PLUGIN_ROOT/web/$d" "$WEB/$d" >/dev/null 2>&1 || NEED_BUILD=1
+      done
+      for f in package.json tailwind.config.ts postcss.config.js next.config.js globals.css; do
+        [ "$f" = "globals.css" ] && continue  # lives under app/, already diffed
+        diff -q "$PLUGIN_ROOT/web/$f" "$WEB/$f" >/dev/null 2>&1 || NEED_BUILD=1
+      done
+    fi
+
+    if [ "$NEED_BUILD" = "1" ]; then
+      echo "Building board…" >&2
+      mkdir -p "$WEB"
+      # Sync source over the deployed copy (node_modules + .next are preserved;
+      # they live only in $WEB, never in the bundled source).
+      cp -R "$PLUGIN_ROOT/web/." "$WEB/"
+      ( cd "$WEB" && npm install --no-audit --no-fund --cache "$DATA_DIR/.npm" && npm run build )
+    fi
+
+    echo "Board → http://localhost:$BOARD_PORT" >&2
+    # Export the plugin root so the board's /api/project route can run bootstrap.
+    ( cd "$WEB" && KS_FLOW_PLUGIN_ROOT="$PLUGIN_ROOT" PORT="$BOARD_PORT" npm run start >"$DATA_DIR/board.log" 2>&1 & )
+    # Wait until the server actually answers before opening the browser, so it
+    # doesn't hit connection-refused on a slow start.
+    URL="http://localhost:$BOARD_PORT"
+    for _ in $(seq 1 30); do
+      curl -fsS -o /dev/null "$URL" 2>/dev/null && break
+      sleep 0.5
+    done
+    echo "Opening $URL in your browser…" >&2
+    open "$URL" 2>/dev/null || echo "Could not auto-open — visit $URL" >&2
+    ;;
+
+  start)
+    # Start (or refresh) the daemon — bootstrap installs/builds on first run,
+    # downloads PocketBase, and loads the always-on launchd agent that spawns it.
+    #
+    # bootstrap needs project_path; inside a Claude session it's in the env, but
+    # from a plain shell it isn't — fall back to the persisted project.conf so
+    # `ks-flow start` works standalone.
+    if [ -z "${CLAUDE_PLUGIN_OPTION_project_path:-}" ] && [ -f "$DATA_DIR/project.conf" ]; then
+      CLAUDE_PLUGIN_OPTION_project_path="$(jq -r '.projectPath // empty' "$DATA_DIR/project.conf")"
+      export CLAUDE_PLUGIN_OPTION_project_path
+    fi
+    if [ -z "${CLAUDE_PLUGIN_OPTION_project_path:-}" ]; then
+      echo "no project configured — run 'ks-flow set-project <path>' or set it on the board's settings page." >&2
+      exit 1
+    fi
+
+    echo "starting daemon (project: $CLAUDE_PLUGIN_OPTION_project_path)…"
+    "$PLUGIN_ROOT/scripts/bootstrap.sh"
+    sleep 1
+
+    echo "daemon (launchd):"
+    if launchctl print "gui/$UID_NUM/$LABEL" >/dev/null 2>&1; then
+      launchctl print "gui/$UID_NUM/$LABEL" | grep -E 'state =|pid =' | sed 's/^/  /'
+    else
+      echo "  not loaded — see $DATA_DIR/daemon.err.log"
+    fi
+    if [ -f "$DATA_DIR/daemon.log" ]; then
+      echo "recent daemon log ($DATA_DIR/daemon.log):"
+      tail -n 12 "$DATA_DIR/daemon.log" | sed 's/^/  /'
+    fi
+    echo "board: 'ks-flow open'   ·   status: 'ks-flow status'"
+    ;;
+
+  close)
+    # Stop only the board UI server (whatever is listening on BOARD_PORT).
+    PIDS="$(lsof -ti tcp:"$BOARD_PORT" 2>/dev/null || true)"
+    if [ -n "$PIDS" ]; then
+      echo "$PIDS" | xargs kill 2>/dev/null && echo "board stopped (port $BOARD_PORT)" \
+        || echo "could not stop board on port $BOARD_PORT" >&2
+    else
+      echo "board not running on port $BOARD_PORT"
+    fi
+    ;;
+
+  status)
+    echo "project.conf:"
+    if [ -f "$DATA_DIR/project.conf" ]; then
+      jq . "$DATA_DIR/project.conf"
+    else
+      echo "  (none — set CLAUDE_PLUGIN_OPTION_project_path and start a session, or run: ks-flow set-project <path>)"
+    fi
+
+    echo "daemon (launchd):"
+    if launchctl print "gui/$UID_NUM/$LABEL" >/dev/null 2>&1; then
+      launchctl print "gui/$UID_NUM/$LABEL" | grep -E 'state =|pid =' | sed 's/^/  /'
+    else
+      echo "  not loaded"
+    fi
+
+    echo "pocketbase (port $PB_PORT):"
+    if curl -fsS "http://127.0.0.1:$PB_PORT/api/health" >/dev/null 2>&1; then
+      echo "  healthy"
+    elif pgrep -f "pocketbase serve" >/dev/null 2>&1; then
+      echo "  running (starting up…)"
+    else
+      echo "  not running"
+    fi
+
+    echo "board UI (port $BOARD_PORT):"
+    if lsof -ti tcp:"$BOARD_PORT" >/dev/null 2>&1; then
+      echo "  running → http://localhost:$BOARD_PORT"
+    else
+      echo "  not running"
+    fi
+
+    if [ -f "$DATA_DIR/checkpoints.json" ]; then
+      echo "tracked sessions: $(jq 'length' "$DATA_DIR/checkpoints.json")"
+    fi
+    ;;
+
+  daemon)
+    exec node "$DAEMON_DIR/dist/daemon.js"
+    ;;
+
+  install-daemon)
+    # Back-compat alias for `start`.
+    exec "$PLUGIN_ROOT/scripts/bootstrap.sh"
+    ;;
+
+  stop)
+    # Stop everything: board UI, daemon (launchd), and PocketBase.
+    PIDS="$(lsof -ti tcp:"$BOARD_PORT" 2>/dev/null || true)"
+    if [ -n "$PIDS" ]; then
+      echo "$PIDS" | xargs kill 2>/dev/null && echo "board stopped" || echo "could not stop board" >&2
+    else
+      echo "board not running"
+    fi
+    launchctl bootout "gui/$UID_NUM" "$PLIST" 2>/dev/null \
+      && echo "daemon stopped" || echo "daemon not running"
+    pkill -f "pocketbase serve" 2>/dev/null && echo "pocketbase stopped" || true
+    ;;
+
+  set-project)
+    NEW="${2:-}"
+    [ -n "$NEW" ] || { echo "usage: ks-flow set-project <path>" >&2; exit 1; }
+    CLAUDE_PLUGIN_OPTION_project_path="$NEW" exec "$PLUGIN_ROOT/scripts/bootstrap.sh"
+    ;;
+
+  *)
+    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>}" >&2
+    exit 1
+    ;;
+esac

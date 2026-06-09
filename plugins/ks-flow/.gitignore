@@ -1,0 +1,15 @@
+# Build artifacts and deps — bootstrap.sh rebuilds these into $CLAUDE_PLUGIN_DATA
+src/node_modules/
+src/dist/
+web/node_modules/
+web/.next/
+*.log
+
+# Local Firestore emulator data
+.firebase/
+firebase-debug.log
+firestore-debug.log
+
+# Next.js generated
+web/next-env.d.ts
+web/tsconfig.tsbuildinfo
