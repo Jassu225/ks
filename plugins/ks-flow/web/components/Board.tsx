@@ -2,9 +2,15 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useBoard } from '@/lib/useBoard';
+import { useNow } from '@/lib/useNow';
 import type { BoardConfig, SessionDoc, WorkUnitDoc } from '@/lib/types';
 import { Column } from './Column';
 import { CompletedWorktrees } from './CompletedWorktrees';
+
+// Ticket workflow runs only a subset of phases (init + context/research +
+// plan/implement), so the ticket lane shows just these columns. Mirrors
+// TICKET_TEMPLATE in src/lib/phasemodel.ts.
+const TICKET_PHASES = new Set([0, 1, 2, 9, 10]);
 
 // Linear statuses treated as "done" → hidden from the board.
 const DONE_STATUSES = new Set([
@@ -20,8 +26,9 @@ const DONE_STATUSES = new Set([
 
 export function Board({ config }: { config: BoardConfig }) {
   const { project, workUnits, sessions, connected, refresh } = useBoard(config);
-  const [swimlanes, setSwimlanes] = useState(false);
+  const [swimlanes, setSwimlanes] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const now = useNow(30_000); // one shared clock → recency-based glow self-expires
 
   const onRefresh = async (): Promise<void> => {
     setRefreshing(true);
@@ -182,7 +189,7 @@ export function Board({ config }: { config: BoardConfig }) {
         </div>
       </header>
 
-      <main className="flex-1 overflow-auto p-4">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden p-4">
         {columns.length === 0 ? (
           <div className="grid h-full place-items-center text-sm text-slate-500">
             No phases yet — the daemon hasn’t ingested a state.yaml for this project.
@@ -190,7 +197,14 @@ export function Board({ config }: { config: BoardConfig }) {
         ) : (
           types.map((t) => {
             const unitsForLane = t ? visibleUnits.filter((u) => u.type === t) : visibleUnits;
+            // Hide an empty lane so a ticket-only (or project-only) repo doesn't
+            // render a wide band of empty columns for the other type.
+            if (t && unitsForLane.length === 0) return null;
             const laneSet = new Set(unitsForLane.map((u) => u.unitId));
+            // Ticket lane shows only ticket phases; project lane (and the
+            // combined view) shows the full phase model.
+            const laneColumns =
+              t === 'ticket' ? columns.filter((c) => TICKET_PHASES.has(c.number)) : columns;
             return (
               <section key={t ?? 'all'} className="mb-6">
                 {t && (
@@ -198,13 +212,14 @@ export function Board({ config }: { config: BoardConfig }) {
                     {t}s
                   </h3>
                 )}
-                <div className="flex gap-3">
-                  {columns.map((c) => (
+                <div className="flex gap-3 overflow-x-auto pb-2">
+                  {laneColumns.map((c) => (
                     <Column
                       key={c.number}
                       phase={c}
                       units={(byPhase.get(c.number) ?? []).filter((u) => laneSet.has(u.unitId))}
                       sessions={latestSessions}
+                      now={now}
                     />
                   ))}
                 </div>
