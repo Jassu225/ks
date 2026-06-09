@@ -4,7 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A monorepo for Claude Code plugins. Currently contains the `ks` plugin for KarmaSuite development workflows, which orchestrates a 10-phase software project lifecycle using slash commands, specialized agents, and Linear integration.
+A monorepo for Claude Code plugins:
+
+- **`ks`** — KarmaSuite development workflows, which orchestrate a 10-phase software project lifecycle using slash commands, specialized agents, and Linear integration.
+- **`ks-flow`** — a per-project Kanban board over your Claude Code sessions (an always-on launchd daemon ingests session JSONL + workflow `state.yaml` into PocketBase/Firestore; a Next.js board renders it live), plus macOS notifications when a session blocks. Self-bootstrapping. See `plugins/ks-flow/README.md`.
 
 ## Repository Structure
 
@@ -22,6 +25,13 @@ A monorepo for Claude Code plugins. Currently contains the `ks` plugin for Karma
 │       ├── rules/ks-rules.md         # Plugin-level rules
 │       ├── init / init-dev           # Setup scripts
 │       └── .config                   # Project root path
+│   └── ks-flow/                      # Session Kanban board plugin
+│       ├── src/                       # Ingester daemon (TypeScript)
+│       ├── web/                       # Next.js board UI
+│       ├── bin/ks-flow                # CLI (start/open/close/stop/status)
+│       ├── scripts/bootstrap.sh       # Self-bootstrap (deps, daemon build, launchd)
+│       ├── pocketbase/pb_migrations/  # Local store schema
+│       └── README.md                  # Full plugin docs
 ├── CLAUDE.md
 └── README.md
 ```

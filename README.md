@@ -1,6 +1,9 @@
 # KS Plugins
 
-Monorepo for Claude Code plugins. Currently contains the `ks` plugin for KarmaSuite development workflows.
+Monorepo for Claude Code plugins:
+
+- **`ks`** — KarmaSuite development workflows: a 10-phase project lifecycle orchestrated with slash commands, agents, and Linear integration.
+- **`ks-flow`** — a per-project Kanban board over your Claude Code sessions, with macOS notifications when a session blocks waiting for you. See `plugins/ks-flow/README.md`.
 
 ## Structure
 
@@ -9,7 +12,8 @@ ks/
 ├── .claude-plugin/
 │   └── marketplace.json    # Plugin marketplace listing
 ├── plugins/
-│   └── ks/                 # KarmaSuite plugin
+│   ├── ks/                 # KarmaSuite plugin
+│   └── ks-flow/            # Session Kanban board + notifications
 ├── CLAUDE.md
 └── README.md
 ```
