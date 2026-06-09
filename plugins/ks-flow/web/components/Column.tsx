@@ -5,10 +5,12 @@ export function Column({
   phase,
   units,
   sessions,
+  now,
 }: {
   phase: PhaseRef;
   units: WorkUnitDoc[];
   sessions: SessionDoc[];
+  now: number;
 }) {
   return (
     <div className="flex w-72 shrink-0 flex-col rounded-xl bg-slate-900/60">
@@ -30,6 +32,7 @@ export function Column({
               key={u.unitId}
               unit={u}
               sessions={sessions}
+              now={now}
               dimmed={!u.worktreeDir}
             />
           ))}

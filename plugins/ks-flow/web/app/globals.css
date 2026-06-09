@@ -16,3 +16,49 @@ body {
   color: #e2e8f0; /* slate-200 */
   color-scheme: dark;
 }
+
+/* Active-session card: a glowing segment that travels around the border.
+   A conic gradient is masked to a thin ring (border-box XOR content-box) and
+   spun by animating its angle. Requires @property for a smooth interpolation
+   (Chromium/Safari 16.4+ — the board runs in the user's local browser). */
+@property --ks-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes ks-spin-border {
+  to {
+    --ks-angle: 360deg;
+  }
+}
+.session-glow {
+  position: relative;
+}
+.session-glow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px; /* ring thickness */
+  background: conic-gradient(
+    from var(--ks-angle),
+    transparent 55%,
+    #818cf8 74%,
+    #e0e7ff 82%,
+    #818cf8 90%,
+    transparent 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px #818cf8aa);
+  animation: ks-spin-border 2.5s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-glow::after {
+    animation: none;
+  }
+}

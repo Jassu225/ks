@@ -36,6 +36,8 @@ export interface WorkUnitDoc {
   identifier: string;
   title: string;
   linearStatus: string | null;
+  linearUrl: string | null;
+  slackThreadUrl: string | null;
   priority: { value: number | null; name: string } | null;
   estimate: number | null;
   worktreeDir: string | null;
@@ -44,6 +46,8 @@ export interface WorkUnitDoc {
   waiting: WaitingState | null;
   sessionIds: string[];
   lastActivity: string | null;
+  /** The entire parsed state.yaml, verbatim (for surfacing any field). */
+  state: Record<string, unknown> | null;
 }
 
 export interface SessionDoc {

@@ -241,8 +241,24 @@ export function CompletedWorktrees({
             <tbody className="divide-y divide-slate-800/70">
               {visible.map((u) => (
                 <tr key={u.unitId} className="bg-slate-950 hover:bg-slate-900/60">
-                  <td className="px-3 py-2 font-mono text-slate-400">{u.identifier}</td>
-                  <td className="max-w-xs truncate px-3 py-2 text-slate-200">{u.title}</td>
+                  <td className="px-3 py-2 font-mono text-slate-400">
+                  {u.linearUrl ? (
+                    <a
+                      href={u.linearUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-400 hover:text-indigo-300"
+                      title="Open in Linear"
+                    >
+                      {u.identifier} ↗
+                    </a>
+                  ) : (
+                    u.identifier
+                  )}
+                </td>
+                  <td className="max-w-md truncate px-3 py-2 text-slate-200" title={u.title}>
+                    {u.title}
+                  </td>
                   <td className="px-3 py-2">
                     {u.linearStatus && (
                       <span className="rounded bg-emerald-950 px-1.5 py-0.5 text-emerald-300">
@@ -264,11 +280,10 @@ export function CompletedWorktrees({
                       <span className="text-slate-600">—</span>
                     )}
                   </td>
-                  <td
-                    className="px-3 py-2 font-mono text-[10px] text-slate-500"
-                    title={u.worktreeDir ?? ''}
-                  >
-                    {u.worktreeDir}
+                  <td className="px-3 py-2" title={u.worktreeDir ?? ''}>
+                    <span className="block max-w-[16rem] break-all font-mono text-[10px] text-slate-500">
+                      {u.worktreeDir}
+                    </span>
                   </td>
                   <td className="px-3 py-2 text-slate-500">{relTime(u.lastActivity)}</td>
                   <td className="px-3 py-2 text-right">

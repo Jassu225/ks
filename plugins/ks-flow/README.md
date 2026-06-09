@@ -34,6 +34,16 @@ plugin hooks (user scope)                              DB provider (PocketBase d
 
 Ingestion bookkeeping (byte offsets, inode) stays in a local `checkpoints.json` in `${CLAUDE_PLUGIN_DATA}` — per-line churn that must not incur cloud writes. Only derived session/work-unit documents go to the DB.
 
+### Work-unit sourcing & I/O
+
+A ticket's `state.yaml` lives in its worktree while in progress; on completion the workflow is copied back to the main checkout and the worktree is deleted. The same unit can therefore appear in both places, so the daemon dedups per unit by **source precedence**: a **worktree copy always overrides the main-checkout copy**, and the main copy wins only once no worktree carries that unit (i.e. after cleanup).
+
+Both the start-up backfill and the 15s rescan are gated to avoid needless work:
+- **Read gate** — `state.yaml` is re-parsed only when its `mtime` changed (completed tickets' files in the main checkout accumulate forever but never change, so they're stat-ed, not re-parsed).
+- **Write gate** — a work-unit/project doc is upserted only when its content actually changed (signature compare, excluding `updatedAt`), so a single edit doesn't re-write the whole set.
+
+Both gates are in-memory, so a daemon restart does one cold pass, then steady-state stays cheap.
+
 ## Setup
 
 The plugin is fully self-bootstrapping — no manual `./init`.
@@ -87,7 +97,7 @@ firebase emulators:start --only firestore
 
 `ks-flow open` builds and serves the Next.js board (dark theme). Header controls:
 
-- **swimlanes** — split cards into `ticket` / `project` lanes.
+- **swimlanes** *(on by default)* — split cards into `ticket` / `project` lanes. Each lane shows only that type's phases (the ticket lane is the shorter init + context/research + plan/implement set), and a lane with no cards is hidden.
 - **live / connecting…** — realtime subscription status.
 - **↻ refresh** — manual re-pull of the project, work-units, and sessions from
   the store (the live subscription still pushes on its own; this is an on-demand
@@ -99,6 +109,28 @@ firebase emulators:start --only firestore
 Only cards whose worktree is a **current** git worktree and whose Linear status
 is not done are shown on the board (stale records linger in the store but are
 filtered out).
+
+The board also scrolls **horizontally only within each lane's column row** —
+the header and the Completed-worktrees table below stay fixed to the viewport.
+
+### Cards
+
+Each card carries quick links + live state:
+
+- **Linear ↗ / Slack ↗ / PR** — open the ticket/project in Linear (entity `url`),
+  the source Slack thread (`slack.project_thread`), and the GitHub PR. Each shown
+  only when present.
+- **⧉ path** — copy the card's worktree directory to the clipboard.
+- **priority / estimate / waiting** badges; a `⏳ waiting` badge (amber ring) when
+  a session is blocked on you.
+- **Glowing animated border** when a session is **active** — a session counts as
+  active if it wrote within the last **5 minutes** (recency, evaluated client-side
+  against a shared ticking clock, so it self-expires — not the daemon's snapshot).
+- **`⟳ active <when>`** — when the session was last active (`lastActivity`, the
+  last timestamped JSONL line); absolute time on hover.
+
+The full parsed `state.yaml` is replicated onto each work-unit (a `state` field),
+so any field can be surfaced on the board without new daemon plumbing.
 
 ### Settings (`/settings`)
 
