@@ -58,6 +58,8 @@ export interface WorkUnitDoc {
   identifier: string;
   title: string;
   linearStatus: string | null;
+  linearUrl: string | null; // entity.url from state.yaml
+  slackThreadUrl: string | null; // slack.project_thread permalink (source thread)
   priority: { value: number | null; name: string } | null;
   estimate: number | null;
   worktreeDir: string | null;
@@ -69,6 +71,10 @@ export interface WorkUnitDoc {
   waiting: WaitingState | null; // aggregated from joined sessions
   sessionIds: string[];
   lastActivity: string | null;
+  /** The entire parsed state.yaml, verbatim — so the board can surface any
+   * field without new plumbing. The typed fields above are extracted from it
+   * for convenient rendering. */
+  state: Record<string, unknown> | null;
   updatedAt: string;
 }
 
