@@ -57,7 +57,7 @@ Show the update body to the user and ask for confirmation before posting. Use th
 - **Phase 7:** "Created draft TAD. Please review"
 
 #### Phase 1: Context Creation
-- **Post-completion:** Tell the user: "Phase 2 (Codebase Research) uses semantic code analysis. Please start a new session with: `cd {cwd} && claude-ks-serena`" (where `{cwd}` is the current working directory)
+- **Post-completion:** Tell the user: "Phase 2 (Codebase Research) uses semantic code analysis. Please start a new session with: `cd {cwd} && claude-ks-serena \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
 
 #### Phase 2: Codebase Research
 - **Post-completion (project workflow):** Ask user: "Ready to proceed to Phase 3 (Initial PRD Draft)?"
