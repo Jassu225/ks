@@ -29,6 +29,60 @@ export default function Settings() {
   const [cmdSaving, setCmdSaving] = useState(false);
   const [cmdSaved, setCmdSaved] = useState(false);
 
+  // GCS archive-on-removal.
+  const [gcsEnabled, setGcsEnabled] = useState(false);
+  const [gcsBucket, setGcsBucket] = useState('');
+  // Non-empty when GCS_BUCKET is set in .env — it wins, so the field goes read-only.
+  const [gcsBucketEnv, setGcsBucketEnv] = useState('');
+  const [gcsPrefix, setGcsPrefix] = useState('');
+  const [gcsSaving, setGcsSaving] = useState(false);
+  const [gcsSaved, setGcsSaved] = useState(false);
+  const [missingPkgs, setMissingPkgs] = useState<{ name: string; installHint: string }[]>([]);
+
+  // Reminders.
+  const [remEnabled, setRemEnabled] = useState(true);
+  const [remInterval, setRemInterval] = useState(5);
+  const [remCap, setRemCap] = useState(12);
+  const [remSaving, setRemSaving] = useState(false);
+  const [remSaved, setRemSaved] = useState(false);
+  const [remMissing, setRemMissing] = useState<{ name: string; installHint: string }[]>([]);
+  const [remInstalling, setRemInstalling] = useState(false);
+  const [remInstallMsg, setRemInstallMsg] = useState<string | null>(null);
+
+  const checkReminderPreflight = async (): Promise<void> => {
+    try {
+      const r = await fetch('/api/reminders-preflight');
+      const d: { ok: boolean; missing: { name: string; installHint: string }[] } = await r.json();
+      setRemMissing(d.ok ? [] : d.missing);
+    } catch {
+      setRemMissing([]);
+    }
+  };
+
+  const installNotifier = async (): Promise<void> => {
+    setRemInstalling(true);
+    setRemInstallMsg(null);
+    try {
+      const r = await fetch('/api/reminders-preflight', { method: 'POST' });
+      const d: { ok: boolean; output: string } = await r.json();
+      setRemInstallMsg(d.ok ? 'Installed ✓' : `Install failed — run "brew install terminal-notifier" manually.`);
+      if (d.ok) setRemMissing([]);
+    } catch {
+      setRemInstallMsg('Install request failed.');
+    }
+    setRemInstalling(false);
+  };
+
+  const checkPreflight = async (): Promise<void> => {
+    try {
+      const r = await fetch('/api/archive-preflight');
+      const d: { ok: boolean; missing: { name: string; installHint: string }[] } = await r.json();
+      setMissingPkgs(d.ok ? [] : d.missing);
+    } catch {
+      setMissingPkgs([]);
+    }
+  };
+
   const browse = async (): Promise<void> => {
     setPicking(true);
     setError(null);
@@ -53,9 +107,76 @@ export default function Settings() {
       .catch(() => {});
     fetch('/api/settings')
       .then((r) => r.json())
-      .then((s: { removeCommand?: string }) => setRemoveCommand(s.removeCommand ?? ''))
+      .then(
+        (s: {
+          removeCommand?: string;
+          gcsArchive?: { enabled?: boolean; bucket?: string; prefix?: string };
+          gcsBucketEnv?: string;
+          reminders?: { enabled?: boolean; stopIntervalMin?: number; capCount?: number };
+        }) => {
+          setRemoveCommand(s.removeCommand ?? '');
+          setGcsEnabled(s.gcsArchive?.enabled === true);
+          setGcsBucket(s.gcsArchive?.bucket ?? '');
+          setGcsBucketEnv(s.gcsBucketEnv ?? '');
+          setGcsPrefix(s.gcsArchive?.prefix ?? '');
+          if (s.gcsArchive?.enabled) void checkPreflight();
+          const remOn = s.reminders?.enabled !== false;
+          setRemEnabled(remOn);
+          if (typeof s.reminders?.stopIntervalMin === 'number') setRemInterval(s.reminders.stopIntervalMin);
+          if (typeof s.reminders?.capCount === 'number') setRemCap(s.reminders.capCount);
+          if (remOn) void checkReminderPreflight();
+        },
+      )
       .catch(() => {});
   }, []);
+
+  const saveReminders = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    setRemSaving(true);
+    setRemSaved(false);
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reminders: { enabled: remEnabled, stopIntervalMin: remInterval, capCount: remCap },
+        }),
+      });
+      setRemSaved(true);
+      setTimeout(() => setRemSaved(false), 2000);
+    } catch {
+      // best-effort
+    }
+    setRemSaving(false);
+  };
+
+  const toggleGcs = (next: boolean): void => {
+    setGcsEnabled(next);
+    setGcsSaved(false);
+    if (next) void checkPreflight();
+    else setMissingPkgs([]);
+  };
+
+  const saveGcs = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    setGcsSaving(true);
+    setGcsSaved(false);
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gcsArchive: { enabled: gcsEnabled, bucket: gcsBucket, prefix: gcsPrefix },
+        }),
+      });
+      setGcsSaved(true);
+      setTimeout(() => setGcsSaved(false), 2000);
+      if (gcsEnabled) void checkPreflight();
+    } catch {
+      // best-effort — surfaced via the lack of the saved tick
+    }
+    setGcsSaving(false);
+  };
 
   const saveCommand = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -198,6 +319,174 @@ export default function Settings() {
               className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
             >
               {cmdSaving ? 'Saving…' : cmdSaved ? 'Saved ✓' : 'Save command'}
+            </button>
+          </form>
+        </section>
+
+        <section className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5">
+          <h2 className="text-sm font-semibold text-slate-200">Archive to Google Cloud Storage</h2>
+          <p className="mt-1 text-xs text-slate-400">
+            When enabled, removing a completed worktree first compresses its{' '}
+            <span className="text-slate-300">transcript</span> and{' '}
+            <span className="text-slate-300">workflow</span> folders into two{' '}
+            <code className="text-slate-300">.tar.zst</code> archives (zstd <code>--ultra -22</code>)
+            and uploads them to GCS. If archiving fails, the removal is{' '}
+            <span className="text-slate-300">aborted</span> so nothing is deleted un-archived.
+            Credentials are read from <code className="text-slate-300">$CLAUDE_PLUGIN_DATA/.env</code>{' '}
+            (<code>GCS_CREDENTIALS</code>, or <code>GCS_CLIENT_EMAIL</code> +{' '}
+            <code>GCS_PRIVATE_KEY</code>; optional <code>GCS_PROJECT_ID</code> /{' '}
+            <code>GCS_BUCKET</code>) — never stored here.
+          </p>
+
+          {gcsEnabled && missingPkgs.length > 0 && (
+            <div className="mt-4 rounded border border-amber-900 bg-amber-950/50 px-3 py-2 text-sm text-amber-200">
+              <div className="font-medium">Missing required package{missingPkgs.length > 1 ? 's' : ''}</div>
+              <p className="mt-1 text-xs text-amber-300/90">
+                Archiving needs these installed. Run:
+              </p>
+              <ul className="mt-1 space-y-1 font-mono text-[11px] text-amber-200">
+                {missingPkgs.map((p) => (
+                  <li key={p.name}>$ {p.installHint}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <form onSubmit={saveGcs} className="mt-4 space-y-3">
+            <label className="flex items-center gap-2 text-sm text-slate-200">
+              <input
+                type="checkbox"
+                checked={gcsEnabled}
+                onChange={(e) => toggleGcs(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-600 bg-slate-800"
+              />
+              Enable GCS archive on worktree removal
+            </label>
+            <div>
+              <label className="block text-xs text-slate-400">Bucket</label>
+              {gcsBucketEnv ? (
+                <>
+                  <input
+                    type="text"
+                    value={gcsBucketEnv}
+                    readOnly
+                    disabled
+                    spellCheck={false}
+                    className="mt-1 w-full cursor-not-allowed rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-sm text-slate-400"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Set via <code>GCS_BUCKET</code> in <code>.env</code> — it overrides this field.
+                    Unset it there to edit the bucket here.
+                  </p>
+                </>
+              ) : (
+                <input
+                  type="text"
+                  value={gcsBucket}
+                  onChange={(e) => setGcsBucket(e.target.value)}
+                  placeholder="my-ks-flow-archives"
+                  spellCheck={false}
+                  className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 font-mono text-sm text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+                />
+              )}
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400">Object prefix (optional)</label>
+              <input
+                type="text"
+                value={gcsPrefix}
+                onChange={(e) => setGcsPrefix(e.target.value)}
+                placeholder="ks-flow"
+                spellCheck={false}
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 font-mono text-sm text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">
+                Objects land at{' '}
+                <code>
+                  gs://&lt;bucket&gt;/{gcsPrefix ? `${gcsPrefix}/` : ''}&lt;identifier&gt;/{'{transcript,workflow}'}.tar.zst
+                </code>
+              </p>
+            </div>
+            <button
+              type="submit"
+              disabled={gcsSaving}
+              className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {gcsSaving ? 'Saving…' : gcsSaved ? 'Saved ✓' : 'Save archive settings'}
+            </button>
+          </form>
+        </section>
+
+        <section className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5">
+          <h2 className="text-sm font-semibold text-slate-200">Reminders</h2>
+          <p className="mt-1 text-xs text-slate-400">
+            When a session stops (idle awaiting you), notify immediately then repeat every N minutes
+            until it resumes, ends, or hits the cap. Pause a session's nudge from its card; set
+            per-card reminders with the <span className="text-slate-300">⏰</span> control. On by
+            default.
+          </p>
+
+          {remEnabled && remMissing.length > 0 && (
+            <div className="mt-4 rounded border border-amber-900 bg-amber-950/50 px-3 py-2 text-sm text-amber-200">
+              <div className="font-medium">terminal-notifier is required for notifications</div>
+              <p className="mt-1 text-xs text-amber-300/90">
+                Without it, reminders (and waiting/permission alerts) are silent. Install it now:
+              </p>
+              <button
+                type="button"
+                onClick={installNotifier}
+                disabled={remInstalling}
+                className="mt-2 rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-500 disabled:opacity-50"
+              >
+                {remInstalling ? 'Installing…' : 'Install terminal-notifier'}
+              </button>
+              <span className="ml-2 font-mono text-[11px] text-amber-300/80">brew install terminal-notifier</span>
+              {remInstallMsg && <p className="mt-1 text-xs text-amber-200">{remInstallMsg}</p>}
+            </div>
+          )}
+
+          <form onSubmit={saveReminders} className="mt-4 space-y-3">
+            <label className="flex items-center gap-2 text-sm text-slate-200">
+              <input
+                type="checkbox"
+                checked={remEnabled}
+                onChange={(e) => {
+                  setRemEnabled(e.target.checked);
+                  if (e.target.checked) void checkReminderPreflight();
+                  else setRemMissing([]);
+                }}
+                className="h-4 w-4 rounded border-slate-600 bg-slate-800"
+              />
+              Enable reminders
+            </label>
+            <div className="flex gap-4">
+              <div>
+                <label className="block text-xs text-slate-400">Stop-nudge interval (min)</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={remInterval}
+                  onChange={(e) => setRemInterval(Math.max(1, Number(e.target.value) || 1))}
+                  className="mt-1 w-28 rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400">Max nudges (cap)</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={remCap}
+                  onChange={(e) => setRemCap(Math.max(1, Number(e.target.value) || 1))}
+                  className="mt-1 w-28 rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={remSaving}
+              className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {remSaving ? 'Saving…' : remSaved ? 'Saved ✓' : 'Save reminder settings'}
             </button>
           </form>
         </section>

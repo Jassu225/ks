@@ -12,6 +12,7 @@ import { join as pjoin } from 'node:path';
 import type {
   DbProvider,
   ProjectDoc,
+  ReminderDoc,
   SessionDoc,
   SessionSource,
   SessionWriter,
@@ -44,6 +45,16 @@ class MemoryWriter implements SessionWriter {
     const s = this.sessions.get(id);
     if (s) s.archived = true;
   }
+  reminders = new Map<string, ReminderDoc>();
+  async getReminders(): Promise<ReminderDoc[]> {
+    return [...this.reminders.values()];
+  }
+  async upsertReminder(_p: string, doc: ReminderDoc): Promise<void> {
+    this.reminders.set(doc.uid, doc);
+  }
+  async deleteReminder(_p: string, uid: string): Promise<void> {
+    this.reminders.delete(uid);
+  }
   async close(): Promise<void> {
     const dump = {
       writes: this.writes,
@@ -73,10 +84,16 @@ const noopSource: SessionSource = {
   async getSessions() {
     return [];
   },
+  async getReminders() {
+    return [];
+  },
   subscribeWorkUnits() {
     return () => {};
   },
   subscribeSessions() {
+    return () => {};
+  },
+  subscribeReminders() {
     return () => {};
   },
 };

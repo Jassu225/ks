@@ -11,7 +11,9 @@ import { createWriteStream, existsSync, readdirSync, realpathSync, statSync } fr
 import { join } from 'node:path';
 import { loadConfig, readProjectConf } from './lib/config.js';
 import { createProvider } from './lib/db/index.js';
-import type { SessionDoc, SessionWriter, WorkUnitDoc } from './lib/db/types.js';
+import type { ReminderDoc, SessionDoc, SessionWriter, WorkUnitDoc } from './lib/db/types.js';
+import { reminderSettings } from './lib/boardsettings.js';
+import { notify, terminalNotifierAvailable } from './lib/notify.js';
 import {
   addOverlay,
   applyLine,
@@ -86,6 +88,17 @@ const pendingOverlays = new Map<string, Array<{ id: string; kind: string; since:
 let knownWorktrees: string[] = conf.worktreePaths ?? [];
 let eventsOffset = 0;
 let pbHandle: PbHandle | null = null;
+
+// ── reminders ─────────────────────────────────────────────────────────────
+interface StopState {
+  stoppedAt: string; // ISO of the Stop event
+  lastRemind: number; // ms epoch of the last nudge fired
+  count: number; // nudges fired (capped)
+}
+const stopState = new Map<string, StopState>(); // sessionId → stop-nudge state
+const REMINDER_TICK_MS = 30_000;
+let reminderLastTickMs = 0; // for OS-wake (timer-gap) detection
+let reminderStartup = true; // first tick re-fires lapsed custom reminders
 
 function worktreePathFor(cwd: string | null): string | null {
   if (!cwd) return null;
@@ -298,6 +311,21 @@ function ingestEvents(): void {
     const id = typeof ev.id === 'string' ? ev.id : null;
     const since = typeof ev.ts === 'string' ? ev.ts : nowIso();
     if (!sessionId || !kind || !id) continue;
+    // Reminder lifecycle events (drive the stop-nudge, not the waiting overlay).
+    if (kind === 'Stop') {
+      // (Re)arm the stop-nudge. The hook already fired the immediate notice, so
+      // seed lastRemind at the stop time → the first daemon repeat is at +interval.
+      stopState.set(sessionId, {
+        stoppedAt: since,
+        lastRemind: Date.parse(since) || Date.now(),
+        count: 0,
+      });
+      continue;
+    }
+    if (kind === 'SessionEnd') {
+      stopState.delete(sessionId);
+      continue;
+    }
     // AskUserQuestion/ExitPlanMode are governed by the JSONL tool_use — ignore
     // them here to avoid double-counting (they carry no tool_use_id).
     if (kind !== 'PermissionRequest' && kind !== 'Elicitation') continue;
@@ -310,6 +338,89 @@ function ingestEvents(): void {
       arr.push({ id, kind, since });
       pendingOverlays.set(sessionId, arr);
     }
+  }
+}
+
+// ── reminders ─────────────────────────────────────────────────────────────
+function unitTitle(unitId: string | undefined): string | null {
+  if (!unitId) return null;
+  for (const u of units.values()) if (u.unitId === unitId) return u.title;
+  return null;
+}
+
+/** Latest activity (ms epoch) across the stopped session AND any sibling
+ * session in the same worktree — covers "resumed" and "new session started". */
+function latestActivity(doc: SessionDoc | undefined): number {
+  let max = doc?.lastActivity ? Date.parse(doc.lastActivity) : -1;
+  const wt = doc?.worktreePath ?? null;
+  if (wt) {
+    for (const s of sessionDocs.values()) {
+      if (s.worktreePath === wt && s.lastActivity) {
+        const t = Date.parse(s.lastActivity);
+        if (t > max) max = t;
+      }
+    }
+  }
+  return max;
+}
+
+async function reminderTick(): Promise<void> {
+  const settings = reminderSettings();
+  const now = Date.now();
+  const wake =
+    reminderLastTickMs !== 0 && now - reminderLastTickMs > Math.max(2 * REMINDER_TICK_MS, 120_000);
+  const startup = reminderStartup;
+  reminderLastTickMs = now;
+  reminderStartup = false;
+
+  let reminders: ReminderDoc[] = [];
+  try {
+    reminders = await writer.getReminders(projectId);
+  } catch (e) {
+    log('getReminders failed', (e as { message?: string })?.message);
+    return; // transient — retry next tick
+  }
+  const paused = new Set(
+    reminders.filter((r) => r.kind === 'pause' && r.sessionId).map((r) => r.sessionId!),
+  );
+
+  // Stop-nudges: repeat every interval until resume / cap / expiry.
+  if (settings.enabled) {
+    const intervalMs = settings.stopIntervalMin * 60_000;
+    const maxAgeMs = settings.capCount * intervalMs;
+    for (const [sid, st] of [...stopState]) {
+      const doc = sessionDocs.get(sid);
+      const stoppedMs = Date.parse(st.stoppedAt);
+      if (latestActivity(doc) > stoppedMs) {
+        // resumed (this session or a sibling in its worktree) → clear + unpause
+        stopState.delete(sid);
+        const pauseRec = reminders.find((r) => r.kind === 'pause' && r.sessionId === sid);
+        if (pauseRec) await writer.deleteReminder(projectId, pauseRec.uid).catch(() => {});
+        continue;
+      }
+      if (now - stoppedMs > maxAgeMs || st.count >= settings.capCount) {
+        stopState.delete(sid); // expired / hit the cap
+        continue;
+      }
+      if (paused.has(sid)) continue;
+      if (now - st.lastRemind >= intervalMs) {
+        notify(sid, doc?.title ?? doc?.gitBranch ?? 'session idle', 'Claude is still waiting on you');
+        st.lastRemind = now;
+        st.count += 1;
+      }
+    }
+  }
+
+  // Custom per-card reminders: fire once at due, then re-nag on wake / startup
+  // until cleared. Never on a plain tick.
+  for (const r of reminders) {
+    if (r.kind !== 'custom' || r.cleared || !r.dueAt) continue;
+    if (Date.parse(r.dueAt) > now) continue;
+    if (!(r.lastFiredAt == null || wake || startup)) continue;
+    notify(r.unitId ?? r.uid, unitTitle(r.unitId) ?? r.unitId ?? 'reminder', r.note || 'Reminder due');
+    await writer
+      .upsertReminder(projectId, { ...r, lastFiredAt: nowIso() })
+      .catch((e) => log('upsertReminder failed', e?.message));
   }
 }
 
@@ -467,6 +578,11 @@ function startWatchers(): void {
     if (knownWorktrees.join('\n') !== before) scheduleProjectRecompute();
   }, 60_000);
 
+  // Reminder engine: one light poll — stop-nudges + due custom reminders.
+  setInterval(() => {
+    reminderTick().catch((e) => log('reminderTick failed', e?.message));
+  }, REMINDER_TICK_MS);
+
   log('watching', dirs.length, 'session dir(s) + events; rescanning workflow state.yaml every 15s');
 }
 
@@ -499,6 +615,11 @@ async function main(): Promise<void> {
     process.exit(0);
   }
   startWatchers();
+  if (!terminalNotifierAvailable()) {
+    log('WARNING: terminal-notifier not found — notifications are disabled. Install: brew install terminal-notifier');
+  }
+  // Startup catch-up: re-fire any lapsed (uncleared) custom reminders now.
+  await reminderTick().catch((e) => log('reminderTick failed', e?.message));
   log('ready');
 }
 

@@ -1,8 +1,10 @@
 // /api/settings — read/write board-local settings (NOT project.conf, which the
-// bootstrap rewrites). Currently holds the user's worktree-removal command.
+// bootstrap rewrites). Holds the worktree-removal command and the GCS-archive
+// config (enable + bucket + optional object prefix; sensitive creds live in
+// $CLAUDE_PLUGIN_DATA/.env, never here).
 //
-// GET  → { removeCommand }
-// POST { removeCommand } → persist it.
+// GET  → { removeCommand, gcsArchive: { enabled, bucket, prefix } }
+// POST { removeCommand?, gcsArchive? } → persist (merges with existing).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -12,36 +14,134 @@ export const dynamic = 'force-dynamic';
 
 function dataDir(): string {
   return (
+    process.env.KS_FLOW_DATA ||
     process.env.CLAUDE_PLUGIN_DATA ||
     join(homedir(), '.claude', 'plugins', 'data', 'ks-flow-karmasuite')
   );
 }
 const settingsPath = (): string => join(dataDir(), 'board-settings.json');
 
-function read(): { removeCommand: string } {
+// Pull $dataDir/.env into process.env (real env wins) so we can tell whether
+// GCS_BUCKET is configured via env — the bucket is env-aware in the UI.
+function loadEnvFile(path: string): void {
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    return;
+  }
+  for (const line of raw.split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const eq = t.indexOf('=');
+    if (eq < 0) continue;
+    const key = t.slice(0, eq).trim();
+    if (!key || process.env[key] !== undefined) continue;
+    let val = t.slice(eq + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
+      val = val.slice(1, -1);
+    process.env[key] = val;
+  }
+}
+
+interface GcsArchive {
+  enabled: boolean;
+  bucket: string;
+  prefix: string;
+}
+interface Reminders {
+  enabled: boolean;
+  stopIntervalMin: number;
+  capCount: number;
+}
+interface Settings {
+  removeCommand: string;
+  gcsArchive: GcsArchive;
+  reminders: Reminders;
+}
+
+const DEFAULT_GCS: GcsArchive = { enabled: false, bucket: '', prefix: '' };
+const DEFAULT_REMINDERS: Reminders = { enabled: true, stopIntervalMin: 5, capCount: 12 };
+
+function read(): Settings {
   try {
     const s = JSON.parse(readFileSync(settingsPath(), 'utf8'));
-    return { removeCommand: typeof s.removeCommand === 'string' ? s.removeCommand : '' };
+    const g = s.gcsArchive ?? {};
+    const r = s.reminders ?? {};
+    return {
+      removeCommand: typeof s.removeCommand === 'string' ? s.removeCommand : '',
+      gcsArchive: {
+        enabled: g.enabled === true,
+        bucket: typeof g.bucket === 'string' ? g.bucket : '',
+        prefix: typeof g.prefix === 'string' ? g.prefix : '',
+      },
+      reminders: {
+        enabled: r.enabled !== false,
+        stopIntervalMin:
+          typeof r.stopIntervalMin === 'number' && r.stopIntervalMin > 0
+            ? r.stopIntervalMin
+            : DEFAULT_REMINDERS.stopIntervalMin,
+        capCount:
+          typeof r.capCount === 'number' && r.capCount > 0 ? r.capCount : DEFAULT_REMINDERS.capCount,
+      },
+    };
   } catch {
-    return { removeCommand: '' };
+    return {
+      removeCommand: '',
+      gcsArchive: { ...DEFAULT_GCS },
+      reminders: { ...DEFAULT_REMINDERS },
+    };
   }
 }
 
 export async function GET(): Promise<NextResponse> {
-  return NextResponse.json(read());
+  loadEnvFile(join(dataDir(), '.env'));
+  // When GCS_BUCKET is set in .env it WINS over the stored value (see
+  // archive-core.ts resolveGcsConfig); the UI shows it read-only in that case.
+  const gcsBucketEnv = (process.env.GCS_BUCKET ?? '').trim();
+  return NextResponse.json({ ...read(), gcsBucketEnv });
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
-  let body: { removeCommand?: string };
+  let body: {
+    removeCommand?: string;
+    gcsArchive?: Partial<GcsArchive>;
+    reminders?: Partial<Reminders>;
+  };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'invalid request body' }, { status: 400 });
   }
-  const removeCommand = typeof body.removeCommand === 'string' ? body.removeCommand.trim() : '';
+
+  const current = read();
+  const next: Settings = { ...current };
+  if (typeof body.removeCommand === 'string') {
+    next.removeCommand = body.removeCommand.trim();
+  }
+  if (body.gcsArchive && typeof body.gcsArchive === 'object') {
+    const g = body.gcsArchive;
+    next.gcsArchive = {
+      enabled: typeof g.enabled === 'boolean' ? g.enabled : current.gcsArchive.enabled,
+      bucket: typeof g.bucket === 'string' ? g.bucket.trim() : current.gcsArchive.bucket,
+      prefix: typeof g.prefix === 'string' ? g.prefix.trim() : current.gcsArchive.prefix,
+    };
+  }
+  if (body.reminders && typeof body.reminders === 'object') {
+    const r = body.reminders;
+    next.reminders = {
+      enabled: typeof r.enabled === 'boolean' ? r.enabled : current.reminders.enabled,
+      stopIntervalMin:
+        typeof r.stopIntervalMin === 'number' && r.stopIntervalMin > 0
+          ? r.stopIntervalMin
+          : current.reminders.stopIntervalMin,
+      capCount:
+        typeof r.capCount === 'number' && r.capCount > 0 ? r.capCount : current.reminders.capCount,
+    };
+  }
+
   const dir = dataDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const next = { ...read(), removeCommand };
   writeFileSync(settingsPath(), JSON.stringify(next, null, 2));
   return NextResponse.json({ ok: true, ...next });
 }

@@ -14,6 +14,7 @@ import type { Config } from '../../config.js';
 import type {
   DbProvider,
   ProjectDoc,
+  ReminderDoc,
   SessionDoc,
   SessionSource,
   SessionWriter,
@@ -24,6 +25,7 @@ import type {
 const PROJECTS = 'projects';
 const WORK_UNITS = 'work_units';
 const SESSIONS = 'sessions';
+const REMINDERS = 'reminders';
 
 function statusOf(e: unknown): number {
   return (e as { status?: number } | null)?.status ?? 0;
@@ -104,6 +106,66 @@ class PocketbaseWriter implements SessionWriter {
     // Merge archived=true; leaves `data` untouched if the record exists.
     await this.upsert(SESSIONS, id, { projectKey: projectId, archived: true });
   }
+
+  // ── reminders ─────────────────────────────────────────────────────────────
+  // The reminders collection is keyed by `uid` (not `key`), so it can't use the
+  // shared `key`-based upsert helper above.
+  async getReminders(projectId: string): Promise<ReminderDoc[]> {
+    const recs = await this.pb
+      .collection(REMINDERS)
+      .getFullList({ filter: this.pb.filter('projectKey={:k}', { k: projectId }) });
+    return recs.map((r) => r.data as ReminderDoc);
+  }
+
+  async upsertReminder(projectId: string, doc: ReminderDoc): Promise<void> {
+    const cacheKey = `${REMINDERS}:${doc.uid}`;
+    const body = {
+      uid: doc.uid,
+      projectKey: projectId,
+      unitKey: doc.unitId ?? '',
+      data: doc,
+    };
+    let id = this.ids.get(cacheKey);
+    if (!id) {
+      try {
+        const rec = await this.pb
+          .collection(REMINDERS)
+          .getFirstListItem(this.pb.filter('uid={:u}', { u: doc.uid }));
+        id = rec.id;
+        this.ids.set(cacheKey, id);
+      } catch {
+        // 404 → create below
+      }
+    }
+    if (id) {
+      try {
+        await this.pb.collection(REMINDERS).update(id, body);
+        return;
+      } catch (e) {
+        if (statusOf(e) === 404) this.ids.delete(cacheKey);
+        else throw e;
+      }
+    }
+    const rec = await this.pb.collection(REMINDERS).create(body);
+    this.ids.set(cacheKey, rec.id);
+  }
+
+  async deleteReminder(_projectId: string, uid: string): Promise<void> {
+    const cacheKey = `${REMINDERS}:${uid}`;
+    try {
+      let id = this.ids.get(cacheKey);
+      if (!id) {
+        const rec = await this.pb
+          .collection(REMINDERS)
+          .getFirstListItem(this.pb.filter('uid={:u}', { u: uid }));
+        id = rec.id;
+      }
+      await this.pb.collection(REMINDERS).delete(id);
+      this.ids.delete(cacheKey);
+    } catch {
+      // already gone
+    }
+  }
 }
 
 class PocketbaseSource implements SessionSource {
@@ -137,12 +199,28 @@ class PocketbaseSource implements SessionSource {
     return recs.map((r) => r.data as SessionDoc);
   }
 
+  async getReminders(projectId: string): Promise<ReminderDoc[]> {
+    const recs = await this.pb
+      .collection(REMINDERS)
+      .getFullList({ filter: this.pb.filter('projectKey={:k}', { k: projectId }) });
+    return recs.map((r) => r.data as ReminderDoc);
+  }
+
   subscribeWorkUnits(
     projectId: string,
     onChange: (docs: WorkUnitDoc[]) => void,
   ): Unsubscribe {
     return this.poll(WORK_UNITS, this.pb.filter('projectKey={:k}', { k: projectId }), () =>
       this.getWorkUnits(projectId).then(onChange),
+    );
+  }
+
+  subscribeReminders(
+    projectId: string,
+    onChange: (docs: ReminderDoc[]) => void,
+  ): Unsubscribe {
+    return this.poll(REMINDERS, this.pb.filter('projectKey={:k}', { k: projectId }), () =>
+      this.getReminders(projectId).then(onChange),
     );
   }
 
