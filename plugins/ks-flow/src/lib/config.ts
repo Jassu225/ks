@@ -2,8 +2,8 @@
 // the persisted project.conf. userConfig values are exported to plugin
 // subprocesses as CLAUDE_PLUGIN_OPTION_<KEY> (see plugins-reference).
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { resolveDataDir } from './datadir.mjs';
 import { loadEnvFile } from './envfile.js';
 
 function opt(key: string): string | undefined {
@@ -17,12 +17,14 @@ function num(key: string, dflt: number): number {
   return Number.isFinite(n) ? n : dflt;
 }
 
-/** ${CLAUDE_PLUGIN_DATA}; falls back to the documented default location. */
+/**
+ * The plugin data dir, resolved by the shared single-source-of-truth module
+ * (src/lib/datadir.mjs): $KS_FLOW_DATA → derived → $CLAUDE_PLUGIN_DATA → legacy.
+ * The daemon is launched by the launchd plist with CLAUDE_PLUGIN_DATA already
+ * set to the derived dir, so no cwd is needed here.
+ */
 export function dataDir(): string {
-  return (
-    process.env.CLAUDE_PLUGIN_DATA ||
-    join(homedir(), '.claude', 'plugins', 'data', 'ks-flow-karmasuite')
-  );
+  return resolveDataDir();
 }
 
 export interface ProjectConf {

@@ -6,6 +6,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$DIR/_common.sh"
 
 read_payload
+init_data_dir "$HOOK_CWD"
 require_in_project "$HOOK_CWD"
 [ -n "$HOOK_SID" ] || exit 0
 

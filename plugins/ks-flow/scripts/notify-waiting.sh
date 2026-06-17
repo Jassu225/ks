@@ -7,6 +7,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$DIR/_common.sh"
 
 read_payload
+init_data_dir "$HOOK_CWD"                 # derive DATA_DIR from the cwd's repo
 require_in_project "$HOOK_CWD"            # exits 0 if out-of-project
 [ -n "$HOOK_SID" ] || exit 0
 

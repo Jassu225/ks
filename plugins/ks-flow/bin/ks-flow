@@ -8,10 +8,46 @@
 #   ks-flow status            print daemon + ingestion status
 #   ks-flow daemon            run the ingester in the foreground (debug)
 #   ks-flow set-project PATH  re-point the tracked project (rewrites project.conf)
+#   ks-flow archive PATH      archive one worktree's transcript+workflow to GCS
+#   ks-flow backfill-archive  archive all completed (worktree-removed) workflows
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/ks-flow-karmasuite}"
+# Derive the data dir the SAME way as hooks/daemon/board (src/lib/datadir.mjs):
+# from the project's git-common-dir, so it's independent of the load method.
+# Resolution order:
+#   1. KS_FLOW_DATA / project_path env  → explicit
+#   2. cwd is inside a configured project (its derived dir has project.conf)
+#   3. exactly ONE configured project exists anywhere → use it (run-from-anywhere)
+#   4. else cwd-derived (best effort); warn if it's ambiguous (multiple configured)
+DATA_ROOT="$HOME/.claude/plugins/data/ks-flow"
+
+# Collect every data dir that already has a project.conf.
+CONFIGURED=()
+if [ -d "$DATA_ROOT" ]; then
+  for d in "$DATA_ROOT"/*/; do
+    [ -f "${d}project.conf" ] && CONFIGURED+=("${d%/}")
+  done
+fi
+
+if [ -n "${KS_FLOW_DATA:-}" ]; then
+  DATA_DIR="$KS_FLOW_DATA"
+elif [ -n "${CLAUDE_PLUGIN_OPTION_project_path:-}" ]; then
+  DATA_DIR="$(node "$PLUGIN_ROOT/src/lib/datadir.mjs" --project "${CLAUDE_PLUGIN_OPTION_project_path/#\~/$HOME}")"
+else
+  CWD_DIR="$(node "$PLUGIN_ROOT/src/lib/datadir.mjs" --cwd "$PWD")"
+  if [ -f "$CWD_DIR/project.conf" ]; then
+    DATA_DIR="$CWD_DIR"                      # cwd is inside a configured project
+  elif [ "${#CONFIGURED[@]}" -eq 1 ]; then
+    DATA_DIR="${CONFIGURED[0]}"              # exactly one configured → use it anywhere
+  elif [ "${#CONFIGURED[@]}" -gt 1 ]; then
+    DATA_DIR="$CWD_DIR"
+    echo "ks-flow: multiple configured projects under $DATA_ROOT — using cwd's. Set CLAUDE_PLUGIN_OPTION_project_path or cd into the repo to pick one." >&2
+  else
+    DATA_DIR="$CWD_DIR"                      # none configured yet (fresh setup)
+  fi
+fi
+[ -n "$DATA_DIR" ] || DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/ks-flow-karmasuite}"
 DAEMON_DIR="$DATA_DIR/daemon"
 LABEL="com.ksflow.ingester"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
@@ -48,8 +84,10 @@ case "$cmd" in
     fi
 
     echo "Board → http://localhost:$BOARD_PORT" >&2
-    # Export the plugin root so the board's /api/project route can run bootstrap.
-    ( cd "$WEB" && KS_FLOW_PLUGIN_ROOT="$PLUGIN_ROOT" PORT="$BOARD_PORT" npm run start >"$DATA_DIR/board.log" 2>&1 & )
+    # Export the plugin root so the board's /api/project route can run bootstrap,
+    # and pin CLAUDE_PLUGIN_DATA to the derived dir so the board's Node resolves
+    # the same data dir as the daemon/hooks (it has no cwd to derive from).
+    ( cd "$WEB" && KS_FLOW_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PLUGIN_DATA="$DATA_DIR" PORT="$BOARD_PORT" npm run start >"$DATA_DIR/board.log" 2>&1 & )
     # Wait until the server actually answers before opening the browser, so it
     # doesn't hit connection-refused on a slow start.
     URL="http://localhost:$BOARD_PORT"
@@ -70,6 +108,11 @@ case "$cmd" in
     # `ks-flow start` works standalone.
     if [ -z "${CLAUDE_PLUGIN_OPTION_project_path:-}" ] && [ -f "$DATA_DIR/project.conf" ]; then
       CLAUDE_PLUGIN_OPTION_project_path="$(jq -r '.projectPath // empty' "$DATA_DIR/project.conf")"
+      export CLAUDE_PLUGIN_OPTION_project_path
+    fi
+    # Last resort: running from inside a git repo configures that repo.
+    if [ -z "${CLAUDE_PLUGIN_OPTION_project_path:-}" ] && git -C "$PWD" rev-parse --git-dir >/dev/null 2>&1; then
+      CLAUDE_PLUGIN_OPTION_project_path="$PWD"
       export CLAUDE_PLUGIN_OPTION_project_path
     fi
     if [ -z "${CLAUDE_PLUGIN_OPTION_project_path:-}" ]; then
@@ -145,6 +188,22 @@ case "$cmd" in
     exec node "$DAEMON_DIR/dist/daemon.js"
     ;;
 
+  archive)
+    # Archive ONE worktree's transcript + workflow to GCS (the same step the
+    # board runs before removing a completed worktree). No-op if archiving is
+    # disabled in Settings; errors if enabled-but-misconfigured.
+    WT="${2:-}"
+    [ -n "$WT" ] || { echo "usage: ks-flow archive <worktree-path> [identifier] [title]" >&2; exit 1; }
+    exec node "$DAEMON_DIR/dist/archive.js" "$2" "${3:-}" "${4:-}"
+    ;;
+
+  backfill-archive)
+    # Archive all ALREADY-completed workflows (in the main checkout, no live
+    # worktree) to GCS. Flags: --dry-run (preview), --force (re-upload).
+    shift
+    exec node "$DAEMON_DIR/dist/backfill-archive.js" "$@"
+    ;;
+
   install-daemon)
     # Back-compat alias for `start`.
     exec "$PLUGIN_ROOT/scripts/bootstrap.sh"
@@ -170,7 +229,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>}" >&2
+    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backfill-archive [--dry-run] [--force]}" >&2
     exit 1
     ;;
 esac

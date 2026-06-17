@@ -66,6 +66,22 @@ export interface SessionDoc {
   archived: boolean;
 }
 
+/** A reminder record — a per-card custom reminder OR a session pause flag.
+ * Mirrors src/lib/db/types.ts; doc id field is always `uid`. */
+export interface ReminderDoc {
+  uid: string;
+  projectId: string;
+  kind: 'custom' | 'pause';
+  unitId?: string;
+  dueAt?: string;
+  note?: string;
+  lastFiredAt?: string | null;
+  cleared?: boolean;
+  sessionId?: string;
+  pausedAt?: string;
+  createdAt: string;
+}
+
 /** Client-SDK config for the browser (cloud mode). projectId is shared with
  * the daemon; authDomain/storageBucket derive from it unless overridden. */
 export interface FirebaseWebConfig {
@@ -80,6 +96,8 @@ export interface FirebaseWebConfig {
 export interface BoardConfig {
   projectId: string;
   projectPath: string;
+  /** The data dir this board is reading (for diagnostics when no project is found). */
+  dataDir: string;
   /** Which backend the daemon is writing to — drives how useBoard reads.
    * Resolved identically on the daemon side (see src/lib/config.ts). */
   dbProvider: 'pocketbase' | 'firestore';
