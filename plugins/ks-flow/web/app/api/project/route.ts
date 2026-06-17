@@ -17,11 +17,32 @@ const LABEL = 'com.ksflow.ingester';
 
 function dataDir(): string {
   return (
+    process.env.KS_FLOW_DATA ||
     process.env.CLAUDE_PLUGIN_DATA ||
     join(homedir(), '.claude', 'plugins', 'data', 'ks-flow-karmasuite')
   );
 }
 const confPath = (): string => join(dataDir(), 'project.conf');
+
+// The data dir for a *specific* project, via the shared single source of truth
+// (src/lib/datadir.mjs). Re-pointing to a different repo must write that repo's
+// own derived dir — not the board's inherited CLAUDE_PLUGIN_DATA (the current
+// project's dir). Falls back to the current dataDir() if the shim is absent.
+function dataDirForProject(projectPath: string): string {
+  const root = process.env.KS_FLOW_PLUGIN_ROOT;
+  if (root) {
+    try {
+      const shim = join(root, 'src', 'lib', 'datadir.mjs');
+      const out = execFileSync('node', [shim, '--project', projectPath], {
+        encoding: 'utf8',
+      }).trim();
+      if (out) return out;
+    } catch {
+      /* fall through to the current data dir */
+    }
+  }
+  return dataDir();
+}
 
 function expandTilde(p: string): string {
   if (p === '~') return homedir();
@@ -103,9 +124,12 @@ export async function POST(req: Request): Promise<NextResponse> {
     // no worktrees / older git — fine
   }
 
-  mkdirSync(dataDir(), { recursive: true });
+  // Write project.conf into the NEW project's own derived data dir (bootstrap
+  // below re-derives the same dir; this also covers the kickstart fallback).
+  const targetDataDir = dataDirForProject(projectPath);
+  mkdirSync(targetDataDir, { recursive: true });
   writeFileSync(
-    confPath(),
+    join(targetDataDir, 'project.conf'),
     JSON.stringify(
       { projectPath: canonicalPath, commonDir, projectId, worktreePaths },
       null,

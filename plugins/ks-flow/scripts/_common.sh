@@ -5,12 +5,23 @@
 # that keeps a notification firing only for in-project sessions), a per-session
 # throttle, an events.jsonl appender, and the terminal-notifier wrapper.
 
-DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/ks-flow-karmasuite}"
-PROJECT_CONF="$DATA_DIR/project.conf"
-EVENTS="$DATA_DIR/events.jsonl"
-CWD_CACHE="$DATA_DIR/cwdcache"
-NOTIFY_STATE="$DATA_DIR/notify-state"
+# datadir.mjs is the single source of truth for the data dir (shared with the
+# daemon + board). It derives the dir from the cwd's git-common-dir, so a hook
+# and the daemon always agree regardless of how the plugin was loaded.
+SHIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/../src/lib" && pwd)/datadir.mjs"
 THROTTLE_SEC="${CLAUDE_PLUGIN_OPTION_notify_throttle_sec:-20}"
+
+# Resolve DATA_DIR (+ dependent paths) from a working directory. Call this once,
+# right after read_payload, before any function that touches DATA_DIR.
+init_data_dir() {
+  local cwd="$1"
+  DATA_DIR="$(node "$SHIM" --cwd "$cwd" 2>/dev/null)"
+  [ -n "$DATA_DIR" ] || DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/ks-flow-karmasuite}"
+  PROJECT_CONF="$DATA_DIR/project.conf"
+  EVENTS="$DATA_DIR/events.jsonl"
+  CWD_CACHE="$DATA_DIR/cwdcache"
+  NOTIFY_STATE="$DATA_DIR/notify-state"
+}
 
 # Read the project's common-dir from project.conf (written by bootstrap).
 project_common_dir() {

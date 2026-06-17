@@ -8,12 +8,9 @@
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/ks-flow-karmasuite}"
-DAEMON_DIR="$DATA_DIR/daemon"
 PROJECT_PATH="${CLAUDE_PLUGIN_OPTION_project_path:-}"
 LABEL="com.ksflow.ingester"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-mkdir -p "$DATA_DIR"
 
 # 1) project.conf ------------------------------------------------------------
 if [ -z "$PROJECT_PATH" ]; then
@@ -31,6 +28,31 @@ raw=$(git -C "$PROJECT_PATH" rev-parse --git-common-dir 2>/dev/null) || {
 case "$raw" in /*) abs="$raw" ;; *) abs="$PROJECT_PATH/$raw" ;; esac
 COMMON_DIR=$(cd "$(dirname "$abs")" && printf '%s/%s' "$(pwd -P)" "$(basename "$abs")")
 PROJECT_ID=$(printf '%s' "$COMMON_DIR" | shasum -a 256 | cut -c1-16)
+
+# Derive the data dir from the project (load-method independent — see
+# src/lib/datadir.mjs, the single source of truth shared with hooks/daemon/board).
+DATA_DIR="$(node "$PLUGIN_ROOT/src/lib/datadir.mjs" --project "$PROJECT_PATH")"
+[ -n "$DATA_DIR" ] || DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/ks-flow-karmasuite}"
+
+# One-time migration off the old CLAUDE_PLUGIN_DATA `<plugin>-<marketplace>`
+# layout: if the derived dir doesn't exist yet, move the richest legacy dir
+# (the one holding the daemon build / PocketBase store) into place.
+if [ ! -d "$DATA_DIR" ]; then
+  for legacy in "${CLAUDE_PLUGIN_DATA:-}" \
+                "$HOME/.claude/plugins/data/ks-flow-karmasuite" \
+                "$HOME/.claude/plugins/data/ks-flow-inline"; do
+    [ -n "$legacy" ] && [ -d "$legacy" ] && [ "$legacy" != "$DATA_DIR" ] || continue
+    if [ -e "$legacy/daemon/dist" ] || [ -d "$legacy/pocketbase/pb_data" ]; then
+      mkdir -p "$(dirname "$DATA_DIR")"
+      mv "$legacy" "$DATA_DIR"
+      echo "[ks-flow] migrated data dir: $legacy -> $DATA_DIR" >&2
+      break
+    fi
+  done
+fi
+
+DAEMON_DIR="$DATA_DIR/daemon"
+mkdir -p "$DATA_DIR"
 
 # worktree paths (realpath'd) as a JSON array
 WORKTREES_JSON=$(git -C "$PROJECT_PATH" worktree list --porcelain 2>/dev/null \

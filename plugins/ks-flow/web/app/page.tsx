@@ -33,7 +33,10 @@ function loadEnvFile(path: string): void {
 }
 
 function loadConfig(): BoardConfig {
+  // The launcher (bin/ks-flow open) pins CLAUDE_PLUGIN_DATA to the derived dir;
+  // KS_FLOW_DATA overrides. See src/lib/datadir.mjs (shared source of truth).
   const dataDir =
+    process.env.KS_FLOW_DATA ||
     process.env.CLAUDE_PLUGIN_DATA ||
     join(homedir(), '.claude', 'plugins', 'data', 'ks-flow-karmasuite');
   loadEnvFile(join(dataDir, '.env'));
@@ -89,6 +92,7 @@ function loadConfig(): BoardConfig {
   return {
     projectId,
     projectPath,
+    dataDir,
     dbProvider,
     firestoreMode: mode === 'cloud' ? 'cloud' : 'emulator',
     gcpProjectId,
@@ -102,14 +106,21 @@ export default function Page() {
   if (!config.projectId) {
     return (
       <div className="grid h-screen place-items-center bg-slate-950 px-6 text-center text-sm text-slate-400">
-        <div>
-          <p>No project configured.</p>
+        <div className="max-w-xl">
+          <p>No project configured (no `project.conf` in this board's data dir).</p>
           <p className="mt-1">
             Set one in{' '}
             <a href="/settings" className="text-indigo-400 underline hover:text-indigo-300">
               settings
             </a>
             , or run <code className="mx-1 rounded bg-slate-800 px-1">ks-flow set-project &lt;path&gt;</code>.
+          </p>
+          <p className="mt-3 text-xs text-slate-500">
+            Reading: <code className="rounded bg-slate-800 px-1">{config.dataDir}</code>
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            If that path looks wrong, the board was launched from the wrong place — relaunch with{' '}
+            <code className="rounded bg-slate-800 px-1">ks-flow open</code> (it auto-finds your configured project).
           </p>
         </div>
       </div>
