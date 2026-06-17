@@ -18,6 +18,22 @@ CLI scripts for Linear integration and KarmaSuite workflow management.
 
    Get your API key from: https://linear.app/settings/api
 
+### Loading extra plugins with `claude-ks`
+
+The `claude-ks` / `claude-ks-serena` launchers always load the `ks` plugin. To
+also load other local plugins (under `plugins/<name>`) on every launch, set a
+space-separated list in `.env`:
+
+```bash
+# .env — load ks-flow alongside ks on every claude-ks invocation
+KS_EXTRA_PLUGINS="ks-flow"
+```
+
+Each entry is added as `--plugin-dir plugins/<name>`; missing dirs are warned
+and skipped. Modular — list any plugin here, no launcher edits needed. Running
+`plugins/ks-flow/init` adds `ks-flow` to this list automatically (idempotent,
+non-destructive). One-off alternative: `claude-ks --local-plugin <name>`.
+
 ## Scripts
 
 ### Linear CLI

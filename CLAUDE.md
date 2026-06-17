@@ -51,7 +51,9 @@ Enable automated code review for PRs:
 
 ### Optional: Serena MCP (Semantic Code Analysis)
 
-Serena is included automatically when launching via `claude-ks-serena`. It runs only for that session — no persistent MCP registration. Additional plugins can be loaded with `--plugin <name>`, e.g. `claude-ks-serena --plugin code-review@claude-plugins-official`.
+Serena is included automatically when launching via `claude-ks-serena`. It runs only for that session — no persistent MCP registration. Additional plugins can be loaded per-launch with `--plugin <name>`, e.g. `claude-ks-serena --plugin code-review@claude-plugins-official`.
+
+To load a **local** plugin on *every* launch, list it in `KS_EXTRA_PLUGINS` (space-separated) in `plugins/ks/scripts/.env` — e.g. `KS_EXTRA_PLUGINS="ks-flow"`. Running `plugins/ks-flow/init` sets this automatically so `claude-ks` always loads ks-flow alongside ks. See `plugins/ks/scripts/README.md`.
 
 ## Build & CLI Commands
 
@@ -166,5 +168,6 @@ mkdir -p plugins/<name>/.claude-plugin
 # Create plugin.json with name, version, description
 mkdir plugins/<name>/commands plugins/<name>/agents
 # Add entry to .claude-plugin/marketplace.json
-# Load with: claude-ks --local-plugin <name>
+# Load once:   claude-ks --local-plugin <name>
+# Load always: add <name> to KS_EXTRA_PLUGINS in plugins/ks/scripts/.env
 ```
