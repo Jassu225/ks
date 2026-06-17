@@ -29,5 +29,6 @@ mkdir -p plugins/<name>/.claude-plugin
 # Create plugins/<name>/.claude-plugin/plugin.json
 mkdir plugins/<name>/commands plugins/<name>/agents
 # Add entry to .claude-plugin/marketplace.json
-# Load with: claude-ks --local-plugin <name>
+# Load once:   claude-ks --local-plugin <name>
+# Load always: add <name> to KS_EXTRA_PLUGINS in plugins/ks/scripts/.env
 ```

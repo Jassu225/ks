@@ -21,6 +21,17 @@ fi
 # Default: load ks plugin
 PLUGIN_DIRS=("--plugin-dir" "$PLUGIN_DIR")
 
+# Extra local plugins to load alongside ks, enabled via .env (sourced above):
+#   KS_EXTRA_PLUGINS="ks-flow"      # space-separated plugins/<name> dirs
+# Modular — list any plugin here and it's added to the same `claude` launch.
+for extra in ${KS_EXTRA_PLUGINS:-}; do
+  if [ -d "$REPO_ROOT/plugins/$extra" ]; then
+    PLUGIN_DIRS+=("--plugin-dir" "$REPO_ROOT/plugins/$extra")
+  else
+    echo "claude-ks: KS_EXTRA_PLUGINS entry not found: plugins/$extra" >&2
+  fi
+done
+
 # Parse flags
 PASSTHROUGH_ARGS=()
 while [ $# -gt 0 ]; do
