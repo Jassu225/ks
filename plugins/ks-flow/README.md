@@ -46,10 +46,18 @@ Both gates are in-memory, so a daemon restart does one cold pass, then steady-st
 
 ## Setup
 
-The plugin is fully self-bootstrapping — no manual `./init`.
+The daemon, PocketBase, and the board are self-bootstrapping — no build step.
 
 1. Enable it: `claude plugin enable ks-flow` (or via `/plugin`). You'll be prompted for the config below.
-2. On the next session start, `bootstrap.sh` installs `node_modules` into `${CLAUDE_PLUGIN_DATA}`, builds the daemon, and registers the always-on launchd agent.
+2. On the next session start, `bootstrap.sh` installs `node_modules` into the data dir, builds the daemon, and registers the always-on launchd agent.
+
+Optional `./init` (PATH + launcher wiring) — run once if you want the `ks-flow`
+CLI on your `PATH` outside a session, and to load ks-flow automatically via the
+`ks` plugin's `claude-ks` launchers. It:
+- adds `bin/` to your shell rc (`PATH`), and
+- registers `ks-flow` in `KS_EXTRA_PLUGINS` in `plugins/ks/scripts/.env`
+  (idempotent, non-destructive) so `claude-ks` / `claude-ks-serena` load it
+  alongside `ks`. See `plugins/ks/scripts/README.md`.
 
 ### Configuration (prompted at enable)
 
@@ -92,6 +100,8 @@ firebase emulators:start --only firestore
 | `ks-flow status` | Status of all services (daemon, PocketBase, board UI). |
 | `ks-flow daemon` | Run the ingester in the foreground (debug). |
 | `ks-flow set-project <path>` | Re-point the tracked project (rewrites `project.conf`, re-backfills). |
+| `ks-flow archive <worktree> [id] [title]` | Archive one worktree's transcript + workflow to GCS (same step the board runs before Remove). No-op if archiving is disabled. |
+| `ks-flow backfill-archive [--dry-run] [--force]` | Archive every already-completed workflow (in the main checkout with no live worktree) to GCS. |
 
 ## Board UI
 
@@ -139,6 +149,50 @@ so any field can be surfaced on the board without new daemon plumbing.
 - **Worktree removal command** — the command run by the Completed worktrees
   view (below). Stored in `board-settings.json` (separate from `project.conf`,
   so bootstrap never clobbers it).
+- **Archive to Google Cloud Storage** — opt-in (off by default). When enabled,
+  Remove first archives the worktree before deleting it (see below). Toggling it
+  on runs a **package preflight** (`/api/archive-preflight`) and, if `zstd` (or
+  `tar`) is missing, shows a banner with the install command (`brew install
+  zstd`). The enable flag, bucket, and optional object prefix live in
+  `board-settings.json`; **credentials never do** (see env below).
+
+### GCS archive on removal
+
+Opt-in archival of a project's conversation for later analysis. Enable it in
+Settings **and** provide a dedicated GCS service-account via
+`$CLAUDE_PLUGIN_DATA/.env` (independent of any Firestore creds):
+
+```
+GCS_BUCKET=my-ks-flow-archives          # or set the bucket in Settings
+GCS_CREDENTIALS=/path/to/sa.json        # OR the client-email/private-key pair:
+GCS_CLIENT_EMAIL=svc@project.iam.gserviceaccount.com
+GCS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----\n"
+GCS_PROJECT_ID=my-gcp-project           # optional (falls back to the SA's)
+```
+
+When enabled, removing a completed worktree first builds **two** maximally
+compressed archives and uploads both, then runs your remove command:
+
+- `transcript.tar.zst` ← `~/.claude/projects/<encoded-worktree>/` (all session
+  JSONL + `subagents/*.jsonl`).
+- `workflow.tar.zst` ← the worktree's `workflow/` folder (`state.yaml` +
+  `resources/`).
+
+Compression is `tar -cf - … | zstd --ultra -22 -T0` (the contents are plain
+text, so they shrink dramatically). Objects land at
+`gs://<bucket>/<prefix>/<identifier>/{transcript,workflow}.tar.zst`.
+Unpack one with `zstd -dc X.tar.zst | tar -xf -`.
+
+**Abort-on-failure:** if archiving is enabled but fails (missing `zstd`, bad
+creds/bucket, network), the removal is **aborted** — the worktree is never
+deleted un-archived. Fix the config (or disable archiving) and retry.
+
+**Backfill:** `ks-flow backfill-archive` archives workflows that were *already*
+completed before this feature existed — those in the main checkout's `workflow/`
+whose worktree has already been removed. It locates each unit's transcript dir
+(which persists under `~/.claude/projects/` after `git worktree remove`) and
+uploads both archives. Re-runnable: it skips units already in GCS unless
+`--force`; use `--dry-run` to preview candidates first.
 
 ### Completed worktrees · not removed
 
@@ -155,13 +209,16 @@ Each row has a **Remove** button:
    confirm; **Kill sessions & remove** then SIGTERM→SIGKILLs those processes
    (this ends the Claude session and its terminal) before continuing. If a
    process can't be killed, the remove is aborted.
-2. **Runs your command.** The configured removal command (see Settings) runs via
+2. **Archives to GCS (if enabled).** With the GCS archive enabled (see above),
+   the transcript + workflow archives are built and uploaded first; a failure
+   here **aborts** the removal so nothing is deleted un-archived.
+3. **Runs your command.** The configured removal command (see Settings) runs via
    `zsh`, with `~/.zprofile` and `~/.zshrc` sourced first and the command itself
    `eval`'d — so your PATH, aliases, and shell functions resolve just like in a
    terminal. Placeholders `{{path}}` / `{{identifier}}` / `{{title}}` are
    substituted (also exposed as `$KS_WORKTREE` / `$KS_IDENTIFIER` / `$KS_TITLE`),
    and `{{path}}` is that row's worktree.
-3. **Streams output.** stdout/stderr stream live into a bottom-right panel; on
+4. **Streams output.** stdout/stderr stream live into a bottom-right panel; on
    success the row is hidden and the board refreshes, on failure the error
    stays in the panel.
 
@@ -172,6 +229,19 @@ Each row has a **Remove** button:
 ## Notifications
 
 Three hooks fire a `terminal-notifier` notification the moment a session in the tracked project blocks: the two blocking tools (`AskUserQuestion`, `ExitPlanMode`) and the two blocking hook events (`PermissionRequest`, `Elicitation`). Notifications are daemon-independent and throttled per session.
+
+## Reminders
+
+Enabled by default; toggle + tune in `/settings`. Reminder records live in the DB (`reminders` collection); the board's server writes them and the daemon (the scheduler — one ~30s tick, no OS scheduling) fires the notifications. "Remind on OS wake" is detected by a timer-gap on the daemon's tick, so no per-reminder OS jobs.
+
+- **Stop-nudge (auto).** When a session stops (end of turn → idle), the `Stop` hook fires an immediate notification and the daemon then repeats every **N min** (default 5) until the session **resumes** (new JSONL activity), **ends** (`SessionEnd`), a **new session** starts in its worktree, or it hits the **cap** (default 12 nudges). Each card shows an **▶ active / ⏸ paused** control — **Pause** mutes the nudge for that card's session; it **auto-returns to Active** when the session resumes.
+- **Per-card custom reminder (manual).** The **⏰** control on a card sets a reminder — relative (`30m` / `2h` / `1d`) or an absolute datetime — with an optional note. It fires once at due time, then **re-nags once per OS-wake and once per daemon-start until you clear it** (the ✕ on the card is the only way to stop it).
+
+Settings: **Enable reminders**, **stop-nudge interval (min)**, **max nudges (cap)** — stored in `board-settings.json` (read by the hooks and the daemon; changes apply without a restart).
+
+**Requires `terminal-notifier`** (same as the other notifications). When reminders are enabled, `/settings` preflights it (`/api/reminders-preflight`) and offers an **Install** button (`brew install terminal-notifier`); the daemon also logs a one-line warning at startup if it's missing. Without it, every notification is a silent no-op.
+
+> Notifications only fire for sessions **in the tracked project**. The data dir is derived from the project's **git-common-dir** (`~/.claude/plugins/data/ks-flow/<encoded-common-dir>/`), so hooks, daemon, and board always resolve the **same** dir regardless of how the plugin was loaded (inline `--plugin-dir` / `--local-plugin` vs marketplace). Set **`KS_FLOW_DATA`** to override the location. The single source of truth is `src/lib/datadir.mjs` (a zero-dep node module the bash entities call as a CLI and the TS daemon imports).
 
 ## Development
 

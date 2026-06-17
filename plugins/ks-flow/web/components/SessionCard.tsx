@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import type { SessionDoc, WorkUnitDoc } from '@/lib/types';
+import type { ReminderDoc, SessionDoc, WorkUnitDoc } from '@/lib/types';
 
 // A session counts as "active" (glowing border) if it wrote within this window.
 // Derived client-side off a ticking clock (passed down from the board) so the
@@ -48,6 +48,107 @@ function absTime(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString() : 'no activity recorded';
 }
 
+/** ⏰ control: set / list / clear per-card custom reminders. Writes go to the
+ * board server (/api/reminders); the live subscription re-renders. */
+function ReminderControls({ unitId, reminders }: { unitId: string; reminders: ReminderDoc[] }) {
+  const [open, setOpen] = useState(false);
+  const [val, setVal] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const mine = reminders
+    .filter((r) => r.kind === 'custom' && !r.cleared && r.unitId === unitId)
+    .sort((a, b) => (a.dueAt ?? '').localeCompare(b.dueAt ?? ''));
+
+  const add = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    e.stopPropagation();
+    const v = val.trim();
+    if (!v) return;
+    setBusy(true);
+    const isRel = /^\d+\s*[mhd]$/i.test(v);
+    try {
+      await fetch('/api/reminders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(isRel ? { unitId, relative: v, note } : { unitId, dueAt: v, note }),
+      });
+      setVal('');
+      setNote('');
+      setOpen(false);
+    } catch {
+      // surfaced by the lack of a new chip
+    }
+    setBusy(false);
+  };
+  const clear = async (uid: string): Promise<void> => {
+    await fetch('/api/reminders', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid }),
+    }).catch(() => {});
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+        title="Set a reminder"
+        className="rounded bg-slate-800 px-1.5 py-0.5 font-medium text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+      >
+        ⏰{mine.length ? ` ${mine.length}` : ''}
+      </button>
+      {open && (
+        <form
+          onSubmit={add}
+          onClick={(e) => e.stopPropagation()}
+          className="mt-1 w-full space-y-1 rounded border border-slate-700 bg-slate-800 p-2"
+        >
+          <input
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            placeholder="30m · 2h · 1d · or 2026-06-20T15:00"
+            spellCheck={false}
+            className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 placeholder-slate-500"
+          />
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="note (optional)"
+            className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 placeholder-slate-500"
+          />
+          <button
+            type="submit"
+            disabled={busy}
+            className="rounded bg-indigo-600 px-2 py-0.5 text-[11px] font-medium text-white disabled:opacity-50"
+          >
+            {busy ? 'setting…' : 'set reminder'}
+          </button>
+          {mine.map((r) => (
+            <div key={r.uid} className="flex items-center justify-between gap-2 text-[10px] text-slate-400">
+              <span className="truncate" title={r.note}>
+                {r.dueAt ? new Date(r.dueAt).toLocaleString() : ''}
+                {r.note ? ` · ${r.note}` : ''}
+              </span>
+              <button
+                type="button"
+                onClick={() => clear(r.uid)}
+                className="shrink-0 text-slate-500 hover:text-red-400"
+                title="Clear reminder"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </form>
+      )}
+    </>
+  );
+}
+
 const PRIORITY_COLOR: Record<string, string> = {
   Urgent: 'bg-red-950 text-red-300',
   High: 'bg-orange-950 text-orange-300',
@@ -58,11 +159,13 @@ const PRIORITY_COLOR: Record<string, string> = {
 export function WorkUnitCard({
   unit,
   sessions,
+  reminders,
   now,
   dimmed = false,
 }: {
   unit: WorkUnitDoc;
   sessions: SessionDoc[];
+  reminders: ReminderDoc[];
   now: number;
   dimmed?: boolean;
 }) {
@@ -72,6 +175,26 @@ export function WorkUnitCard({
     (s) => s.lastActivity && now - Date.parse(s.lastActivity) < ACTIVE_WINDOW_MS,
   ).length;
   const waiting = unit.waiting?.active;
+
+  // Stop-nudge pause: paused if any of the unit's sessions has a pause record.
+  const pauseRec = reminders.find(
+    (r) => r.kind === 'pause' && r.sessionId && unit.sessionIds.includes(r.sessionId),
+  );
+  // Pause the most-recently-active live session (fallback: first session id).
+  const pauseTarget =
+    pauseRec?.sessionId ??
+    [...live].sort((a, b) => (b.lastActivity ?? '').localeCompare(a.lastActivity ?? ''))[0]
+      ?.sessionId ??
+    unit.sessionIds[0];
+  const togglePause = async (e: React.MouseEvent): Promise<void> => {
+    e.stopPropagation();
+    if (!pauseTarget) return;
+    await fetch('/api/pause', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: pauseTarget, unitId: unit.unitId, paused: !pauseRec }),
+    }).catch(() => {});
+  };
 
   return (
     <div
@@ -149,6 +272,21 @@ export function WorkUnitCard({
           </span>
         )}
         {unit.worktreeDir && <CopyPath path={unit.worktreeDir} />}
+        {live.length > 0 && (
+          <button
+            type="button"
+            onClick={togglePause}
+            title={pauseRec ? 'Reminders paused — click to resume' : 'Pause stop-reminders for this session'}
+            className={`rounded px-1.5 py-0.5 font-medium ${
+              pauseRec
+                ? 'bg-amber-950 text-amber-300 hover:bg-amber-900'
+                : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+            }`}
+          >
+            {pauseRec ? '⏸ paused' : '▶ active'}
+          </button>
+        )}
+        <ReminderControls unitId={unit.unitId} reminders={reminders} />
       </div>
 
       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">

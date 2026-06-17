@@ -1,15 +1,17 @@
-import type { PhaseRef, SessionDoc, WorkUnitDoc } from '@/lib/types';
+import type { PhaseRef, ReminderDoc, SessionDoc, WorkUnitDoc } from '@/lib/types';
 import { WorkUnitCard } from './SessionCard';
 
 export function Column({
   phase,
   units,
   sessions,
+  reminders,
   now,
 }: {
   phase: PhaseRef;
   units: WorkUnitDoc[];
   sessions: SessionDoc[];
+  reminders: ReminderDoc[];
   now: number;
 }) {
   return (
@@ -32,6 +34,7 @@ export function Column({
               key={u.unitId}
               unit={u}
               sessions={sessions}
+              reminders={reminders}
               now={now}
               dimmed={!u.worktreeDir}
             />

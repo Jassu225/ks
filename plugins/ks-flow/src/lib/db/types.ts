@@ -120,6 +120,27 @@ export interface SessionDoc {
 
 export type Unsubscribe = () => void;
 
+/**
+ * A reminder record (stop-nudge pause flag OR a per-card custom reminder).
+ * Lives in the `reminders` collection; the board's server writes it, the daemon
+ * polls + writes back. The document id field is ALWAYS `uid` (PB + Firestore).
+ */
+export interface ReminderDoc {
+  uid: string; // doc id — PB `uid` field / Firestore doc id
+  projectId: string;
+  kind: 'custom' | 'pause';
+  // kind: 'custom'
+  unitId?: string; // the card
+  dueAt?: string; // ISO — resolved from relative/absolute at set-time
+  note?: string;
+  lastFiredAt?: string | null;
+  cleared?: boolean;
+  // kind: 'pause'
+  sessionId?: string; // paused session (its card shows the Paused badge)
+  pausedAt?: string;
+  createdAt: string;
+}
+
 /** Daemon (Node) side. */
 export interface SessionWriter {
   upsertSession(projectId: string, doc: SessionDoc): Promise<void>;
@@ -127,6 +148,10 @@ export interface SessionWriter {
   upsertWorkUnit(projectId: string, doc: WorkUnitDoc): Promise<void>;
   upsertProject(doc: ProjectDoc): Promise<void>;
   markArchived(projectId: string, id: string): Promise<void>;
+  // reminders: the daemon polls (getReminders) + writes back (upsert/delete).
+  getReminders(projectId: string): Promise<ReminderDoc[]>;
+  upsertReminder(projectId: string, doc: ReminderDoc): Promise<void>;
+  deleteReminder(projectId: string, uid: string): Promise<void>;
   close?(): Promise<void>;
 }
 
@@ -135,6 +160,7 @@ export interface SessionSource {
   getProject(projectId: string): Promise<ProjectDoc | null>;
   getWorkUnits(projectId: string): Promise<WorkUnitDoc[]>;
   getSessions(projectId: string): Promise<SessionDoc[]>;
+  getReminders(projectId: string): Promise<ReminderDoc[]>;
   subscribeWorkUnits(
     projectId: string,
     onChange: (docs: WorkUnitDoc[]) => void,
@@ -142,6 +168,10 @@ export interface SessionSource {
   subscribeSessions(
     projectId: string,
     onChange: (docs: SessionDoc[]) => void,
+  ): Unsubscribe;
+  subscribeReminders(
+    projectId: string,
+    onChange: (docs: ReminderDoc[]) => void,
   ): Unsubscribe;
 }
 

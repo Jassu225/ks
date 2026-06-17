@@ -17,12 +17,13 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { getDb } from './firebase';
 import { getPb } from './pocketbase';
-import type { BoardConfig, ProjectDoc, SessionDoc, WorkUnitDoc } from './types';
+import type { BoardConfig, ProjectDoc, ReminderDoc, SessionDoc, WorkUnitDoc } from './types';
 
 export interface BoardData {
   project: ProjectDoc | null;
   workUnits: WorkUnitDoc[];
   sessions: SessionDoc[];
+  reminders: ReminderDoc[];
   connected: boolean;
   /** Re-pull everything from the store. Reusable by any UI action (e.g. after
    * removing a worktree) and by the header's manual refresh button. The live
@@ -34,13 +35,14 @@ export function useBoard(cfg: BoardConfig): BoardData {
   const [project, setProject] = useState<ProjectDoc | null>(null);
   const [workUnits, setWorkUnits] = useState<WorkUnitDoc[]>([]);
   const [sessions, setSessions] = useState<SessionDoc[]>([]);
+  const [reminders, setReminders] = useState<ReminderDoc[]>([]);
   const [connected, setConnected] = useState(false);
   // Populated by whichever backend subscribes; the returned refresh() proxies
   // to it so callers get a stable function identity.
   const reloadRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
-    const setters = { setProject, setWorkUnits, setSessions, setConnected };
+    const setters = { setProject, setWorkUnits, setSessions, setReminders, setConnected };
     const register = (fn: () => Promise<void>): void => {
       reloadRef.current = fn;
     };
@@ -54,6 +56,7 @@ export function useBoard(cfg: BoardConfig): BoardData {
     project,
     workUnits,
     sessions,
+    reminders,
     connected,
     refresh: () => reloadRef.current(),
   };
@@ -63,6 +66,7 @@ interface Setters {
   setProject: (p: ProjectDoc | null) => void;
   setWorkUnits: (u: WorkUnitDoc[]) => void;
   setSessions: (s: SessionDoc[]) => void;
+  setReminders: (r: ReminderDoc[]) => void;
   setConnected: (c: boolean) => void;
 }
 
@@ -78,7 +82,7 @@ function subscribePocketbase(cfg: BoardConfig, s: Setters, register: RegisterRel
 
   const reload = async (): Promise<void> => {
     try {
-      const [proj, wus, sess] = await Promise.all([
+      const [proj, wus, sess, rems] = await Promise.all([
         pb
           .collection('projects')
           .getFirstListItem(pb.filter('key={:k}', { k: pid }))
@@ -92,12 +96,18 @@ function subscribePocketbase(cfg: BoardConfig, s: Setters, register: RegisterRel
           .collection('sessions')
           .getFullList({ filter: pb.filter('projectKey={:k} && inProject=true', { k: pid }) })
           .then((rs) => rs.map((r) => r.data as SessionDoc)),
+        pb
+          .collection('reminders')
+          .getFullList({ filter: pb.filter('projectKey={:k}', { k: pid }) })
+          .then((rs) => rs.map((r) => r.data as ReminderDoc))
+          .catch(() => [] as ReminderDoc[]),
       ]);
       if (cancelled) return;
       s.setConnected(true);
       s.setProject(proj);
       s.setWorkUnits(wus);
       s.setSessions(sess);
+      s.setReminders(rems);
     } catch {
       if (!cancelled) s.setConnected(false);
     }
@@ -106,7 +116,7 @@ function subscribePocketbase(cfg: BoardConfig, s: Setters, register: RegisterRel
   register(reload);
   void reload();
 
-  const cols = ['projects', 'work_units', 'sessions'];
+  const cols = ['projects', 'work_units', 'sessions', 'reminders'];
   for (const col of cols) {
     pb.collection(col)
       .subscribe('*', () => void reload(), {
@@ -131,15 +141,17 @@ function subscribeFirestore(cfg: BoardConfig, s: Setters, register: RegisterRelo
   // Manual pull (onSnapshot is already live; this backs refresh()/actions).
   register(async () => {
     try {
-      const [proj, units, sess] = await Promise.all([
+      const [proj, units, sess, rems] = await Promise.all([
         getDoc(doc(db, base)),
         getDocs(collection(db, `${base}/workUnits`)),
         getDocs(query(collection(db, `${base}/sessions`), where('inProject', '==', true))),
+        getDocs(collection(db, `${base}/reminders`)),
       ]);
       s.setConnected(true);
       s.setProject(proj.exists() ? (proj.data() as ProjectDoc) : null);
       s.setWorkUnits(units.docs.map((d) => d.data() as WorkUnitDoc));
       s.setSessions(sess.docs.map((d) => d.data() as SessionDoc));
+      s.setReminders(rems.docs.map((d) => d.data() as ReminderDoc));
     } catch {
       s.setConnected(false);
     }
@@ -156,10 +168,14 @@ function subscribeFirestore(cfg: BoardConfig, s: Setters, register: RegisterRelo
     query(collection(db, `${base}/sessions`), where('inProject', '==', true)),
     (snap) => s.setSessions(snap.docs.map((d) => d.data() as SessionDoc)),
   );
+  const unsubReminders = onSnapshot(collection(db, `${base}/reminders`), (snap) =>
+    s.setReminders(snap.docs.map((d) => d.data() as ReminderDoc)),
+  );
 
   return () => {
     unsubProject();
     unsubUnits();
     unsubSessions();
+    unsubReminders();
   };
 }

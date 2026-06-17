@@ -25,7 +25,7 @@ const DONE_STATUSES = new Set([
 ]);
 
 export function Board({ config }: { config: BoardConfig }) {
-  const { project, workUnits, sessions, connected, refresh } = useBoard(config);
+  const { project, workUnits, sessions, reminders, connected, refresh } = useBoard(config);
   const [swimlanes, setSwimlanes] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const now = useNow(30_000); // one shared clock → recency-based glow self-expires
@@ -219,6 +219,7 @@ export function Board({ config }: { config: BoardConfig }) {
                       phase={c}
                       units={(byPhase.get(c.number) ?? []).filter((u) => laneSet.has(u.unitId))}
                       sessions={latestSessions}
+                      reminders={reminders}
                       now={now}
                     />
                   ))}

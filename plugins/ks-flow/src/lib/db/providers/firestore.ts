@@ -25,6 +25,7 @@ import type { Config } from '../../config.js';
 import type {
   DbProvider,
   ProjectDoc,
+  ReminderDoc,
   SessionDoc,
   SessionSource,
   SessionWriter,
@@ -96,6 +97,9 @@ function sessionsCol(fs: Firestore, projectId: string): CollectionReference {
 function workUnitsCol(fs: Firestore, projectId: string): CollectionReference {
   return projectRef(fs, projectId).collection('workUnits');
 }
+function remindersCol(fs: Firestore, projectId: string): CollectionReference {
+  return projectRef(fs, projectId).collection('reminders');
+}
 
 class FirestoreWriter implements SessionWriter {
   private fs: Firestore;
@@ -136,6 +140,19 @@ class FirestoreWriter implements SessionWriter {
       .doc(id)
       .set({ archived: true }, { merge: true });
   }
+
+  async getReminders(projectId: string): Promise<ReminderDoc[]> {
+    const snap = await remindersCol(this.fs, projectId).get();
+    return snap.docs.map((d) => d.data() as ReminderDoc);
+  }
+
+  async upsertReminder(projectId: string, doc: ReminderDoc): Promise<void> {
+    await remindersCol(this.fs, projectId).doc(doc.uid).set(doc, { merge: true });
+  }
+
+  async deleteReminder(projectId: string, uid: string): Promise<void> {
+    await remindersCol(this.fs, projectId).doc(uid).delete();
+  }
 }
 
 class FirestoreSource implements SessionSource {
@@ -161,12 +178,26 @@ class FirestoreSource implements SessionSource {
     return snap.docs.map((d) => d.data() as SessionDoc);
   }
 
+  async getReminders(projectId: string): Promise<ReminderDoc[]> {
+    const snap = await remindersCol(this.fs, projectId).get();
+    return snap.docs.map((d) => d.data() as ReminderDoc);
+  }
+
   subscribeWorkUnits(
     projectId: string,
     onChange: (docs: WorkUnitDoc[]) => void,
   ): Unsubscribe {
     return workUnitsCol(this.fs, projectId).onSnapshot((snap) => {
       onChange(snap.docs.map((d) => d.data() as WorkUnitDoc));
+    });
+  }
+
+  subscribeReminders(
+    projectId: string,
+    onChange: (docs: ReminderDoc[]) => void,
+  ): Unsubscribe {
+    return remindersCol(this.fs, projectId).onSnapshot((snap) => {
+      onChange(snap.docs.map((d) => d.data() as ReminderDoc));
     });
   }
 
