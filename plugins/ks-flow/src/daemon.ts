@@ -7,7 +7,14 @@
 // Only the daemon writes to the DB. Ingestion bookkeeping stays local
 // (checkpoints.json); only derived documents go to the store.
 import chokidar from 'chokidar';
-import { createWriteStream, existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import {
+  createWriteStream,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig, readProjectConf } from './lib/config.js';
 import { createProvider } from './lib/db/index.js';
@@ -99,8 +106,15 @@ interface StopState {
   stoppedAt: string; // ISO of the Stop event
   lastRemind: number; // ms epoch of the last nudge fired
   count: number; // nudges fired (capped)
+  fromRestart?: boolean; // armed at startup (cold replay / warm reconstruct) →
+  // its first notice is batched into one grouped restart notice, not fired solo
 }
 const stopState = new Map<string, StopState>(); // sessionId → stop-nudge state
+// True only during startup arming, so stop-nudges armed then (cold-start events
+// replay or warm-restart reconstruction) are marked fromRestart and consolidated
+// into a single grouped notice instead of an N-notice burst. Cleared after the
+// first reminderTick.
+let armingFromStartup = true;
 const REMINDER_TICK_MS = 30_000;
 // Activity newer than the stop by more than this = a genuine resume (not the
 // turn-ending transcript line, which trails the Stop event by a few seconds).
@@ -351,6 +365,7 @@ function ingestEvents(): void {
         stoppedAt: since,
         lastRemind: Date.parse(since) || Date.now(),
         count: 0,
+        fromRestart: armingFromStartup, // cold-start replay → batch into one notice
       });
       continue;
     }
@@ -441,6 +456,51 @@ function subagentActivityMs(sid: string): number {
   return max;
 }
 
+// Re-arm stop-nudges after a daemon restart. The events.jsonl read offset is
+// persisted (so a restart doesn't replay/duplicate consumed Stops), which also
+// means stopState — in-memory only — starts empty: a session that is STILL idle
+// and waiting would silently lose its nudge across a restart. So we scan the
+// events log for each session's LAST lifecycle event; if it's a `Stop` (not
+// `SessionEnd`) and within maxAge, re-arm it as fromRestart. reminderTick then
+// applies the usual gates (resume / completed / unmatched / paused) and the
+// grouped-notice batching. Sessions that resumed or ended are NOT re-armed.
+function reconstructStopState(): void {
+  if (!existsSync(EVENTS_PATH)) return;
+  let data: string;
+  try {
+    data = readFileSync(EVENTS_PATH, 'utf8');
+  } catch {
+    return;
+  }
+  const lastLifecycle = new Map<string, { kind: string; ts: string }>();
+  for (const line of data.split('\n')) {
+    if (!line.trim()) continue;
+    let ev: Record<string, unknown>;
+    try {
+      ev = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const sid = typeof ev.sessionId === 'string' ? ev.sessionId : null;
+    const kind = typeof ev.kind === 'string' ? ev.kind : null;
+    if (!sid || (kind !== 'Stop' && kind !== 'SessionEnd')) continue;
+    lastLifecycle.set(sid, { kind, ts: typeof ev.ts === 'string' ? ev.ts : nowIso() });
+  }
+  const settings = reminderSettings();
+  const maxAgeMs = settings.capCount * settings.stopIntervalMin * 60_000;
+  const now = Date.now();
+  let armed = 0;
+  for (const [sid, ev] of lastLifecycle) {
+    if (ev.kind !== 'Stop') continue; // ended → not waiting
+    if (stopState.has(sid)) continue; // already armed via cold-start replay
+    const stoppedMs = Date.parse(ev.ts);
+    if (!stoppedMs || now - stoppedMs > maxAgeMs) continue; // too old to nudge
+    stopState.set(sid, { stoppedAt: ev.ts, lastRemind: stoppedMs, count: 0, fromRestart: true });
+    armed++;
+  }
+  if (armed) log(`reconstructed ${armed} stop-nudge(s) still waiting after restart`);
+}
+
 async function reminderTick(): Promise<void> {
   const settings = reminderSettings();
   const now = Date.now();
@@ -474,6 +534,11 @@ async function reminderTick(): Promise<void> {
     const intervalMs = settings.stopIntervalMin * 60_000;
     const debounceMs = settings.debounceSec * 1000;
     const maxAgeMs = settings.capCount * intervalMs;
+    // First notices of sessions armed at startup are collected here and fired as
+    // ONE grouped notice (so a restart with N still-waiting sessions yields a
+    // single "N sessions waiting" notice, not N separate ones). Later nudges go
+    // back to individual per-session notices.
+    const restartBatch: Array<{ sid: string; st: StopState; label: string; detail: string }> = [];
     for (const [sid, st] of [...stopState]) {
       const doc = sessionDocs.get(sid);
       const stoppedMs = Date.parse(st.stoppedAt);
@@ -507,6 +572,12 @@ async function reminderTick(): Promise<void> {
       if (now - lastAct < debounceMs) continue;
       if (st.count === 0) {
         const n = stopNotice(doc);
+        if (st.fromRestart) {
+          // Defer: batch into the one grouped restart notice fired after the loop.
+          restartBatch.push({ sid, st, label: n.label, detail: n.detail });
+          st.fromRestart = false;
+          continue;
+        }
         // subtitle = short status (one line), message body = full detail (wraps).
         notify(sid, 'Claude is waiting on you', n.detail, n.label);
         st.lastRemind = now;
@@ -516,6 +587,22 @@ async function reminderTick(): Promise<void> {
         notify(sid, 'Claude is still waiting on you', n.detail, n.label);
         st.lastRemind = now;
         st.count += 1;
+      }
+    }
+    // Flush the restart batch as a single grouped notice (a lone session falls
+    // back to its normal rich individual notice). Each batched session is marked
+    // as having had its first notice (count=1) so it resumes individual repeats.
+    if (restartBatch.length === 1) {
+      const { sid, st, label, detail } = restartBatch[0];
+      notify(sid, 'Claude is waiting on you', detail, label);
+      st.lastRemind = now;
+      st.count = 1;
+    } else if (restartBatch.length > 1) {
+      const labels = restartBatch.map((b) => b.label).join(', ');
+      notify('ks-flow-restart', `${restartBatch.length} sessions waiting on you`, labels, 'ks-flow');
+      for (const { st } of restartBatch) {
+        st.lastRemind = now;
+        st.count = 1;
       }
     }
   }
@@ -728,8 +815,13 @@ async function main(): Promise<void> {
   if (!terminalNotifierAvailable()) {
     log('WARNING: terminal-notifier not found — notifications are disabled. Install: brew install terminal-notifier');
   }
-  // Startup catch-up: re-fire any lapsed (uncleared) custom reminders now.
+  // Re-arm stop-nudges for sessions still waiting after a restart (needs units +
+  // sessionDocs from backfill). Their first notice is grouped by reminderTick.
+  reconstructStopState();
+  // Startup catch-up: re-fire any lapsed (uncleared) custom reminders now, and
+  // fire the single grouped restart notice for the re-armed stop-nudges.
   await reminderTick().catch((e) => log('reminderTick failed', e?.message));
+  armingFromStartup = false; // live Stops from here on nudge individually
   log('ready');
 }
 
