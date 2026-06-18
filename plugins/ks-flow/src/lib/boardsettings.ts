@@ -12,9 +12,18 @@ export interface ReminderSettings {
   enabled: boolean;
   stopIntervalMin: number;
   capCount: number;
+  // Seconds of true quiet (no main-agent AND no teammate/subagent transcript
+  // activity) before the FIRST stop notice fires. Debounces the misfire where a
+  // Stop hits at a main-turn boundary while teammates are still churning.
+  debounceSec: number;
 }
 
-const DEFAULTS: ReminderSettings = { enabled: true, stopIntervalMin: 5, capCount: 12 };
+const DEFAULTS: ReminderSettings = {
+  enabled: true,
+  stopIntervalMin: 5,
+  capCount: 12,
+  debounceSec: 60,
+};
 
 let cached: ReminderSettings = DEFAULTS;
 let cachedMtime = -1;
@@ -42,6 +51,10 @@ export function reminderSettings(): ReminderSettings {
           : DEFAULTS.stopIntervalMin,
       capCount:
         typeof r.capCount === 'number' && r.capCount > 0 ? r.capCount : DEFAULTS.capCount,
+      debounceSec:
+        typeof r.debounceSec === 'number' && r.debounceSec >= 0
+          ? r.debounceSec
+          : DEFAULTS.debounceSec,
     };
   } catch {
     cached = DEFAULTS;

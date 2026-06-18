@@ -14,6 +14,7 @@ require_in_project "$HOOK_CWD"
 append_event "$HOOK_SID" "PermissionRequest" "$HOOK_SID-perm-$(date +%s)" "$HOOK_CWD"
 
 if ! throttled "$HOOK_SID"; then
-  notify "$HOOK_SID" "${HOOK_BRANCH:-permission}" "Claude needs permission to continue"
+  build_notify_fields "$HOOK_CWD" "$HOOK_BRANCH"   # → NOTIFY_TITLE / NOTIFY_SUBTITLE
+  notify "$HOOK_SID" "$NOTIFY_SUBTITLE" "Claude needs permission to continue" "$NOTIFY_TITLE"
 fi
 exit 0

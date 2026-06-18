@@ -43,6 +43,7 @@ export default function Settings() {
   const [remEnabled, setRemEnabled] = useState(true);
   const [remInterval, setRemInterval] = useState(5);
   const [remCap, setRemCap] = useState(12);
+  const [remDebounce, setRemDebounce] = useState(60);
   const [remSaving, setRemSaving] = useState(false);
   const [remSaved, setRemSaved] = useState(false);
   const [remMissing, setRemMissing] = useState<{ name: string; installHint: string }[]>([]);
@@ -112,7 +113,12 @@ export default function Settings() {
           removeCommand?: string;
           gcsArchive?: { enabled?: boolean; bucket?: string; prefix?: string };
           gcsBucketEnv?: string;
-          reminders?: { enabled?: boolean; stopIntervalMin?: number; capCount?: number };
+          reminders?: {
+            enabled?: boolean;
+            stopIntervalMin?: number;
+            capCount?: number;
+            debounceSec?: number;
+          };
         }) => {
           setRemoveCommand(s.removeCommand ?? '');
           setGcsEnabled(s.gcsArchive?.enabled === true);
@@ -124,6 +130,7 @@ export default function Settings() {
           setRemEnabled(remOn);
           if (typeof s.reminders?.stopIntervalMin === 'number') setRemInterval(s.reminders.stopIntervalMin);
           if (typeof s.reminders?.capCount === 'number') setRemCap(s.reminders.capCount);
+          if (typeof s.reminders?.debounceSec === 'number') setRemDebounce(s.reminders.debounceSec);
           if (remOn) void checkReminderPreflight();
         },
       )
@@ -139,7 +146,12 @@ export default function Settings() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          reminders: { enabled: remEnabled, stopIntervalMin: remInterval, capCount: remCap },
+          reminders: {
+            enabled: remEnabled,
+            stopIntervalMin: remInterval,
+            capCount: remCap,
+            debounceSec: remDebounce,
+          },
         }),
       });
       setRemSaved(true);
@@ -426,6 +438,20 @@ export default function Settings() {
             default.
           </p>
 
+          <div className="mt-3 rounded border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
+            Notifications auto-dismiss after a few seconds by default. To make them stay until you
+            dismiss them, set the notifier to <span className="text-slate-300">Alerts</span>:
+            System Settings → Notifications → <span className="text-slate-300">terminal-notifier</span> →
+            Alert style: Alerts.
+            <button
+              type="button"
+              onClick={() => void fetch('/api/open-notification-settings', { method: 'POST' })}
+              className="ml-2 rounded bg-slate-700 px-2 py-1 text-[11px] font-medium text-slate-100 hover:bg-slate-600"
+            >
+              Open Notification Settings
+            </button>
+          </div>
+
           {remEnabled && remMissing.length > 0 && (
             <div className="mt-4 rounded border border-amber-900 bg-amber-950/50 px-3 py-2 text-sm text-amber-200">
               <div className="font-medium">terminal-notifier is required for notifications</div>
@@ -460,6 +486,19 @@ export default function Settings() {
               Enable reminders
             </label>
             <div className="flex gap-4">
+              <div>
+                <label className="block text-xs text-slate-400">Idle debounce (sec)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={remDebounce}
+                  onChange={(e) => setRemDebounce(Math.max(0, Number(e.target.value) || 0))}
+                  className="mt-1 w-28 rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none"
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Quiet (incl. teammates) before the first notice.
+                </p>
+              </div>
               <div>
                 <label className="block text-xs text-slate-400">Stop-nudge interval (min)</label>
                 <input

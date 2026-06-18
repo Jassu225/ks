@@ -9,6 +9,8 @@
 # daemon + board). It derives the dir from the cwd's git-common-dir, so a hook
 # and the daemon always agree regardless of how the plugin was loaded.
 SHIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/../src/lib" && pwd)/datadir.mjs"
+# Resolves a cwd → its ks workflow unit (ticket/project) for notification text.
+CONTEXT_MJS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/notify-context.mjs"
 THROTTLE_SEC="${CLAUDE_PLUGIN_OPTION_notify_throttle_sec:-20}"
 
 # Resolve DATA_DIR (+ dependent paths) from a working directory. Call this once,
@@ -87,15 +89,42 @@ append_event() {
     '{ts:$ts, sessionId:$sid, kind:$kind, id:$id, cwd:$cwd}' >>"$EVENTS"
 }
 
-# Fire a macOS notification (backgrounded — never blocks the tool).
+# Fire a macOS notification via terminal-notifier (backgrounded — never blocks
+# the hook). `-closeLabel OK` relabels the close button; the primary "Show"
+# action can't be removed but is harmless (no open/execute/activate). We omit
+# `-sender` (it hangs forever for terminals that aren't registered notification
+# clients, e.g. Ghostty). To make notices stay until dismissed, set System
+# Settings → Notifications → terminal-notifier → Alert style: Alerts.
+# notify <group> <subtitle> <message> [title]   (title defaults to the brand)
 notify() {
-  local sid="$1" subtitle="$2" message="$3"
+  local sid="$1" subtitle="$2" message="$3" title="${4:-ks-flow}"
   command -v terminal-notifier >/dev/null 2>&1 || return 0
   ( terminal-notifier \
-      -title "ks-flow" \
+      -title "$title" \
       -subtitle "$subtitle" \
       -message "$message" \
-      -group "$sid" >/dev/null 2>&1 & ) </dev/null >/dev/null 2>&1
+      -group "$sid" \
+      -closeLabel "OK" >/dev/null 2>&1 & ) </dev/null >/dev/null 2>&1
+}
+
+# Set NOTIFY_TITLE + NOTIFY_SUBTITLE from a cwd's ks workflow unit, so a notice
+# reads "KAR-1234 / <ticket title>" (ticket) or "<project title> / <branch>"
+# (project). Best-effort: falls back to the brand + branch when no unit matches.
+build_notify_fields() {
+  local cwd="$1" branch="$2" ctx utype ident utitle
+  NOTIFY_TITLE="ks-flow"
+  NOTIFY_SUBTITLE="${branch:-idle}"
+  [ -n "$cwd" ] || return 0
+  ctx="$(node "$CONTEXT_MJS" --cwd "$cwd" 2>/dev/null)" || return 0
+  [ -n "$ctx" ] || return 0
+  IFS=$'\t' read -r utype ident utitle <<<"$ctx"
+  if [ "$utype" = "ticket" ]; then
+    NOTIFY_TITLE="${ident:-ks-flow}"
+    NOTIFY_SUBTITLE="${utitle:-${branch:-idle}}"
+  elif [ "$utype" = "project" ]; then
+    NOTIFY_TITLE="${utitle:-${ident:-ks-flow}}"
+    NOTIFY_SUBTITLE="${branch:-project}"
+  fi
 }
 
 # Read stdin payload once; export common fields.

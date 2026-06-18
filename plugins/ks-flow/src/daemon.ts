@@ -25,7 +25,7 @@ import { parseComplete, readRange } from './lib/jsonl.js';
 import { Checkpoints } from './lib/checkpoints.js';
 import { startPocketbase, type PbHandle } from './lib/pbserver.js';
 import { currentPhase, derivePhaseModel, projectWorkflowType } from './lib/phasemodel.js';
-import { joinUnit } from './lib/join.js';
+import { joinUnit, sessionMatchesUnit } from './lib/join.js';
 import { parseStateYaml } from './lib/stateyaml.js';
 import {
   CLAUDE_PROJECTS_DIR,
@@ -97,6 +97,9 @@ interface StopState {
 }
 const stopState = new Map<string, StopState>(); // sessionId → stop-nudge state
 const REMINDER_TICK_MS = 30_000;
+// Activity newer than the stop by more than this = a genuine resume (not the
+// turn-ending transcript line, which trails the Stop event by a few seconds).
+const RESUME_MARGIN_MS = 30_000;
 let reminderLastTickMs = 0; // for OS-wake (timer-gap) detection
 let reminderStartup = true; // first tick re-fires lapsed custom reminders
 
@@ -313,8 +316,11 @@ function ingestEvents(): void {
     if (!sessionId || !kind || !id) continue;
     // Reminder lifecycle events (drive the stop-nudge, not the waiting overlay).
     if (kind === 'Stop') {
-      // (Re)arm the stop-nudge. The hook already fired the immediate notice, so
-      // seed lastRemind at the stop time → the first daemon repeat is at +interval.
+      // (Re)arm the stop-nudge. The hook fires NO immediate notice — the daemon
+      // owns the first notice too, gated by the debounce in reminderTick (count
+      // 0 → fire after `debounceSec` of true quiet, incl. teammate activity).
+      // Seed lastRemind at the stop time; the count===0 branch keys off the
+      // debounce, later repeats off the interval.
       stopState.set(sessionId, {
         stoppedAt: since,
         lastRemind: Date.parse(since) || Date.now(),
@@ -348,6 +354,18 @@ function unitTitle(unitId: string | undefined): string | null {
   return null;
 }
 
+/** The notification title + subtitle for a stopped session, enriched with its
+ * work-unit. SessionDoc.unitId is never populated, so match by worktree the way
+ * join does. Ticket → "KAR-1234" / its title; project → its title / branch;
+ * no unit → the brand / the session title or branch. */
+function stopNotice(doc: SessionDoc | undefined): { title: string; subtitle: string } {
+  const unit = doc ? [...units.values()].find((u) => sessionMatchesUnit(doc, u)) : undefined;
+  if (unit?.type === 'ticket') return { title: unit.identifier, subtitle: unit.title };
+  if (unit?.type === 'project')
+    return { title: unit.title || unit.identifier, subtitle: doc?.gitBranch ?? 'project' };
+  return { title: 'ks-flow', subtitle: doc?.title ?? doc?.gitBranch ?? 'idle' };
+}
+
 /** Latest activity (ms epoch) across the stopped session AND any sibling
  * session in the same worktree — covers "resumed" and "new session started". */
 function latestActivity(doc: SessionDoc | undefined): number {
@@ -359,6 +377,36 @@ function latestActivity(doc: SessionDoc | undefined): number {
         const t = Date.parse(s.lastActivity);
         if (t > max) max = t;
       }
+    }
+  }
+  return max;
+}
+
+/** Latest teammate/subagent transcript activity (ms epoch) for a session, or -1.
+ * Teammate turns are written to `<projectDir>/<sessionId>/subagents/agent-*.jsonl`
+ * — a nested dir the watcher (depth:0) and backfill (top-level) never read, so
+ * their timestamps never reach `lastActivity`. We stat those files directly:
+ * while a teammate is mid-turn the session is ACTIVE even though the main agent
+ * has Stopped, and we must not fire an idle notice. Only called for the (small)
+ * set of stopped sessions, every REMINDER_TICK_MS — cheap. */
+function subagentActivityMs(sid: string): number {
+  const acc = accs.get(sid);
+  if (!acc) return -1;
+  const subDir = join(acc.projectDir, sid, 'subagents');
+  let files: string[];
+  try {
+    files = readdirSync(subDir);
+  } catch {
+    return -1; // no subagents dir → no teammates
+  }
+  let max = -1;
+  for (const f of files) {
+    if (!f.endsWith('.jsonl')) continue;
+    try {
+      const m = statSync(join(subDir, f)).mtimeMs;
+      if (m > max) max = m;
+    } catch {
+      /* file vanished mid-stat — ignore */
     }
   }
   return max;
@@ -384,15 +432,26 @@ async function reminderTick(): Promise<void> {
     reminders.filter((r) => r.kind === 'pause' && r.sessionId).map((r) => r.sessionId!),
   );
 
-  // Stop-nudges: repeat every interval until resume / cap / expiry.
+  // Stop-nudges: a debounced first notice, then repeat every interval until
+  // resume / cap / expiry. The gate is "time since last activity" (quiet
+  // duration), NOT a `stoppedMs` vs activity comparison — the Stop event's ts is
+  // whole-second (the hook truncates to .000) while transcript activity is
+  // millisecond and the turn-ENDING line lands a beat AFTER the Stop event, so a
+  // direct compare wrongly reads the session's own turn-end as a "resume" and
+  // kills the nudge. Quiet-duration sidesteps that entirely. `lastAct` spans the
+  // session transcript, its worktree siblings, AND its teammates' subagent
+  // transcripts → active (incl. mid-multi-agent-turn) ⇒ no notice.
   if (settings.enabled) {
     const intervalMs = settings.stopIntervalMin * 60_000;
+    const debounceMs = settings.debounceSec * 1000;
     const maxAgeMs = settings.capCount * intervalMs;
     for (const [sid, st] of [...stopState]) {
       const doc = sessionDocs.get(sid);
       const stoppedMs = Date.parse(st.stoppedAt);
-      if (latestActivity(doc) > stoppedMs) {
-        // resumed (this session or a sibling in its worktree) → clear + unpause
+      const lastAct = Math.max(latestActivity(doc), subagentActivityMs(sid), stoppedMs);
+      // Genuine resume: activity well past the stop (margin clears the turn-end
+      // line, which trails the Stop event by a few seconds) → drop + unpause.
+      if (lastAct - stoppedMs > RESUME_MARGIN_MS) {
         stopState.delete(sid);
         const pauseRec = reminders.find((r) => r.kind === 'pause' && r.sessionId === sid);
         if (pauseRec) await writer.deleteReminder(projectId, pauseRec.uid).catch(() => {});
@@ -403,8 +462,16 @@ async function reminderTick(): Promise<void> {
         continue;
       }
       if (paused.has(sid)) continue;
-      if (now - st.lastRemind >= intervalMs) {
-        notify(sid, doc?.title ?? doc?.gitBranch ?? 'session idle', 'Claude is still waiting on you');
+      // Not quiet long enough yet — still active, or teammates churning.
+      if (now - lastAct < debounceMs) continue;
+      if (st.count === 0) {
+        const n = stopNotice(doc);
+        notify(sid, n.subtitle, 'Claude is waiting on you', n.title);
+        st.lastRemind = now;
+        st.count += 1;
+      } else if (now - st.lastRemind >= intervalMs) {
+        const n = stopNotice(doc);
+        notify(sid, n.subtitle, 'Claude is still waiting on you', n.title);
         st.lastRemind = now;
         st.count += 1;
       }
