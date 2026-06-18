@@ -61,19 +61,22 @@ export function createWorktreeAndLaunchClaude(
       updateWorktreeDir(worktreeStatePath, worktreePath);
     }
 
-    // Launch claude with KS plugin in the worktree
-    console.log(chalk.blue('\nLaunching Claude with KS plugin in worktree...'));
+    // Launch via `claude-ks`, NOT plain `claude`. claude-ks loads the ks plugin
+    // AND every KS_EXTRA_PLUGINS entry (e.g. ks-flow → session tracking + the
+    // stop/waiting notification hooks) plus ks-rules — exactly like a manual
+    // launch. The old path spawned plain `claude` with only the ks plugin (and
+    // only under DEV), so KST-created worktree sessions never loaded ks-flow:
+    // its hooks never fired, the session went untracked, and no notifications
+    // were sent. Delegating to claude-ks keeps a single source of truth for
+    // which plugins load.
+    console.log(chalk.blue('\nLaunching Claude (claude-ks) in worktree...'));
     console.log(chalk.yellow(`\n💡 Start your conversation with:`));
     console.log(chalk.bold(`   /ks:project-manager Let's work on ./${workflowRelPath}/ project\n`));
     process.chdir(worktreePath);
 
-    const claudeArgs: string[] = [];
-    if (process.env.DEV === 'true') {
-      const repoRoot = execSync('git rev-parse --show-toplevel', { cwd: SCRIPTS_DIR, encoding: 'utf-8' }).trim();
-      claudeArgs.push('--plugin-dir', path.join(repoRoot, 'plugins', 'ks'));
-    }
-    claudeArgs.push(`/ks:project-manager Let's work on ./${workflowRelPath}/ project`);
-    const claude = spawn('claude', claudeArgs, {
+    const claudeKs = path.join(SCRIPTS_DIR, 'claude-ks');
+    const initialPrompt = `/ks:project-manager Let's work on ./${workflowRelPath}/ project`;
+    const claude = spawn(claudeKs, [initialPrompt], {
       stdio: 'inherit',
     });
 
