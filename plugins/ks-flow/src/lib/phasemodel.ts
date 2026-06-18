@@ -74,3 +74,29 @@ export function currentPhase(unit: WorkUnitDoc): PhaseRef | null {
   const first = unit.phases[0];
   return { number: first.number, name: first.name };
 }
+
+// The terminal phase of both the ticket and project workflows (see TEMPLATEs):
+// real work is done once `implementation` (10) completes. Earlier phases
+// completing (e.g. only `ticket-initialization`) does NOT mean the unit is done.
+const TERMINAL_PHASE = 10;
+
+// Linear workflow-states that mean the ticket is closed (case-insensitive). A
+// ticket closed in Linear is "done" even if its KS workflow never reached
+// phase 10 (e.g. a quick fix merged without the full lifecycle).
+const DONE_LINEAR_STATUSES = new Set(['done', 'canceled', 'cancelled', 'merged', 'duplicate']);
+
+/**
+ * Whether a work-unit has finished — either its terminal phase (`implementation`,
+ * 10) is COMPLETED, or Linear marks it closed (Done/Canceled/Merged/…). In both
+ * cases nothing may be IN_PROGRESS/REVISITING. Used to suppress stop-nudges: an
+ * idle session whose ticket/project is done is finished work, not a session
+ * waiting on the user. A unit that has only completed early phases (just
+ * initialized) and is still open in Linear is NOT done and still nudges.
+ */
+export function unitCompleted(unit: WorkUnitDoc): boolean {
+  if (unit.phases.some((p) => p.status === 'IN_PROGRESS' || p.status === 'REVISITING'))
+    return false;
+  const terminalDone = unit.phases.find((p) => p.number === TERMINAL_PHASE)?.status === 'COMPLETED';
+  const linearDone = !!unit.linearStatus && DONE_LINEAR_STATUSES.has(unit.linearStatus.toLowerCase());
+  return terminalDone || linearDone;
+}
