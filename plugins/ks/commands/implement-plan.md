@@ -330,7 +330,7 @@ Each phase already has its own PR against the project branch. After the final ph
    - This PR represents the complete feature — all phases consolidated
 2. **Run automated code review** by spawning a sub-agent:
    ```
-   Agent(subagent_type: "general-purpose", prompt: "Run /code-review:code-review to review all changes in the current PR. Report back with any issues found.")
+   Agent(subagent_type: "general-purpose", prompt: "Run /code-review to review all changes in the current PR. Report back with any issues found.")
    ```
    Address any high-confidence issues before finalizing.
 3. **Congratulate the user**: "Project implementation complete! All phases have been successfully executed."
@@ -340,7 +340,7 @@ Each phase already has its own PR against the project branch. After the final ph
 1. **Create a PR** using `/ks:create_pr`
 2. **Run automated code review** by spawning a sub-agent:
    ```
-   Agent(subagent_type: "general-purpose", prompt: "Run /code-review:code-review to review all changes in the current PR. Report back with any issues found.")
+   Agent(subagent_type: "general-purpose", prompt: "Run /code-review to review all changes in the current PR. Report back with any issues found.")
    ```
    Address any high-confidence issues before finalizing.
 3. **Congratulate the user**: "Ticket implementation complete! All phases have been successfully executed."
