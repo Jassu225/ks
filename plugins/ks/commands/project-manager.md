@@ -70,7 +70,7 @@ Show the update body to the user and ask for confirmation before posting. Use th
 #### Phase 9: Implementation Plan
 - Runs in **plan mode** — do NOT create tasks or start implementation. See `/ks:create_plan` for the full list of restrictions.
 - Supports **iteration** — see Phase 9-10 Iteration below
-- **Post-completion:** Tell the user: "Phase 10 (Implementation) uses semantic code analysis and automated PR review. Please start a new session with: `cd {cwd} && claude-ks-serena --plugin code-review@claude-plugins-official \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
+- **Post-completion:** Tell the user: "Phase 10 (Implementation) uses semantic code analysis. Please start a new session with: `cd {cwd} && claude-ks-serena \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
 
 #### Phase 10: Implementation
 - Supports **iteration** — see Phase 9-10 Iteration below
