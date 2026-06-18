@@ -112,6 +112,7 @@ firebase emulators:start --only firestore
 - **↻ refresh** — manual re-pull of the project, work-units, and sessions from
   the store (the live subscription still pushes on its own; this is an on-demand
   pull, reused by UI actions such as worktree removal).
+- **▤ processes** — the running-processes page (below).
 - **⚙ settings** — the settings page (below).
 - **kill** — two-step kill switch that stops the daemon + PocketBase. They
   restart and re-backfill on the next Claude session, so it's reversible.
@@ -155,6 +156,18 @@ so any field can be surfaced on the board without new daemon plumbing.
   `tar`) is missing, shows a banner with the install command (`brew install
   zstd`). The enable flag, bucket, and optional object prefix live in
   `board-settings.json`; **credentials never do** (see env below).
+
+### Processes (`/processes`)
+
+Lists the ks-flow processes running on the machine — **process name, PID, start
+time, and listening port** — so a stray/duplicate instance is visible at a
+glance (e.g. an old manually-started `node dist/daemon.js` left running alongside
+the launchd-managed one, which makes every notification fire twice). Built from
+`ps` joined to `lsof` (pid → listening TCP port); classifies the **daemon**,
+**PocketBase** (8090), and the **board** (4317). The daemon row shows no port —
+it's a file-watcher/ingester and opens no socket. If more than one **ks-flow
+daemon** appears, a warning banner shows and the extra rows are highlighted —
+kill the older PID(s).
 
 ### GCS archive on removal
 
@@ -228,16 +241,22 @@ Each row has a **Remove** button:
 
 ## Notifications
 
-Three hooks fire a `terminal-notifier` notification the moment a session in the tracked project blocks: the two blocking tools (`AskUserQuestion`, `ExitPlanMode`) and the two blocking hook events (`PermissionRequest`, `Elicitation`). Notifications are daemon-independent and throttled per session.
+Three hooks fire a `terminal-notifier` notification the moment a session in the tracked project blocks: the two blocking tools (`AskUserQuestion`, `ExitPlanMode`) and the two blocking hook events (`PermissionRequest`, `Elicitation`). These are daemon-independent and throttled per session.
+
+**Rich content.** A notice is titled with its work-unit: ticket → **`KAR-1234`** / the ticket title; project → the project title; otherwise the brand / branch. Hooks resolve the unit from their cwd via `scripts/notify-context.mjs` (a zero-dep node reader that picks the workflow `state.yaml` whose `worktree_dir` matches the repo); the daemon matches the session to a unit by worktree.
+
+**Delivery.** `terminal-notifier` is invoked **without `-sender`** — that masquerade hangs forever for terminals that aren't registered macOS notification clients (e.g. Ghostty), and there's no reliable way to brand a notice as an arbitrary terminal from an out-of-band process. `-closeLabel "OK"` relabels the close button; the system-added action button can't be removed (harmless — it has no action). Notices appear under terminal-notifier's own identity.
+
+**Make them persist.** macOS notifications auto-dismiss (~5s banner) unless the app's style is **Alerts** — a per-app System Settings choice, not an API. To keep notices until you dismiss them: **System Settings → Notifications → terminal-notifier → Alert style: Alerts**. The Reminders settings panel has an **Open Notification Settings** button (`/api/open-notification-settings`) that deep-links there.
 
 ## Reminders
 
 Enabled by default; toggle + tune in `/settings`. Reminder records live in the DB (`reminders` collection); the board's server writes them and the daemon (the scheduler — one ~30s tick, no OS scheduling) fires the notifications. "Remind on OS wake" is detected by a timer-gap on the daemon's tick, so no per-reminder OS jobs.
 
-- **Stop-nudge (auto).** When a session stops (end of turn → idle), the `Stop` hook fires an immediate notification and the daemon then repeats every **N min** (default 5) until the session **resumes** (new JSONL activity), **ends** (`SessionEnd`), a **new session** starts in its worktree, or it hits the **cap** (default 12 nudges). Each card shows an **▶ active / ⏸ paused** control — **Pause** mutes the nudge for that card's session; it **auto-returns to Active** when the session resumes.
+- **Stop-nudge (auto).** When a session stops (end of turn → idle), the `Stop` hook records the event and the **daemon owns all notices** (the hook fires none): the first notice waits until the session has been **quiet for the debounce window** (default **60s**), then it repeats every **N min** (default 5) until the session **resumes**, **ends** (`SessionEnd`), or hits the **cap** (default 12 nudges). "Quiet" spans the session transcript, its worktree siblings, **and its teammates' subagent transcripts** (`<session>/subagents/*.jsonl`) — so a notice never misfires at a main-turn boundary while background teammates are still working. The gate is *time-since-last-activity* (not a stop-timestamp comparison), which sidesteps the `Stop` event's whole-second timestamp vs the transcript's millisecond timestamps. Each card shows an **▶ active / ⏸ paused** control — **Pause** mutes the nudge for that card's session; it **auto-returns to Active** when the session resumes.
 - **Per-card custom reminder (manual).** The **⏰** control on a card sets a reminder — relative (`30m` / `2h` / `1d`) or an absolute datetime — with an optional note. It fires once at due time, then **re-nags once per OS-wake and once per daemon-start until you clear it** (the ✕ on the card is the only way to stop it).
 
-Settings: **Enable reminders**, **stop-nudge interval (min)**, **max nudges (cap)** — stored in `board-settings.json` (read by the hooks and the daemon; changes apply without a restart).
+Settings: **Enable reminders**, **idle debounce (sec)**, **stop-nudge interval (min)**, **max nudges (cap)** — stored in `board-settings.json` (read by the hooks and the daemon; changes apply without a restart). The panel also has the **Open Notification Settings** button (Alerts setup, above).
 
 **Requires `terminal-notifier`** (same as the other notifications). When reminders are enabled, `/settings` preflights it (`/api/reminders-preflight`) and offers an **Install** button (`brew install terminal-notifier`); the daemon also logs a one-line warning at startup if it's missing. Without it, every notification is a silent no-op.
 
