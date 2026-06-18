@@ -253,6 +253,8 @@ Three hooks fire a `terminal-notifier` notification the moment a session in the 
 
 **Make them persist.** macOS notifications auto-dismiss (~5s banner) unless the app's style is **Alerts** — a per-app System Settings choice, not an API. To keep notices until you dismiss them: **System Settings → Notifications → terminal-notifier → Alert style: Alerts**. The Reminders settings panel has an **Open Notification Settings** button (`/api/open-notification-settings`) that deep-links there.
 
+**Silent but everything looks fine? Check Focus first.** If `events.jsonl` is still appending, the daemon is alive, and units match — yet no notices appear — it's almost always macOS **Focus / Do Not Disturb** suppressing the banner, not ks-flow. Tell-tale: a manual `terminal-notifier … -group X` prints `* Removing previously sent notification…` (proof it *posted* to Notification Center) but no banner shows. Fix per-Focus (not the Notifications pane): **System Settings → Focus → \<active Focus\> → Allowed Notifications** → add terminal-notifier to "Allow Notifications From" (or ensure it's not silenced), or turn the Focus off. Don't debug the daemon until a manual terminal-notifier banner is confirmed visible.
+
 ## Reminders
 
 Enabled by default; toggle + tune in `/settings`. Reminder records live in the DB (`reminders` collection); the board's server writes them and the daemon (the scheduler — one ~30s tick, no OS scheduling) fires the notifications. "Remind on OS wake" is detected by a timer-gap on the daemon's tick, so no per-reminder OS jobs.
