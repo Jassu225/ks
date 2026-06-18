@@ -165,6 +165,13 @@ export function Board({ config }: { config: BoardConfig }) {
           >
             <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`}>↻</span>
           </button>
+          <Link
+            href="/processes"
+            className="text-slate-400 hover:text-slate-200"
+            title="Running processes"
+          >
+            ▤
+          </Link>
           <Link href="/settings" className="text-slate-400 hover:text-slate-200" title="Settings">
             ⚙
           </Link>
