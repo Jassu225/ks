@@ -24,7 +24,12 @@ import {
 import { parseComplete, readRange } from './lib/jsonl.js';
 import { Checkpoints } from './lib/checkpoints.js';
 import { startPocketbase, type PbHandle } from './lib/pbserver.js';
-import { currentPhase, derivePhaseModel, projectWorkflowType } from './lib/phasemodel.js';
+import {
+  currentPhase,
+  derivePhaseModel,
+  projectWorkflowType,
+  unitCompleted,
+} from './lib/phasemodel.js';
 import { joinUnit, sessionMatchesUnit } from './lib/join.js';
 import { parseStateYaml } from './lib/stateyaml.js';
 import {
@@ -113,8 +118,13 @@ function worktreePathFor(cwd: string | null): string | null {
 
 // ── session ingestion ───────────────────────────────────────────────────────
 /** Read new bytes of a session file, fold into its accumulator. Returns the
- * inProject decision (undefined = not yet determinable). */
-function ingestSessionFile(path: string): boolean | undefined {
+ * inProject decision (undefined = not yet determinable). `rebuild` forces a full
+ * re-read from offset 0 to reconstruct the in-memory doc — used by startup
+ * backfill, because a session file sits at its persisted EOF across a restart,
+ * so the normal "no new bytes" fast path would never build its acc/SessionDoc.
+ * Without the doc, stop-nudges can't match the session to its work-unit and
+ * fall silent. The watcher keeps the fast path (rebuild=false). */
+function ingestSessionFile(path: string, rebuild = false): boolean | undefined {
   let st;
   try {
     st = statSync(path);
@@ -129,6 +139,9 @@ function ingestSessionFile(path: string): boolean | undefined {
   if (cp && (st.ino !== cp.inode || st.size < cp.byteOffset)) {
     start = 0; // truncate/replace → idempotent replay from 0
     accs.delete(sessionId);
+  }
+  if (rebuild && !accs.has(sessionId)) {
+    start = 0; // rebuild the in-memory doc from scratch after a restart
   }
   if (st.size <= start && cp) return cp.inProject;
 
@@ -306,7 +319,20 @@ function ingestEvents(): void {
   if (st.size <= eventsOffset) return;
   const data = readRange(EVENTS_PATH, eventsOffset, st.size);
   const { lines, consumedBytes } = parseComplete(data);
-  if (consumedBytes > 0) eventsOffset += consumedBytes;
+  if (consumedBytes > 0) {
+    eventsOffset += consumedBytes;
+    // Persist so a daemon RESTART resumes here instead of replaying the file
+    // from 0 (which re-fired stop-nudges for the last `maxAge` of stops on every
+    // restart). A cold start with no checkpoint still replays from 0, and a
+    // daemon that was down still reads forward over events it missed — so the
+    // intended "fire backlog stops on startup" behaviour is preserved.
+    checkpoints.set(EVENTS_PATH, {
+      byteOffset: eventsOffset,
+      fileSize: st.size,
+      inode: 0,
+      sessionId: '__events__',
+    });
+  }
   for (const line of lines) {
     const ev = line as Record<string, unknown>;
     const sessionId = typeof ev.sessionId === 'string' ? ev.sessionId : null;
@@ -461,6 +487,18 @@ async function reminderTick(): Promise<void> {
         stopState.delete(sid); // expired / hit the cap
         continue;
       }
+      // Only nudge for a real tracked ticket/project. No matched unit (ad-hoc /
+      // main-checkout session, or a Stop whose worktree is gone) → skip the
+      // generic notice; it's not meaningful work to wait on. Left in stopState
+      // so a late-parsing unit can still fire; maxAge cleans it otherwise.
+      const unit = doc ? [...units.values()].find((u) => sessionMatchesUnit(doc, u)) : undefined;
+      if (!unit) continue;
+      // Ticket/project finished its workflow → an idle session here is done
+      // work, not a session waiting on the user. Drop the nudge.
+      if (unitCompleted(unit)) {
+        stopState.delete(sid);
+        continue;
+      }
       if (paused.has(sid)) continue;
       // Not quiet long enough yet — still active, or teammates churning.
       if (now - lastAct < debounceMs) continue;
@@ -516,7 +554,7 @@ async function backfill(): Promise<void> {
     }
     for (const f of files) {
       const path = join(dir, f);
-      const inProject = ingestSessionFile(path);
+      const inProject = ingestSessionFile(path, true); // rebuild in-memory docs
       if (inProject === true) {
         const acc = accs.get(sessionIdFromPath(path));
         if (acc) batch.push(snapshot(acc, true));
@@ -671,6 +709,7 @@ async function main(): Promise<void> {
   if (cfg.dbProvider === 'pocketbase' && process.env.KS_FLOW_DRYRUN !== '1') {
     pbHandle = await startPocketbase(cfg.pocketbasePort, log);
   }
+  eventsOffset = checkpoints.get(EVENTS_PATH)?.byteOffset ?? 0; // resume, don't replay
   ingestEvents(); // catch up overlay offset
   await backfill();
   // Backfill-only mode: ingest once, flush, exit (deterministic verification /
