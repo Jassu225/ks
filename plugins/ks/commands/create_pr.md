@@ -130,7 +130,7 @@ After creating the PR:
 
 ### 10. Automated Code Review
 
-After the PR is created, suggest running `/code-review:code-review` to get automated review feedback before requesting human review. The code review checks for bugs, logic errors, and CLAUDE.md compliance.
+After the PR is created, suggest running `/code-review` to get automated review feedback before requesting human review. The code review checks for bugs, logic errors, and CLAUDE.md compliance.
 
 ## Important Notes
 

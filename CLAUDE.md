@@ -43,15 +43,13 @@ A monorepo for Claude Code plugins:
 
 This installs dependencies, builds CLI tools, and adds `plugins/ks/scripts/` to `PATH`. Use `claude-ks` to launch Claude Code with the plugin loaded.
 
-### Optional: Code Review Plugin
+### Code Review
 
-Enable automated code review for PRs:
-1. Open `~/.claude/settings.json`
-2. Move `code-review@claude-plugins-official` from `disabledPlugins` to `enabledPlugins`
+Automated code review is **built in** — run `/code-review` after creating a PR (no plugin to enable). Pass `--comment` to post findings as inline PR comments, or `--fix` to apply them.
 
 ### Optional: Serena MCP (Semantic Code Analysis)
 
-Serena is included automatically when launching via `claude-ks-serena`. It runs only for that session — no persistent MCP registration. Additional plugins can be loaded per-launch with `--plugin <name>`, e.g. `claude-ks-serena --plugin code-review@claude-plugins-official`.
+Serena is included automatically when launching via `claude-ks-serena`. It runs only for that session — no persistent MCP registration. Additional plugins can be loaded per-launch with `--plugin <name>`, e.g. `claude-ks-serena --plugin <plugin-name>`.
 
 To load a **local** plugin on *every* launch, list it in `KS_EXTRA_PLUGINS` (space-separated) in `plugins/ks/scripts/.env` — e.g. `KS_EXTRA_PLUGINS="ks-flow"`. Running `plugins/ks-flow/init` sets this automatically so `claude-ks` always loads ks-flow alongside ks. See `plugins/ks/scripts/README.md`.
 
@@ -92,7 +90,7 @@ plugins/ks/scripts/quality-typecheck.sh
 | `/ks:build-prototype` | Build React prototype from PRD |
 | `/ks:write-tad` | Write Technical Architecture Document |
 | `/ks:prd-to-linear-tickets` | Convert PRD into Linear tickets |
-| `/code-review:code-review` | Automated PR code review (requires plugin) |
+| `/code-review` | Automated PR code review (built-in) |
 
 ## Agents
 
@@ -129,11 +127,11 @@ workflow/{username}/{project-slug}/
     └── handoffs/           # Between-phase documentation
 ```
 
+## Code Review (built-in)
+
+Automated PR code review that checks for bugs, logic errors, and CLAUDE.md compliance. Run `/code-review` after creating a PR via `/ks:create_pr` (no plugin needed). `--comment` posts findings as inline PR comments; `--fix` applies them.
+
 ## External Plugin Integrations
-
-### Code Review (`code-review@claude-plugins-official`)
-
-Automated PR code review that checks for bugs, logic errors, and CLAUDE.md compliance. Run `/code-review:code-review` after creating a PR via `/ks:create_pr`. Only issues with 80+ confidence are posted as comments.
 
 ### Serena MCP (Semantic Code Analysis)
 

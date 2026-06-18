@@ -30,7 +30,7 @@ Do not run ESLint, Prettier, or TypeScript type checking manually — hooks hand
 
 ## Code Review
 
-After creating a PR via `/ks:create_pr`, run `/code-review:code-review` for automated code review. The review checks for bugs, logic errors, and CLAUDE.md compliance. Only issues with 80+ confidence are posted as PR comments.
+After creating a PR via `/ks:create_pr`, run `/code-review` for automated code review. The review checks for bugs, logic errors, and CLAUDE.md compliance.
 
 ## Slack
 
