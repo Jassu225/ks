@@ -13,6 +13,7 @@ require_in_project "$HOOK_CWD"
 append_event "$HOOK_SID" "Elicitation" "$HOOK_SID-elic-$(date +%s)" "$HOOK_CWD"
 
 if ! throttled "$HOOK_SID"; then
-  notify "$HOOK_SID" "${HOOK_BRANCH:-input needed}" "Claude needs input to continue"
+  build_notify_fields "$HOOK_CWD" "$HOOK_BRANCH"   # → NOTIFY_TITLE / NOTIFY_SUBTITLE
+  notify "$HOOK_SID" "$NOTIFY_SUBTITLE" "Claude needs input to continue" "$NOTIFY_TITLE"
 fi
 exit 0

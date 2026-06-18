@@ -1,8 +1,12 @@
 #!/bin/bash
 # Stop — the session finished its turn and is now idle awaiting you. Records a
-# Stop event for the daemon (which repeats the nudge every N min until you
-# resume / the session ends) and fires the immediate notification. Skips when
-# reminders are disabled in Settings. Purely observational; exit 0 always.
+# Stop event for the daemon, which owns ALL stop notices: it fires the first
+# notice only after a debounce window of true quiet (no main-agent AND no
+# teammate/subagent transcript activity), then repeats every N min until you
+# resume / the session ends. The hook deliberately does NOT fire an immediate
+# notice — a Stop fires at every main-turn boundary (incl. right after the main
+# agent spawns background teammates), so an instant notify misfires while the
+# session is still active. Skips when reminders are disabled. exit 0 always.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_common.sh
@@ -20,11 +24,7 @@ if [ -f "$SETTINGS" ]; then
   [ "$enabled" = "false" ] && exit 0
 fi
 
-# Record the Stop for the daemon (it owns the recurring nudges).
+# Record the Stop for the daemon (it owns the debounced first notice + the
+# recurring nudges; see the header — no immediate notify here on purpose).
 append_event "$HOOK_SID" "Stop" "$HOOK_SID-$(date +%s)" "$HOOK_CWD"
-
-# Fire the immediate notice (throttled per session).
-if ! throttled "$HOOK_SID"; then
-  notify "$HOOK_SID" "${HOOK_BRANCH:-idle}" "Claude is waiting on you"
-fi
 exit 0

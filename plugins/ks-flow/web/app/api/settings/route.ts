@@ -53,6 +53,7 @@ interface Reminders {
   enabled: boolean;
   stopIntervalMin: number;
   capCount: number;
+  debounceSec: number;
 }
 interface Settings {
   removeCommand: string;
@@ -61,7 +62,12 @@ interface Settings {
 }
 
 const DEFAULT_GCS: GcsArchive = { enabled: false, bucket: '', prefix: '' };
-const DEFAULT_REMINDERS: Reminders = { enabled: true, stopIntervalMin: 5, capCount: 12 };
+const DEFAULT_REMINDERS: Reminders = {
+  enabled: true,
+  stopIntervalMin: 5,
+  capCount: 12,
+  debounceSec: 60,
+};
 
 function read(): Settings {
   try {
@@ -83,6 +89,10 @@ function read(): Settings {
             : DEFAULT_REMINDERS.stopIntervalMin,
         capCount:
           typeof r.capCount === 'number' && r.capCount > 0 ? r.capCount : DEFAULT_REMINDERS.capCount,
+        debounceSec:
+          typeof r.debounceSec === 'number' && r.debounceSec >= 0
+            ? r.debounceSec
+            : DEFAULT_REMINDERS.debounceSec,
       },
     };
   } catch {
@@ -137,6 +147,10 @@ export async function POST(req: Request): Promise<NextResponse> {
           : current.reminders.stopIntervalMin,
       capCount:
         typeof r.capCount === 'number' && r.capCount > 0 ? r.capCount : current.reminders.capCount,
+      debounceSec:
+        typeof r.debounceSec === 'number' && r.debounceSec >= 0
+          ? r.debounceSec
+          : current.reminders.debounceSec,
     };
   }
 

@@ -26,9 +26,11 @@ function isInstalled(): boolean {
     // not on the current PATH — try the login shell
   }
   try {
-    return execFileSync('/bin/zsh', ['-c', `${SHELL_PRELUDE}command -v ${NAME}`], {
-      encoding: 'utf8',
-    }).trim().length > 0;
+    return (
+      execFileSync('/bin/zsh', ['-c', `${SHELL_PRELUDE}command -v ${NAME}`], {
+        encoding: 'utf8',
+      }).trim().length > 0
+    );
   } catch {
     return false;
   }
