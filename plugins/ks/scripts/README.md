@@ -34,6 +34,11 @@ and skipped. Modular — list any plugin here, no launcher edits needed. Running
 `plugins/ks-flow/init` adds `ks-flow` to this list automatically (idempotent,
 non-destructive). One-off alternative: `claude-ks --local-plugin <name>`.
 
+`ks-start-ticket` / `ks-start-project` launch the new worktree session **through
+`claude-ks`** (not plain `claude`), so the worktree inherits the same plugin set
+— ks + every `KS_EXTRA_PLUGINS` entry (e.g. ks-flow, wiring its session-tracking
+and notification hooks) + `ks-rules`. A single source of truth for what loads.
+
 ## Scripts
 
 ### Linear CLI

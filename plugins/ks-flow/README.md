@@ -166,8 +166,12 @@ the launchd-managed one, which makes every notification fire twice). Built from
 `ps` joined to `lsof` (pid → listening TCP port); classifies the **daemon**,
 **PocketBase** (8090), and the **board** (4317). The daemon row shows no port —
 it's a file-watcher/ingester and opens no socket. If more than one **ks-flow
-daemon** appears, a warning banner shows and the extra rows are highlighted —
-kill the older PID(s).
+daemon** appears, a warning banner shows: the newest is badged **kept** and the
+older one(s) get a **Kill** button (a stray manual daemon is invariably the
+older PID). `POST /api/processes` re-validates the pid against a live `ps` scan
+and refuses to kill anything that isn't a running ks-flow daemon, so it can't
+terminate an arbitrary process. (The launchd-managed daemon respawns if killed,
+so the kill only sticks for the stray one.)
 
 ### GCS archive on removal
 
