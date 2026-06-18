@@ -107,23 +107,25 @@ notify() {
       -closeLabel "OK" >/dev/null 2>&1 & ) </dev/null >/dev/null 2>&1
 }
 
-# Set NOTIFY_TITLE + NOTIFY_SUBTITLE from a cwd's ks workflow unit, so a notice
-# reads "KAR-1234 / <ticket title>" (ticket) or "<project title> / <branch>"
-# (project). Best-effort: falls back to the brand + branch when no unit matches.
+# Set NOTIFY_LABEL (short identifier → the bold title line) + NOTIFY_DETAIL (the
+# long descriptive text → the message BODY, which macOS wraps, unlike the
+# single-line truncated subtitle) from a cwd's ks workflow unit. Callers pass the
+# short action phrase as the subtitle and NOTIFY_DETAIL as the body, so the
+# ticket/project title wraps instead of truncating. Falls back to brand + branch.
 build_notify_fields() {
   local cwd="$1" branch="$2" ctx utype ident utitle
-  NOTIFY_TITLE="ks-flow"
-  NOTIFY_SUBTITLE="${branch:-idle}"
+  NOTIFY_LABEL="ks-flow"
+  NOTIFY_DETAIL="${branch:-idle}"
   [ -n "$cwd" ] || return 0
   ctx="$(node "$CONTEXT_MJS" --cwd "$cwd" 2>/dev/null)" || return 0
   [ -n "$ctx" ] || return 0
   IFS=$'\t' read -r utype ident utitle <<<"$ctx"
   if [ "$utype" = "ticket" ]; then
-    NOTIFY_TITLE="${ident:-ks-flow}"
-    NOTIFY_SUBTITLE="${utitle:-${branch:-idle}}"
+    NOTIFY_LABEL="${ident:-ks-flow}"
+    NOTIFY_DETAIL="${utitle:-${branch:-idle}}"
   elif [ "$utype" = "project" ]; then
-    NOTIFY_TITLE="${utitle:-${ident:-ks-flow}}"
-    NOTIFY_SUBTITLE="${branch:-project}"
+    NOTIFY_LABEL="${ident:-ks-flow}"
+    NOTIFY_DETAIL="${utitle:-${branch:-project}}"
   fi
 }
 
