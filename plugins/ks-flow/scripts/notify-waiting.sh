@@ -16,10 +16,10 @@ require_in_project "$HOOK_CWD"            # exits 0 if out-of-project
 append_event "$HOOK_SID" "${HOOK_TOOL:-AskUserQuestion}" "$HOOK_SID-$(date +%s)" "$HOOK_CWD"
 
 if ! throttled "$HOOK_SID"; then
-  build_notify_fields "$HOOK_CWD" "$HOOK_BRANCH"   # → NOTIFY_TITLE / NOTIFY_SUBTITLE
+  build_notify_fields "$HOOK_CWD" "$HOOK_BRANCH"   # → NOTIFY_LABEL / NOTIFY_DETAIL
   case "$HOOK_TOOL" in
-    ExitPlanMode) notify "$HOOK_SID" "$NOTIFY_SUBTITLE" "Plan ready for your review" "$NOTIFY_TITLE" ;;
-    *) notify "$HOOK_SID" "$NOTIFY_SUBTITLE" "Claude is asking you a question" "$NOTIFY_TITLE" ;;
+    ExitPlanMode) notify "$HOOK_SID" "Plan ready for your review" "$NOTIFY_DETAIL" "$NOTIFY_LABEL" ;;
+    *) notify "$HOOK_SID" "Claude is asking you a question" "$NOTIFY_DETAIL" "$NOTIFY_LABEL" ;;
   esac
 fi
 exit 0

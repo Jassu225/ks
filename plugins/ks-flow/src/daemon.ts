@@ -380,16 +380,19 @@ function unitTitle(unitId: string | undefined): string | null {
   return null;
 }
 
-/** The notification title + subtitle for a stopped session, enriched with its
+/** The notification label + detail for a stopped session, enriched with its
  * work-unit. SessionDoc.unitId is never populated, so match by worktree the way
- * join does. Ticket → "KAR-1234" / its title; project → its title / branch;
- * no unit → the brand / the session title or branch. */
-function stopNotice(doc: SessionDoc | undefined): { title: string; subtitle: string } {
+ * join does. `label` is the short identifier (the bold title line); `detail` is
+ * the long descriptive text. macOS truncates the title/subtitle to one line but
+ * WRAPS the message body, so callers put `detail` in the body. Ticket →
+ * "KAR-1234" / its title; project → its slug / its title; no unit → brand /
+ * session title or branch. */
+function stopNotice(doc: SessionDoc | undefined): { label: string; detail: string } {
   const unit = doc ? [...units.values()].find((u) => sessionMatchesUnit(doc, u)) : undefined;
-  if (unit?.type === 'ticket') return { title: unit.identifier, subtitle: unit.title };
+  if (unit?.type === 'ticket') return { label: unit.identifier, detail: unit.title };
   if (unit?.type === 'project')
-    return { title: unit.title || unit.identifier, subtitle: doc?.gitBranch ?? 'project' };
-  return { title: 'ks-flow', subtitle: doc?.title ?? doc?.gitBranch ?? 'idle' };
+    return { label: unit.identifier, detail: unit.title || doc?.gitBranch || 'project' };
+  return { label: 'ks-flow', detail: doc?.title ?? doc?.gitBranch ?? 'idle' };
 }
 
 /** Latest activity (ms epoch) across the stopped session AND any sibling
@@ -504,12 +507,13 @@ async function reminderTick(): Promise<void> {
       if (now - lastAct < debounceMs) continue;
       if (st.count === 0) {
         const n = stopNotice(doc);
-        notify(sid, n.subtitle, 'Claude is waiting on you', n.title);
+        // subtitle = short status (one line), message body = full detail (wraps).
+        notify(sid, 'Claude is waiting on you', n.detail, n.label);
         st.lastRemind = now;
         st.count += 1;
       } else if (now - st.lastRemind >= intervalMs) {
         const n = stopNotice(doc);
-        notify(sid, n.subtitle, 'Claude is still waiting on you', n.title);
+        notify(sid, 'Claude is still waiting on you', n.detail, n.label);
         st.lastRemind = now;
         st.count += 1;
       }
