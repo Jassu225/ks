@@ -108,10 +108,12 @@ firebase emulators:start --only firestore
 `ks-flow open` builds and serves the Next.js board (dark theme). Header controls:
 
 - **swimlanes** *(on by default)* — split cards into `ticket` / `project` lanes. Each lane shows only that type's phases (the ticket lane is the shorter init + context/research + plan/implement set), and a lane with no cards is hidden.
+- **show completed** *(off by default)* — reveal the [Completed · worktree removed](#completed--worktree-removed) table (finished work whose git worktree is already gone).
 - **live / connecting…** — realtime subscription status.
 - **↻ refresh** — manual re-pull of the project, work-units, and sessions from
   the store (the live subscription still pushes on its own; this is an on-demand
   pull, reused by UI actions such as worktree removal).
+- **📝 notes** — the [Notes](#notes-notes) page (saved notes & reminders). Only shown when Notes is enabled in Settings.
 - **▤ processes** — the running-processes page (below).
 - **⚙ settings** — the settings page (below).
 - **kill** — two-step kill switch that stops the daemon + PocketBase. They
@@ -156,6 +158,19 @@ so any field can be surfaced on the board without new daemon plumbing.
   `tar`) is missing, shows a banner with the install command (`brew install
   zstd`). The enable flag, bucket, and optional object prefix live in
   `board-settings.json`; **credentials never do** (see env below).
+- **Notes** — opt-in (off by default). Master **Enable Notes** toggle plus
+  per-source toggles (**Slack** needs `SLACK_TOKEN`, **Linear** needs
+  `LINEAR_API_KEY` in `.env` — both shown live as detected / missing). See
+  [Notes](#notes-notes).
+- **Edit .env** — an **Edit .env** button in the settings **header** (the `.env`
+  is shared by Notes, GCS archive, Firestore, … so it isn't tucked under one
+  panel) opens `$CLAUDE_PLUGIN_DATA/.env` in your default text editor (`open -t`,
+  macOS).
+  The file is **never read by the board and never sent over HTTP** — the server
+  only hands the path to the editor (it's `chmod 600`, created with a comment
+  template if absent). Restart the daemon afterward (board **kill** button →
+  restarts next session) for daemon-side consumers to pick up changes; note that
+  a shell/launchd-exported value **overrides** the same key in `.env`.
 
 ### Processes (`/processes`)
 
@@ -243,6 +258,18 @@ Each row has a **Remove** button:
 > a single-user trust boundary. If no command is set, Remove prompts you to set
 > one in Settings.
 
+### Completed · worktree removed
+
+The board's archive tail: finished work (same done/merged/closed/canceled
+statuses) **whose git worktree no longer exists** — the inverse of the table
+above. **Hidden by default**; tick **show completed** in the header to reveal it.
+**Read-only** (ticket + Linear link, title, status, PR, last activity) — there's
+no worktree left to act on, so no Remove button.
+
+So the board reads top-to-bottom as a lifecycle: **active cards** (in their phase
+columns) → **Completed · not removed** (worktree still around, cleanup candidates)
+→ **Completed · worktree removed** (fully wrapped up).
+
 ## Notifications
 
 Three hooks fire a `terminal-notifier` notification the moment a session in the tracked project blocks: the two blocking tools (`AskUserQuestion`, `ExitPlanMode`) and the two blocking hook events (`PermissionRequest`, `Elicitation`). These are daemon-independent and throttled per session.
@@ -257,16 +284,42 @@ Three hooks fire a `terminal-notifier` notification the moment a session in the 
 
 ## Reminders
 
-Enabled by default; toggle + tune in `/settings`. Reminder records live in the DB (`reminders` collection); the board's server writes them and the daemon (the scheduler — one ~30s tick, no OS scheduling) fires the notifications. "Remind on OS wake" is detected by a timer-gap on the daemon's tick, so no per-reminder OS jobs.
+Enabled by default; toggle + tune in `/settings`. **Enable reminders** is the master switch — turning it off silences **everything**: stop-nudges, per-card custom reminders, and Notes-page reminders. Reminder records live in the DB (`reminders` collection); the board's server writes them and the daemon (the scheduler — one ~30s tick, no OS scheduling) fires the notifications. "Remind on OS wake" is detected by a timer-gap on the daemon's tick, so no per-reminder OS jobs.
 
-- **Stop-nudge (auto).** When a session stops (end of turn → idle), the `Stop` hook records the event and the **daemon owns all notices** (the hook fires none): the first notice waits until the session has been **quiet for the debounce window** (default **60s**), then it repeats every **N min** (default 5) until the session **resumes**, **ends** (`SessionEnd`), or hits the **cap** (default 12 nudges). "Quiet" spans the session transcript, its worktree siblings, **and its teammates' subagent transcripts** (`<session>/subagents/*.jsonl`) — so a notice never misfires at a main-turn boundary while background teammates are still working. The gate is *time-since-last-activity* (not a stop-timestamp comparison), which sidesteps the `Stop` event's whole-second timestamp vs the transcript's millisecond timestamps. The daemon only nudges a session that **matches a tracked ticket/project** — an ad-hoc / main-checkout session (no work-unit) is silent rather than firing a generic notice — and it **drops the nudge once the work-unit is complete** (its terminal phase `implementation` COMPLETED, or a closed Linear status: Done / Canceled / Merged / Duplicate). Across a **daemon restart** the `events.jsonl` read offset is persisted (in `checkpoints.json`), so already-consumed Stops aren't replayed/duplicated; instead, startup **reconstructs** the nudge for any session still waiting (its last lifecycle event is a `Stop`, within maxAge — resumed/ended sessions stay quiet). To avoid an N-notice burst, those first post-restart notices are consolidated into **one grouped notice** (*"N sessions waiting on you"* with the identifiers in the body; a lone session gets its normal rich notice), after which each session resumes individual nudges. Each card shows an **▶ active / ⏸ paused** control — **Pause** mutes the nudge for that card's session; it **auto-returns to Active** when the session resumes.
-- **Per-card custom reminder (manual).** The **⏰** control on a card sets a reminder — relative (`30m` / `2h` / `1d`) or an absolute datetime — with an optional note. It fires once at due time, then **re-nags once per OS-wake and once per daemon-start until you clear it** (the ✕ on the card is the only way to stop it).
+- **Stop-nudge (auto).** When a session stops (end of turn → idle), the `Stop` hook records the event and the **daemon owns all notices** (the hook fires none): the first notice waits until the session has been **quiet for the debounce window** (default **60s**), then it repeats every **N min** (default 5) until the session **resumes**, **ends** (`SessionEnd`), or hits the **cap** (default 12 nudges). "Quiet" spans the session transcript, its worktree siblings, **and its teammates' subagent transcripts** (`<session>/subagents/*.jsonl`) — so a notice never misfires at a main-turn boundary while background teammates are still working. The gate is *time-since-last-activity* (not a stop-timestamp comparison), which sidesteps the `Stop` event's whole-second timestamp vs the transcript's millisecond timestamps. The daemon only nudges a session that **matches a tracked ticket/project** — an ad-hoc / main-checkout session (no work-unit) is silent rather than firing a generic notice — and it **drops the nudge once the work-unit is complete** (its terminal phase `implementation` COMPLETED, or a closed Linear status: Done / Canceled / Merged / Duplicate). Across a **daemon restart** the `events.jsonl` read offset is persisted (in `checkpoints.json`), so already-consumed Stops aren't replayed/duplicated; instead, startup **reconstructs** the nudge for any session still waiting (its last lifecycle event is a `Stop`, within maxAge — resumed/ended sessions stay quiet). To avoid an N-notice burst, those first post-restart notices are consolidated into **one grouped notice** (*"N sessions waiting on you"* with the identifiers in the body; a lone session gets its normal rich notice), after which each session resumes individual nudges. Each card shows an **▶ active / ⏸ paused** control — **Pause** mutes **all** of that card's notices (the stop-nudge **and** its per-card custom reminders, even a lapsed one) and hides the red overdue glow; it **auto-returns to Active** when the session resumes.
+- **Per-card custom reminder (manual).** The **⏰** control on a card sets a reminder — relative (`30m` / `2h` / `1d`) or an absolute datetime — with an optional note. It fires at due time, then **re-nags once a day** (and on OS-wake / daemon-start) until you stop it — **clear** it (✕), **reschedule** it (edit the due date — that's the snooze), or turn the master switch off. Notes-page reminders share this exact path (see **Notes** below).
 
 Settings: **Enable reminders**, **idle debounce (sec)**, **stop-nudge interval (min)**, **max nudges (cap)** — stored in `board-settings.json` (read by the hooks and the daemon; changes apply without a restart). The panel also has the **Open Notification Settings** button (Alerts setup, above).
+
+### Overdue glow
+
+Any card with a reminder whose due time has **passed** gets a **red travelling-border glow** — the same animated ring as an active session, in red (`.overdue-glow` in `globals.css`). When a session card is **both** active and overdue, the **indigo active glow wins** (an in-progress session is the more useful signal). A **paused** session card shows **no** red glow (pause silences its visual cue too). It's a live, clock-driven UI cue (self-updates on the shared `useNow` tick) and applies to **both** session **work-unit cards** (their per-card custom reminders) and **Notes-page cards**. Clearing or rescheduling the reminder removes the glow.
 
 **Requires `terminal-notifier`** (same as the other notifications). When reminders are enabled, `/settings` preflights it (`/api/reminders-preflight`) and offers an **Install** button (`brew install terminal-notifier`); the daemon also logs a one-line warning at startup if it's missing. Without it, every notification is a silent no-op.
 
 > Notifications only fire for sessions **in the tracked project**. The data dir is derived from the project's **git-common-dir** (`~/.claude/plugins/data/ks-flow/<encoded-common-dir>/`), so hooks, daemon, and board always resolve the **same** dir regardless of how the plugin was loaded (inline `--plugin-dir` / `--local-plugin` vs marketplace). Set **`KS_FLOW_DATA`** to override the location. The single source of truth is `src/lib/datadir.mjs` (a zero-dep node module the bash entities call as a CLI and the TS daemon imports).
+
+## Notes (`/notes`)
+
+An opt-in page for **saved notes & reminders**. **Off by default** — enable it under `/settings` → **Notes**; a **📝** link then appears in the board header. Note rows live in the `reminders` collection (`kind:'note'`); the board's server reads/writes them (`/api/notes`), the daemon fires them. Every note can carry an **optional reminder** that fires at its due time and **re-nags once a day until cleared** — the same scheduler path as a per-card custom reminder. Past-due cards get a **red glowing border** (see [overdue glow](#overdue-glow)).
+
+**Adding** — the **+ Add note** button in the header opens a small menu:
+- **Any note** — free text. A modal takes the text, a **work type**, and an optional reminder.
+- **Slack note** — shown only when `SLACK_TOKEN` is set. The modal takes a **Slack message permalink**; the server parses `channel` + `ts` and fetches the message **text + date** via `conversations.history` (or `conversations.replies` for a thread link) — `/api/notes/slack/resolve`. Needs the channel **history** read scope the link's channel type requires (`channels|groups|im|mpim:history`) — the same read scope the ks slack-cli uses. Slack notes show the official **Slack icon** top-left + an *open in Slack* link. **Mentions are humanized + colored at render time**: `<@U123>` / `<#C123>` / `<#C1|general>` / `<https://x|label>` render as `@Alice` / `#general` / `label`, with **user mentions in indigo, channel mentions in sky, broadcasts (@here/@channel) in amber, and links as indigo anchors** — the **stored text stays raw**, this is display-only. User **and channel** IDs without an inline name resolve **cache-first** from the DB (`slack_names` collection / Firestore `slackNames` — a workspace-global id→name cache covering both); only misses hit Slack (`users.info` for `U…`, `conversations.info` for `C…` — needs `users:read` / `channels:read`) and are written back (`/api/notes/slack/names`). **Why paste, not auto-list?** Slack **retired the saved-for-later / `stars.list` read APIs in 2023** — *"there are no direct APIs for Save it for Later"* ([changelog](https://docs.slack.dev/changelog/2023-07-its-later-already-for-stars-and-reminders/)) — so saved messages can't be enumerated, but a *single* message is still fetchable by its permalink.
+
+**Layout** — the board splits by **work type**: **Professional** on the left, **Personal** on the right (each note picks one in the add modal; Professional is the default). Each column is **reverse-chronological** — newest-added (`createdAt`) first.
+
+**Editing** — free-text (non-Slack) notes show a **✎** button → inline textarea → **save** (`PATCH {uid, text}`) / **cancel**. Slack notes are **read-only** (the body is the fetched message), so they have no ✎.
+
+**Each card has three lifecycle actions** — don't confuse them with the reminder's **clear**, which only removes the ⏰ due time and leaves the note on the board:
+- **✓ Done → Archive** — sets `done` (kept in the DB, hidden from the board, daemon skips it so it stops nagging). The header **✓ Archive** (with a count) lists completed notes; each can be **Reopened** (un-`done`, back to the board). Semantic: *finished this.*
+- **✕ Delete → Trash** (soft) — asks for confirmation, then sets `cleared` (also hidden + daemon-skipped). The header **🗑 Trash** (with a count) lists soft-deleted notes; each can be **Restored** (un-`cleared`) or **Deleted forever** (the only hard `DELETE`). Semantic: *mistake / didn't matter.* So an accidental ✕ is always recoverable.
+
+`done` and `cleared` are **independent flags** — Archive and Trash are separate drawers; GET filters are `?archive=1` (`done && !cleared`), `?trash=1` (`cleared`), and active (`!done && !cleared`).
+
+**Notification titles** — a fired note reminder is titled by its work type + source: **Professional Slack note** / **Personal Slack note** / **Professional note** / **Personal note** (the daemon builds the subtitle from `workType` + whether `section === 'slack'`).
+
+> Gating (`/api/notes/config`): the page + **Any note** show on the Notes **toggle**; the **Slack note** option also needs `SLACK_TOKEN` present (a `LINEAR_API_KEY` slot is wired for a future Linear source). Only a boolean (`tokenPresent` / `keyPresent`) is reported to the UI — the token never leaves the server. Set tokens with the **Edit .env** button in the settings header (see [Settings](#settings-settings)).
 
 ## Development
 

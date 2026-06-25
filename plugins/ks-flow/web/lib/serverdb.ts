@@ -12,6 +12,7 @@ import PocketBase from 'pocketbase';
 import type { ReminderDoc } from './types';
 
 const REMINDERS = 'reminders';
+const SLACK_NAMES = 'slack_names';
 
 function loadEnvFile(path: string): void {
   let raw: string;
@@ -108,6 +109,14 @@ async function pbUpsert(cfg: ServerConfig, doc: ReminderDoc): Promise<void> {
   }
 }
 
+async function pbList(cfg: ServerConfig): Promise<ReminderDoc[]> {
+  const pb = pbClient(cfg);
+  const recs = await pb
+    .collection(REMINDERS)
+    .getFullList({ filter: pb.filter('projectKey={:k}', { k: cfg.projectId }) });
+  return recs.map((r) => r.data as ReminderDoc).filter(Boolean);
+}
+
 async function pbDelete(cfg: ServerConfig, uid: string): Promise<void> {
   const pb = pbClient(cfg);
   try {
@@ -156,4 +165,80 @@ export async function deleteReminder(uid: string): Promise<void> {
   const cfg = serverConfig();
   if (cfg.dbProvider === 'pocketbase') return pbDelete(cfg, uid);
   await (await fsCol(cfg)).doc(uid).delete();
+}
+
+/** All reminder docs for the current project (the Notes page filters to kind:'note'). */
+export async function listReminders(): Promise<ReminderDoc[]> {
+  const cfg = serverConfig();
+  if (cfg.dbProvider === 'pocketbase') return pbList(cfg);
+  const snap = await (await fsCol(cfg)).get();
+  return snap.docs.map((d) => d.data() as ReminderDoc);
+}
+
+// ── slack_names cache (workspace-global id→name: users U…, channels C…) ───────
+async function fsSlackCol(cfg: ServerConfig) {
+  const { getApps, initializeApp, cert, applicationDefault } = await import('firebase-admin/app');
+  const { getFirestore } = await import('firebase-admin/firestore');
+  const APP = 'ks-flow-board';
+  let app = getApps().find((a) => a.name === APP);
+  if (!app) {
+    if (cfg.firestoreMode === 'emulator') {
+      if (!process.env.FIRESTORE_EMULATOR_HOST) process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+      app = initializeApp({ projectId: cfg.gcpProjectId }, APP);
+    } else {
+      const credential =
+        cfg.clientEmail && cfg.privateKey
+          ? cert({
+              projectId: cfg.gcpProjectId,
+              clientEmail: cfg.clientEmail,
+              privateKey: cfg.privateKey.replace(/\\n/g, '\n'),
+            })
+          : cfg.credentials
+            ? cert(JSON.parse(readFileSync(cfg.credentials, 'utf8')))
+            : applicationDefault();
+      app = initializeApp({ credential, projectId: cfg.gcpProjectId }, APP);
+    }
+  }
+  return getFirestore(app).collection(SLACK_NAMES);
+}
+
+/** The full Slack id→name cache (users + channels). */
+export async function getSlackNames(): Promise<Record<string, string>> {
+  const cfg = serverConfig();
+  const out: Record<string, string> = {};
+  if (cfg.dbProvider === 'pocketbase') {
+    const pb = pbClient(cfg);
+    const recs = await pb.collection(SLACK_NAMES).getFullList();
+    for (const r of recs) if (r.uid && r.name) out[r.uid as string] = r.name as string;
+    return out;
+  }
+  const snap = await (await fsSlackCol(cfg)).get();
+  for (const d of snap.docs) {
+    const v = d.data() as { uid?: string; name?: string };
+    if (v.uid && v.name) out[v.uid] = v.name;
+  }
+  return out;
+}
+
+/** Upsert resolved Slack names into the cache. */
+export async function putSlackNames(map: Record<string, string>): Promise<void> {
+  const cfg = serverConfig();
+  const entries = Object.entries(map).filter(([id, name]) => id && name);
+  if (entries.length === 0) return;
+  if (cfg.dbProvider === 'pocketbase') {
+    const pb = pbClient(cfg);
+    for (const [uid, name] of entries) {
+      try {
+        const rec = await pb
+          .collection(SLACK_NAMES)
+          .getFirstListItem(pb.filter('uid={:u}', { u: uid }));
+        await pb.collection(SLACK_NAMES).update(rec.id, { uid, name });
+      } catch {
+        await pb.collection(SLACK_NAMES).create({ uid, name });
+      }
+    }
+    return;
+  }
+  const col = await fsSlackCol(cfg);
+  await Promise.all(entries.map(([uid, name]) => col.doc(uid).set({ uid, name }, { merge: true })));
 }

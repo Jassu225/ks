@@ -128,7 +128,7 @@ export type Unsubscribe = () => void;
 export interface ReminderDoc {
   uid: string; // doc id — PB `uid` field / Firestore doc id
   projectId: string;
-  kind: 'custom' | 'pause';
+  kind: 'custom' | 'pause' | 'note';
   // kind: 'custom'
   unitId?: string; // the card
   dueAt?: string; // ISO — resolved from relative/absolute at set-time
@@ -138,6 +138,14 @@ export interface ReminderDoc {
   // kind: 'pause'
   sessionId?: string; // paused session (its card shows the Paused badge)
   pausedAt?: string;
+  // kind: 'note' — a standalone Notes-page entry (not tied to a card). May carry
+  // an optional reminder (dueAt) that re-nags daily once lapsed, like 'custom'.
+  section?: 'generic' | 'slack' | 'linear'; // which Notes section it belongs to
+  workType?: 'personal' | 'professional'; // which Notes column (default professional)
+  text?: string; // the note / saved-message body
+  sourceDate?: string; // ISO — original date of the source (e.g. the Slack message)
+  sourceUrl?: string; // permalink to the source (e.g. the Slack message)
+  done?: boolean; // note marked completed → archived (hidden from board, daemon skips)
   createdAt: string;
 }
 

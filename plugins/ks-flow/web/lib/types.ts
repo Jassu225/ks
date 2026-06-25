@@ -71,7 +71,7 @@ export interface SessionDoc {
 export interface ReminderDoc {
   uid: string;
   projectId: string;
-  kind: 'custom' | 'pause';
+  kind: 'custom' | 'pause' | 'note';
   unitId?: string;
   dueAt?: string;
   note?: string;
@@ -79,6 +79,13 @@ export interface ReminderDoc {
   cleared?: boolean;
   sessionId?: string;
   pausedAt?: string;
+  // kind: 'note' — standalone Notes-page entry.
+  section?: 'generic' | 'slack' | 'linear';
+  workType?: 'personal' | 'professional';
+  text?: string;
+  sourceDate?: string;
+  sourceUrl?: string;
+  done?: boolean; // note marked completed → archived (hidden, daemon skips)
   createdAt: string;
 }
 

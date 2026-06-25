@@ -520,6 +520,13 @@ async function reminderTick(): Promise<void> {
   const paused = new Set(
     reminders.filter((r) => r.kind === 'pause' && r.sessionId).map((r) => r.sessionId!),
   );
+  // A work-unit is paused if any of its sessions has a pause record (mirrors the
+  // board's per-card Pause). Pausing a card silences ALL of its notices — the
+  // stop-nudge AND its per-card custom reminders.
+  const pausedUnits = new Set<string>();
+  for (const u of units.values()) {
+    if (u.sessionIds?.some((sid) => paused.has(sid))) pausedUnits.add(u.unitId);
+  }
 
   // Stop-nudges: a debounced first notice, then repeat every interval until
   // resume / cap / expiry. The gate is "time since last activity" (quiet
@@ -607,16 +614,32 @@ async function reminderTick(): Promise<void> {
     }
   }
 
-  // Custom per-card reminders: fire once at due, then re-nag on wake / startup
-  // until cleared. Never on a plain tick.
-  for (const r of reminders) {
-    if (r.kind !== 'custom' || r.cleared || !r.dueAt) continue;
-    if (Date.parse(r.dueAt) > now) continue;
-    if (!(r.lastFiredAt == null || wake || startup)) continue;
-    notify(r.unitId ?? r.uid, unitTitle(r.unitId) ?? r.unitId ?? 'reminder', r.note || 'Reminder due');
-    await writer
-      .upsertReminder(projectId, { ...r, lastFiredAt: nowIso() })
-      .catch((e) => log('upsertReminder failed', e?.message));
+  // Custom per-card reminders + standalone Notes-page reminders: fire at due,
+  // then re-nag ONCE A DAY until cleared (also on wake / startup so a lapse that
+  // straddled sleep still nags). Never more than once per 24h on a plain tick.
+  // Gated by the same master `reminders.enabled` switch as stop-nudges — turning
+  // reminders OFF silences every notification (stop-nudge + custom + note).
+  const DAY_MS = 86_400_000;
+  if (settings.enabled) {
+    for (const r of reminders) {
+      if ((r.kind !== 'custom' && r.kind !== 'note') || r.cleared || r.done || !r.dueAt) continue;
+      // Paused card → silence its custom reminder too (notes have no unit/pause).
+      if (r.kind === 'custom' && r.unitId && pausedUnits.has(r.unitId)) continue;
+      if (Date.parse(r.dueAt) > now) continue;
+      const last = r.lastFiredAt ? Date.parse(r.lastFiredAt) : null;
+      // First fire, or a day has passed since the last, or we woke / just started.
+      if (!(last == null || wake || startup || now - last >= DAY_MS)) continue;
+      const subtitle =
+        r.kind === 'note'
+          ? `${r.workType === 'personal' ? 'Personal' : 'Professional'} ${
+              r.section === 'slack' ? 'Slack note' : 'note'
+            }`
+          : unitTitle(r.unitId) ?? r.unitId ?? 'reminder';
+      notify(r.uid, subtitle, r.note || r.text || 'Reminder due');
+      await writer
+        .upsertReminder(projectId, { ...r, lastFiredAt: nowIso() })
+        .catch((e) => log('upsertReminder failed', e?.message));
+    }
   }
 }
 

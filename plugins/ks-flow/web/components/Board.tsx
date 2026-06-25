@@ -1,10 +1,11 @@
 'use client';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useBoard } from '@/lib/useBoard';
 import { useNow } from '@/lib/useNow';
 import type { BoardConfig, SessionDoc, WorkUnitDoc } from '@/lib/types';
 import { Column } from './Column';
+import { CompletedNoWorktree } from './CompletedNoWorktree';
 import { CompletedWorktrees } from './CompletedWorktrees';
 
 // Ticket workflow runs only a subset of phases (init + context/research +
@@ -27,8 +28,18 @@ const DONE_STATUSES = new Set([
 export function Board({ config }: { config: BoardConfig }) {
   const { project, workUnits, sessions, reminders, connected, refresh } = useBoard(config);
   const [swimlanes, setSwimlanes] = useState(true);
+  const [showCompleted, setShowCompleted] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const now = useNow(30_000); // one shared clock → recency-based glow self-expires
+
+  // Notes page is opt-in (Settings → Notes). Only surface the header link when on.
+  const [notesEnabled, setNotesEnabled] = useState(false);
+  useEffect(() => {
+    fetch('/api/notes/config')
+      .then((r) => r.json())
+      .then((c: { enabled?: boolean }) => setNotesEnabled(!!c?.enabled))
+      .catch(() => {});
+  }, []);
 
   const onRefresh = async (): Promise<void> => {
     setRefreshing(true);
@@ -94,6 +105,21 @@ export function Board({ config }: { config: BoardConfig }) {
     [workUnits, liveWorktrees],
   );
 
+  // Finished work whose git worktree is already gone — the archive tail. Done
+  // status AND no live worktree. Hidden behind the "show completed" checkbox.
+  const completedNoWorktree = useMemo(
+    () =>
+      workUnits
+        .filter(
+          (u) =>
+            u.linearStatus &&
+            DONE_STATUSES.has(u.linearStatus.trim().toLowerCase()) &&
+            !(u.worktreeDir && liveWorktrees.has(u.worktreeDir)),
+        )
+        .sort((a, b) => (b.lastActivity ?? '').localeCompare(a.lastActivity ?? '')),
+    [workUnits, liveWorktrees],
+  );
+
   const byPhase = useMemo(() => {
     const map = new Map<number, WorkUnitDoc[]>();
     for (const c of columns) map.set(c.number, []);
@@ -146,6 +172,15 @@ export function Board({ config }: { config: BoardConfig }) {
             />
             swimlanes
           </label>
+          <label className="flex items-center gap-1.5 text-slate-400" title="Show completed work whose worktree is already removed">
+            <input
+              type="checkbox"
+              checked={showCompleted}
+              onChange={(e) => setShowCompleted(e.target.checked)}
+              className="accent-indigo-500"
+            />
+            show completed
+          </label>
           <span
             className={`flex items-center gap-1 ${connected ? 'text-emerald-400' : 'text-slate-500'}`}
           >
@@ -165,6 +200,15 @@ export function Board({ config }: { config: BoardConfig }) {
           >
             <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`}>↻</span>
           </button>
+          {notesEnabled && (
+            <Link
+              href="/notes"
+              className="text-slate-400 hover:text-slate-200"
+              title="Notes & reminders"
+            >
+              📝
+            </Link>
+          )}
           <Link
             href="/processes"
             className="text-slate-400 hover:text-slate-200"
@@ -236,6 +280,7 @@ export function Board({ config }: { config: BoardConfig }) {
           })
         )}
         <CompletedWorktrees units={completedWorktrees} onRefresh={onRefresh} />
+        {showCompleted && <CompletedNoWorktree units={completedNoWorktree} />}
       </main>
     </div>
   );

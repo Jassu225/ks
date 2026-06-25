@@ -62,3 +62,37 @@ body {
     animation: none;
   }
 }
+
+/* Overdue card: the same travelling-segment border as .session-glow, in red.
+   Applied to any card (session or note) whose reminder due date has passed. */
+.overdue-glow {
+  position: relative;
+}
+.overdue-glow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--ks-angle),
+    transparent 55%,
+    #f87171 74%,
+    #fecaca 82%,
+    #f87171 90%,
+    transparent 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px #f87171aa);
+  animation: ks-spin-border 2.5s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .overdue-glow::after {
+    animation: none;
+  }
+}
