@@ -55,10 +55,19 @@ interface Reminders {
   capCount: number;
   debounceSec: number;
 }
+// Notes page: master `enabled` (generic section shows whenever on), plus
+// per-source toggles. A source section only renders when its toggle is on AND
+// the matching token is present in $CLAUDE_PLUGIN_DATA/.env (reported by GET).
+interface Notes {
+  enabled: boolean;
+  slack: boolean;
+  linear: boolean;
+}
 interface Settings {
   removeCommand: string;
   gcsArchive: GcsArchive;
   reminders: Reminders;
+  notes: Notes;
 }
 
 const DEFAULT_GCS: GcsArchive = { enabled: false, bucket: '', prefix: '' };
@@ -68,12 +77,14 @@ const DEFAULT_REMINDERS: Reminders = {
   capCount: 12,
   debounceSec: 60,
 };
+const DEFAULT_NOTES: Notes = { enabled: false, slack: false, linear: false };
 
 function read(): Settings {
   try {
     const s = JSON.parse(readFileSync(settingsPath(), 'utf8'));
     const g = s.gcsArchive ?? {};
     const r = s.reminders ?? {};
+    const n = s.notes ?? {};
     return {
       removeCommand: typeof s.removeCommand === 'string' ? s.removeCommand : '',
       gcsArchive: {
@@ -94,12 +105,18 @@ function read(): Settings {
             ? r.debounceSec
             : DEFAULT_REMINDERS.debounceSec,
       },
+      notes: {
+        enabled: n.enabled === true,
+        slack: n.slack === true,
+        linear: n.linear === true,
+      },
     };
   } catch {
     return {
       removeCommand: '',
       gcsArchive: { ...DEFAULT_GCS },
       reminders: { ...DEFAULT_REMINDERS },
+      notes: { ...DEFAULT_NOTES },
     };
   }
 }
@@ -109,7 +126,11 @@ export async function GET(): Promise<NextResponse> {
   // When GCS_BUCKET is set in .env it WINS over the stored value (see
   // archive-core.ts resolveGcsConfig); the UI shows it read-only in that case.
   const gcsBucketEnv = (process.env.GCS_BUCKET ?? '').trim();
-  return NextResponse.json({ ...read(), gcsBucketEnv });
+  // Notes source sections gate on their token's presence (Slack fetches a message
+  // by permalink; Linear uses its key). Only booleans leave the server.
+  const slackTokenPresent = !!(process.env.SLACK_TOKEN ?? '').trim();
+  const linearKeyPresent = !!(process.env.LINEAR_API_KEY ?? '').trim();
+  return NextResponse.json({ ...read(), gcsBucketEnv, slackTokenPresent, linearKeyPresent });
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -117,6 +138,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     removeCommand?: string;
     gcsArchive?: Partial<GcsArchive>;
     reminders?: Partial<Reminders>;
+    notes?: Partial<Notes>;
   };
   try {
     body = await req.json();
@@ -151,6 +173,14 @@ export async function POST(req: Request): Promise<NextResponse> {
         typeof r.debounceSec === 'number' && r.debounceSec >= 0
           ? r.debounceSec
           : current.reminders.debounceSec,
+    };
+  }
+  if (body.notes && typeof body.notes === 'object') {
+    const n = body.notes;
+    next.notes = {
+      enabled: typeof n.enabled === 'boolean' ? n.enabled : current.notes.enabled,
+      slack: typeof n.slack === 'boolean' ? n.slack : current.notes.slack,
+      linear: typeof n.linear === 'boolean' ? n.linear : current.notes.linear,
     };
   }
 

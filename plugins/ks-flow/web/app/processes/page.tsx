@@ -84,7 +84,7 @@ export default function ProcessesPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="flex items-center justify-between border-b border-slate-800 px-5 py-3">
+      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-800 bg-slate-950 px-5 py-3">
         <h1 className="text-lg font-bold">ks-flow · processes</h1>
         <div className="flex items-center gap-4">
           <button

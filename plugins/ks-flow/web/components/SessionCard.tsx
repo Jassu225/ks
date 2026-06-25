@@ -176,6 +176,17 @@ export function WorkUnitCard({
   ).length;
   const waiting = unit.waiting?.active;
 
+  // Overdue: any uncleared custom reminder on this card whose due time has passed
+  // → red travelling-border glow (takes precedence over the active-session glow).
+  const overdue = reminders.some(
+    (r) =>
+      r.kind === 'custom' &&
+      !r.cleared &&
+      r.unitId === unit.unitId &&
+      r.dueAt != null &&
+      Date.parse(r.dueAt) <= now,
+  );
+
   // Stop-nudge pause: paused if any of the unit's sessions has a pause record.
   const pauseRec = reminders.find(
     (r) => r.kind === 'pause' && r.sessionId && unit.sessionIds.includes(r.sessionId),
@@ -200,7 +211,9 @@ export function WorkUnitCard({
     <div
       className={`rounded-lg border bg-slate-900 p-3 shadow-sm transition ${
         waiting ? 'border-amber-500 ring-2 ring-amber-500/30' : 'border-slate-800'
-      } ${active > 0 ? 'session-glow' : ''} ${dimmed ? 'opacity-50' : ''}`}
+      } ${active > 0 ? 'session-glow' : overdue && !pauseRec ? 'overdue-glow' : ''} ${
+        dimmed ? 'opacity-50' : ''
+      }`}
     >
       <div className="flex items-start justify-between gap-2">
         <span className="font-mono text-xs font-semibold text-slate-400">

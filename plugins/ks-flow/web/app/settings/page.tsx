@@ -50,6 +50,15 @@ export default function Settings() {
   const [remInstalling, setRemInstalling] = useState(false);
   const [remInstallMsg, setRemInstallMsg] = useState<string | null>(null);
 
+  // Notes page.
+  const [notesEnabled, setNotesEnabled] = useState(false);
+  const [notesSlack, setNotesSlack] = useState(false);
+  const [notesLinear, setNotesLinear] = useState(false);
+  const [slackTokenPresent, setSlackTokenPresent] = useState(false);
+  const [linearKeyPresent, setLinearKeyPresent] = useState(false);
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+
   const checkReminderPreflight = async (): Promise<void> => {
     try {
       const r = await fetch('/api/reminders-preflight');
@@ -119,6 +128,9 @@ export default function Settings() {
             capCount?: number;
             debounceSec?: number;
           };
+          notes?: { enabled?: boolean; slack?: boolean; linear?: boolean };
+          slackTokenPresent?: boolean;
+          linearKeyPresent?: boolean;
         }) => {
           setRemoveCommand(s.removeCommand ?? '');
           setGcsEnabled(s.gcsArchive?.enabled === true);
@@ -132,6 +144,11 @@ export default function Settings() {
           if (typeof s.reminders?.capCount === 'number') setRemCap(s.reminders.capCount);
           if (typeof s.reminders?.debounceSec === 'number') setRemDebounce(s.reminders.debounceSec);
           if (remOn) void checkReminderPreflight();
+          setNotesEnabled(s.notes?.enabled === true);
+          setNotesSlack(s.notes?.slack === true);
+          setNotesLinear(s.notes?.linear === true);
+          setSlackTokenPresent(s.slackTokenPresent === true);
+          setLinearKeyPresent(s.linearKeyPresent === true);
         },
       )
       .catch(() => {});
@@ -160,6 +177,36 @@ export default function Settings() {
       // best-effort
     }
     setRemSaving(false);
+  };
+
+  // Open $CLAUDE_PLUGIN_DATA/.env in the OS default text editor. The file is
+  // never read or sent over HTTP — the server just hands the path to `open -t`.
+  const editEnv = async (): Promise<void> => {
+    try {
+      await fetch('/api/open-env', { method: 'POST' });
+    } catch {
+      // best-effort — nothing to surface; the editor either opened or didn't
+    }
+  };
+
+  const saveNotes = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    setNotesSaving(true);
+    setNotesSaved(false);
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notes: { enabled: notesEnabled, slack: notesSlack, linear: notesLinear },
+        }),
+      });
+      setNotesSaved(true);
+      setTimeout(() => setNotesSaved(false), 2000);
+    } catch {
+      // best-effort
+    }
+    setNotesSaving(false);
   };
 
   const toggleGcs = (next: boolean): void => {
@@ -233,11 +280,21 @@ export default function Settings() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="flex items-center justify-between border-b border-slate-800 px-5 py-3">
+      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-800 bg-slate-950 px-5 py-3">
         <h1 className="text-lg font-bold">ks-flow · settings</h1>
-        <Link href="/" className="text-xs text-indigo-400 hover:text-indigo-300">
-          ← back to board
-        </Link>
+        <div className="flex items-center gap-3 text-xs">
+          <button
+            type="button"
+            onClick={() => void editEnv()}
+            title="Open $CLAUDE_PLUGIN_DATA/.env in your default text editor (not read or sent over the network)"
+            className="rounded bg-slate-800 px-2 py-1 font-medium text-slate-200 hover:bg-slate-700"
+          >
+            Edit .env
+          </button>
+          <Link href="/" className="text-indigo-400 hover:text-indigo-300">
+            ← back to board
+          </Link>
+        </div>
       </header>
 
       <main className="mx-auto max-w-2xl px-5 py-8">
@@ -435,7 +492,9 @@ export default function Settings() {
             When a session stops (idle awaiting you), notify immediately then repeat every N minutes
             until it resumes, ends, or hits the cap. Pause a session's nudge from its card; set
             per-card reminders with the <span className="text-slate-300">⏰</span> control. On by
-            default.
+            default. <span className="text-slate-300">Enable reminders</span> is the master switch —
+            turning it off silences <em>everything</em>: stop-nudges, per-card reminders, and
+            Notes-page reminders.
           </p>
 
           <div className="mt-3 rounded border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
@@ -526,6 +585,82 @@ export default function Settings() {
               className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
             >
               {remSaving ? 'Saving…' : remSaved ? 'Saved ✓' : 'Save reminder settings'}
+            </button>
+          </form>
+        </section>
+
+        <section className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5">
+          <h2 className="text-sm font-semibold text-slate-200">Notes</h2>
+          <p className="mt-1 text-xs text-slate-400">
+            A <Link href="/notes" className="text-indigo-400 hover:text-indigo-300">Notes</Link> page
+            for saved notes & reminders, in three sections. The generic section shows whenever Notes
+            is on. The <span className="text-slate-300">Slack</span> and{' '}
+            <span className="text-slate-300">Linear</span> sections also need their token in{' '}
+            <code className="text-slate-300">$CLAUDE_PLUGIN_DATA/.env</code> (
+            <code className="text-slate-300">SLACK_TOKEN</code> /{' '}
+            <code className="text-slate-300">LINEAR_API_KEY</code>; set with{' '}
+            <span className="text-slate-300">Edit .env</span> in the header). In Slack you paste a
+            message link and the text + date are fetched via the token (Slack can't list saved
+            messages — that API was retired). A note reminder fires at its due time, then nags once a
+            day until cleared.
+          </p>
+
+          <form onSubmit={saveNotes} className="mt-4 space-y-3">
+            <label className="flex items-center gap-2 text-sm text-slate-200">
+              <input
+                type="checkbox"
+                checked={notesEnabled}
+                onChange={(e) => setNotesEnabled(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-600 bg-slate-800"
+              />
+              Enable Notes
+            </label>
+
+            <div className="space-y-2 border-t border-slate-800 pt-3">
+              <label className="flex items-center gap-2 text-sm text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={notesSlack}
+                  disabled={!notesEnabled}
+                  onChange={(e) => setNotesSlack(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-600 bg-slate-800 disabled:opacity-40"
+                />
+                Slack
+                {notesSlack &&
+                  (slackTokenPresent ? (
+                    <span className="text-[11px] text-emerald-400">SLACK_TOKEN detected ✓</span>
+                  ) : (
+                    <span className="text-[11px] text-amber-400">
+                      no SLACK_TOKEN in .env — section stays hidden
+                    </span>
+                  ))}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={notesLinear}
+                  disabled={!notesEnabled}
+                  onChange={(e) => setNotesLinear(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-600 bg-slate-800 disabled:opacity-40"
+                />
+                Linear <span className="text-[11px] text-slate-500">(placeholder for now)</span>
+                {notesLinear &&
+                  (linearKeyPresent ? (
+                    <span className="text-[11px] text-emerald-400">LINEAR_API_KEY detected ✓</span>
+                  ) : (
+                    <span className="text-[11px] text-amber-400">
+                      no LINEAR_API_KEY in .env — section stays hidden
+                    </span>
+                  ))}
+              </label>
+            </div>
+
+            <button
+              type="submit"
+              disabled={notesSaving}
+              className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {notesSaving ? 'Saving…' : notesSaved ? 'Saved ✓' : 'Save notes settings'}
             </button>
           </form>
         </section>
