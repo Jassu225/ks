@@ -39,7 +39,7 @@ export async function startPocketbase(
       { stdio: ['ignore', 'pipe', 'pipe'] },
     );
     // Funnel PocketBase output through the daemon log so everything lands in
-    // the same (truncated-on-start) daemon.log.
+    // the same (daily-rotated) daemon.log.
     const forward = (buf: Buffer): void => {
       const s = buf.toString().trimEnd();
       if (s) log('[pocketbase]', s);

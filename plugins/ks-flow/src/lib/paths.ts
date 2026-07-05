@@ -8,8 +8,9 @@ export const CLAUDE_PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 
 export const DATA_DIR = dataDir();
 export const EVENTS_PATH = join(DATA_DIR, 'events.jsonl');
-/** Daemon log — the daemon opens this truncating ('w') on every start, so it
- * holds only the current run (launchd's StandardOutPath would append forever). */
+/** Daemon log — the *current day's* log. The daemon rolls it to
+ * daemon.<YYYY-MM-DD>.log daily (keeping the last 30 days); a same-day restart
+ * appends. The daemon owns it (launchd's StandardOutPath → /dev/null). */
 export const DAEMON_LOG_PATH = join(DATA_DIR, 'daemon.log');
 export const CHECKPOINTS_PATH = join(DATA_DIR, 'checkpoints.json');
 export const PROJECT_CONF_PATH = join(DATA_DIR, 'project.conf');

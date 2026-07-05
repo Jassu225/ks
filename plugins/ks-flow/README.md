@@ -34,6 +34,8 @@ plugin hooks (user scope)                              DB provider (PocketBase d
 
 Ingestion bookkeeping (byte offsets, inode) stays in a local `checkpoints.json` in `${CLAUDE_PLUGIN_DATA}` — per-line churn that must not incur cloud writes. Only derived session/work-unit documents go to the DB.
 
+**Log rotation.** The daemon rolls both its logs **daily**, keeping the **last 30 days**: the hook-appended `events.jsonl` → `events.<YYYY-MM-DD>.jsonl` and the daemon's own `daemon.log` → `daemon.<YYYY-MM-DD>.log` (all in `${CLAUDE_PLUGIN_DATA}`). The roll happens at the first tick past midnight (60s granularity) — `events.jsonl` is drained to EOF first so no event is lost, then its read offset resets; a same-day restart **appends** to the day's `daemon.log`, and a leftover file from a day the daemon was down is rolled out at startup. Older rolls past 30 are pruned.
+
 ### Work-unit sourcing & I/O
 
 A ticket's `state.yaml` lives in its worktree while in progress; on completion the workflow is copied back to the main checkout and the worktree is deleted. The same unit can therefore appear in both places, so the daemon dedups per unit by **source precedence**: a **worktree copy always overrides the main-checkout copy**, and the main copy wins only once no worktree carries that unit (i.e. after cleanup).

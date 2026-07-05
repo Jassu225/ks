@@ -48,6 +48,7 @@ import {
   workflowDir,
 } from './lib/paths.js';
 import { isInProject, listWorktrees, toplevel } from './lib/worktree.js';
+import { dayStr, fileDay, pruneRotations, rotateFile } from './lib/rotate.js';
 
 const cfg = loadConfig();
 const conf = readProjectConf();
@@ -62,11 +63,23 @@ const writer: SessionWriter = provider.writer();
 const IDLE_MS = cfg.idleMinutes * 60_000;
 const OVERLAY_TTL_MS = 10 * 60_000;
 
-// Truncate-on-start log: open with 'w' so daemon.log holds only the current
-// run. The daemon owns this file (launchd's StandardOutPath → /dev/null) to
-// avoid two writers. Also mirror to stdout so `ks-flow daemon` (foreground)
-// shows logs in the terminal.
-const logStream = createWriteStream(DAEMON_LOG_PATH, { flags: 'w' });
+// Daily-rotated log: daemon.log is the *current day's* log. A leftover log from
+// a previous day is rolled to daemon.<that-day>.log at startup (keeping the last
+// 30 days); a same-day restart APPENDS so the day's earlier run isn't lost. The
+// daemon owns this file (launchd's StandardOutPath → /dev/null) to avoid two
+// writers. Also mirror to stdout so `ks-flow daemon` (foreground) shows logs.
+// `activeDay` is the calendar day daemon.log + events.jsonl currently belong to;
+// rotateLogsIfNewDay() rolls both when it changes (see startWatchers).
+let activeDay = dayStr();
+function openDaemonLog(): ReturnType<typeof createWriteStream> {
+  const prev = fileDay(DAEMON_LOG_PATH);
+  if (prev && prev !== activeDay) {
+    rotateFile(DAEMON_LOG_PATH, prev);
+    pruneRotations(DAEMON_LOG_PATH);
+  }
+  return createWriteStream(DAEMON_LOG_PATH, { flags: 'a' });
+}
+let logStream = openDaemonLog();
 function log(...a: unknown[]): void {
   const msg = a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ');
   const line = `[${new Date().toISOString()}] [ks-flow] ${msg}\n`;
@@ -386,6 +399,36 @@ function ingestEvents(): void {
       pendingOverlays.set(sessionId, arr);
     }
   }
+}
+
+// ── log rotation ────────────────────────────────────────────────────────────
+// Roll events.jsonl out to events.<day>.jsonl and reset the read offset. Caller
+// must have ingested to EOF first (so no events are lost to the roll).
+function rotateEvents(day: string): void {
+  const rolled = rotateFile(EVENTS_PATH, day);
+  if (!rolled) return;
+  eventsOffset = 0;
+  checkpoints.set(EVENTS_PATH, { byteOffset: 0, fileSize: 0, inode: 0, sessionId: '__events__' });
+  pruneRotations(EVENTS_PATH);
+  log(`rotated events → ${rolled.split('/').pop()} (keeping last 30 days)`);
+}
+
+// Once the calendar day flips, roll both logs for the day that just closed and
+// start fresh files for the new day. Hooks recreate events.jsonl on their next
+// append (the events watcher re-ingests from 0); daemon.log reopens here.
+function rotateLogsIfNewDay(): void {
+  const today = dayStr();
+  if (today === activeDay) return;
+  const closing = activeDay;
+  ingestEvents(); // drain to EOF before the roll so nothing is lost
+  rotateEvents(closing);
+  const old = logStream;
+  const rolled = rotateFile(DAEMON_LOG_PATH, closing);
+  logStream = createWriteStream(DAEMON_LOG_PATH, { flags: 'a' });
+  old.end();
+  if (rolled) pruneRotations(DAEMON_LOG_PATH);
+  activeDay = today;
+  log(`new day ${activeDay} — logs rotated`);
 }
 
 // ── reminders ─────────────────────────────────────────────────────────────
@@ -802,6 +845,10 @@ function startWatchers(): void {
     reminderTick().catch((e) => log('reminderTick failed', e?.message));
   }, REMINDER_TICK_MS);
 
+  // Daily log rotation: roll events.jsonl + daemon.log at the midnight boundary,
+  // keeping the last 30 days of each. 60s granularity is plenty for a day flip.
+  setInterval(rotateLogsIfNewDay, 60_000);
+
   log('watching', dirs.length, 'session dir(s) + events; rescanning workflow state.yaml every 15s');
 }
 
@@ -825,6 +872,10 @@ async function main(): Promise<void> {
   }
   eventsOffset = checkpoints.get(EVENTS_PATH)?.byteOffset ?? 0; // resume, don't replay
   ingestEvents(); // catch up overlay offset
+  // A leftover events.jsonl from a previous day (daemon was down across midnight)
+  // → roll it out now that we've drained it, so today starts a fresh file.
+  const evDay = fileDay(EVENTS_PATH);
+  if (evDay && evDay !== activeDay) rotateEvents(evDay);
   await backfill();
   // Backfill-only mode: ingest once, flush, exit (deterministic verification /
   // one-shot debug). No watchers, no live tailing.
