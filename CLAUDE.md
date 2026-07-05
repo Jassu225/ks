@@ -114,7 +114,7 @@ Research agents are **documentarians** — they describe what exists in the code
 
 ```
 workflow/{username}/{project-slug}/
-├── state.yaml              # Phase tracking (current phase, status, timestamps)
+├── state.yaml              # Phase tracking (current phase, status, timestamps) + prs[] (PRs recorded at creation, review_thread filled on Slack review send)
 └── resources/
     ├── user-context.md     # Phase 1
     ├── codebase-research.md # Phase 2 (incrementally updatable via re-running /ks:research_codebase)

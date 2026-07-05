@@ -9,7 +9,20 @@ channel_id: C051A3TSM5K
 
 Post to **#engineering** when a PR is ready for review.
 
-**After posting**: Store the returned Slack thread reference in the workflow `state.yaml` under `slack.pr_review_threads[]` (channel_id, channel_name, ts, url, and pr_url).
+**After posting**: Update the workflow `state.yaml` — find the entry in the top-level `prs[]` array whose `url` matches `{PR_URL}` and set its `review_thread`:
+
+```yaml
+prs:
+  - url: "https://github.com/karmasuite/karmasuite/pull/5643"
+    # ... existing fields written at PR creation ...
+    review_thread:
+      channel_id: "C051A3TSM5K"
+      channel_name: "engineering"
+      ts: "1772719401.182549"
+      url: "https://karmasuite.slack.com/archives/C051A3TSM5K/p1772719401182549"
+```
+
+If no matching `prs[]` entry exists (PR was created outside the workflow), append a new entry with `url` set to `{PR_URL}` and the `review_thread` filled in. (Legacy state files may have `slack.pr_review_threads[]` — that key is deprecated; write new data to `prs[]` only.)
 
 ## Template
 

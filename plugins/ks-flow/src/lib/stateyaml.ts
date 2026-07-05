@@ -50,20 +50,34 @@ function mapPhases(raw: unknown): PhaseEntry[] {
   return out.sort((a, b) => a.number - b.number);
 }
 
-function prFromSlack(slack: unknown): PrRef | null {
+function prRefFromUrl(url: unknown): PrRef | null {
+  if (typeof url !== 'string' || !url) return null;
+  const m = url.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+  return {
+    url,
+    number: m ? Number(m[2]) : null,
+    repo: m ? m[1] : null,
+  };
+}
+
+// PRs are recorded in the top-level `prs[]` array at PR-creation time
+// (latest entry wins); older state files only have the deprecated
+// `slack.pr_review_threads[]`, kept as a read fallback.
+function prFromDoc(doc: Record<string, unknown>): PrRef | null {
+  const prs = doc.prs;
+  if (Array.isArray(prs)) {
+    for (let i = prs.length - 1; i >= 0; i--) {
+      const ref = prRefFromUrl((prs[i] as Record<string, unknown>)?.url);
+      if (ref) return ref;
+    }
+  }
+  const slack = doc.slack;
   if (typeof slack !== 'object' || slack === null) return null;
   const threads = (slack as Record<string, unknown>).pr_review_threads;
   if (!Array.isArray(threads)) return null;
   for (const t of threads) {
-    const url = (t as Record<string, unknown>)?.pr_url;
-    if (typeof url === 'string' && url) {
-      const m = url.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-      return {
-        url,
-        number: m ? Number(m[2]) : null,
-        repo: m ? m[1] : null,
-      };
-    }
+    const ref = prRefFromUrl((t as Record<string, unknown>)?.pr_url);
+    if (ref) return ref;
   }
   return null;
 }
@@ -133,7 +147,7 @@ export function parseStateYaml(path: string): ParsedWorkUnit | null {
       worktreeDir,
       stateYamlPath: path,
       phases: mapPhases(doc.phases),
-      pr: prFromSlack(doc.slack),
+      pr: prFromDoc(doc),
       slack: doc.slack ?? null,
       state: doc, // the entire parsed state.yaml, verbatim
     },

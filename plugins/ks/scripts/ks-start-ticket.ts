@@ -21,7 +21,7 @@ import chalk from 'chalk';
 
 import { loadEnv } from './lib/env.js';
 import { getLinearClient, getPriorityName } from './lib/linear-client.js';
-import type { SlackThread, Phase, PrReviewThread } from './lib/workflow-types.js';
+import type { SlackThread, Phase, PrEntry } from './lib/workflow-types.js';
 import { parseSlackMessageUrl } from './lib/slack.js';
 import { createWorktreeAndLaunchClaude } from './lib/worktree.js';
 
@@ -72,9 +72,9 @@ interface TicketWorkflowState {
   };
   slack: {
     project_thread: SlackThread | null;
-    pr_review_threads: PrReviewThread[];
     release_thread: SlackThread | null;
   };
+  prs: PrEntry[];
   phases: Phase[];
 }
 
@@ -219,9 +219,9 @@ async function generateTicketWorkflowState(
     },
     slack: {
       project_thread: projectThread,
-      pr_review_threads: [],
       release_thread: null
     },
+    prs: [],
     phases: [
       {
         number: 0,

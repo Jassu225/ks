@@ -82,6 +82,10 @@ Phases can be skipped — they are marked as `SKIPPED` in `state.yaml`.
 
 Each phase tracks its status: `NOT_STARTED` | `IN_PROGRESS` | `COMPLETED` | `SKIPPED` | `REVISITING` | `INVALIDATED`
 
+## PR Tracking
+
+Every PR raised for a workflow is recorded in `state.yaml` under a top-level `prs[]` array **at PR-creation time** (`/ks:create_pr` writes the entry: `url`, `title`, `branch`, `target`, `created_at`, `review_thread: null`). When the PR is sent for review in Slack (`pr-review-request` template), the same entry's `review_thread` is updated with the Slack thread reference (`channel_id`, `channel_name`, `ts`, `url`). The legacy `slack.pr_review_threads[]` key is deprecated — kept only as a read fallback for older state files.
+
 ## Workflow Directory Layout
 
 ```

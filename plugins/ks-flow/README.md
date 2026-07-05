@@ -133,8 +133,9 @@ the header and the Completed-worktrees table below stay fixed to the viewport.
 Each card carries quick links + live state:
 
 - **Linear ↗ / Slack ↗ / PR** — open the ticket/project in Linear (entity `url`),
-  the source Slack thread (`slack.project_thread`), and the GitHub PR. Each shown
-  only when present.
+  the source Slack thread (`slack.project_thread`), and the GitHub PR (latest
+  entry in the top-level `prs[]` array, written at PR creation; legacy
+  `slack.pr_review_threads[]` is a read fallback). Each shown only when present.
 - **⧉ path** — copy the card's worktree directory to the clipboard.
 - **priority / estimate / waiting** badges; a `⏳ waiting` badge (amber ring) when
   a session is blocked on you.
