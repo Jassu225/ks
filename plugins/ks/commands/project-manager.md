@@ -236,6 +236,24 @@ Phases 9 and 10 use an `iterations` array instead of top-level `started_at`/`end
 
 Phases not in the array are `NOT_STARTED`.
 
+**PR tracking (`prs` array):** Every PR raised for the workflow is recorded in a top-level `prs` array **immediately when the PR is created** (done by `/ks:create_pr`). When the PR is later sent for review in Slack (via the `pr-review-request` template), the same entry's `review_thread` is filled in with the Slack thread reference:
+
+```yaml
+prs:
+  - url: "https://github.com/karmasuite/karmasuite/pull/5643"
+    title: "fix(issue-groups): (KAR-11291) improve error messages"
+    branch: "kar-11291-improve-error-messages"
+    target: "main"
+    created_at: "2026-07-05T12:00:00Z"
+    review_thread:            # null until sent for review in Slack
+      channel_id: "C051A3TSM5K"
+      channel_name: "engineering"
+      ts: "1772719401.182549"
+      url: "https://karmasuite.slack.com/archives/C051A3TSM5K/p1772719401182549"
+```
+
+(`slack.pr_review_threads[]` in older state files is deprecated — new writes go to `prs[]`.)
+
 ---
 
 ## Project Directory Structure

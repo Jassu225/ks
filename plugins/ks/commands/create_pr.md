@@ -128,7 +128,25 @@ After creating the PR:
 - Show the generated title
 - Summarize what was included in the changelog
 
-### 10. Automated Code Review
+### 10. Record PR in Workflow State
+
+If this PR belongs to a ks workflow (a `{project-directory-path}/state.yaml` is known from the conversation context — e.g., invoked from `/ks:project-manager` or `/ks:implement-plan`), immediately append an entry to the top-level `prs` array in that `state.yaml`:
+
+```yaml
+prs:
+  - url: "https://github.com/karmasuite/karmasuite/pull/5643"
+    title: "fix(issue-groups): (KAR-11291) improve error messages"
+    branch: "kar-11291-improve-error-messages"
+    target: "main"
+    created_at: "2026-07-05T12:00:00Z"
+    review_thread: null
+```
+
+- `review_thread` starts as `null` — it gets filled in later when the PR is sent for review in Slack (see the `pr-review-request` Slack template).
+- Create the `prs` array if it doesn't exist yet.
+- If no workflow state.yaml is known from context, skip this step silently.
+
+### 11. Automated Code Review
 
 After the PR is created, suggest running `/code-review` to get automated review feedback before requesting human review. The code review checks for bugs, logic errors, and CLAUDE.md compliance.
 

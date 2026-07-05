@@ -240,6 +240,7 @@ Please verify the implementation. Once verified, I'll commit, create a PR (proje
 6. **Create a PR for this phase (project workflows only)**:
    - Create a branch for this phase if not already on one: `{project-slug}/phase-{N}` (e.g., `budget-category-reordering/phase-1`)
    - Push the branch and create a PR against the **project branch** (`{project-slug}`, e.g., `budget-category-reordering`) using `/ks:create_pr`
+   - `/ks:create_pr` records the new PR in the workflow's `state.yaml` under the top-level `prs[]` array — verify the entry was added
    - The PR title should include the phase number and a summary of what was done (e.g., "Phase 1: Add sort_order column to budget categories")
    - Wait for user to confirm the PR looks good before proceeding
    - After PR is approved/merged, switch to the project branch and pull the latest changes before starting the next phase
@@ -328,6 +329,7 @@ Each phase already has its own PR against the project branch. After the final ph
 
 1. **Create a final PR** from the project branch (`{project-slug}`) to `main` using `/ks:create_pr`
    - This PR represents the complete feature — all phases consolidated
+   - `/ks:create_pr` records the PR in the workflow's `state.yaml` under `prs[]` — verify the entry was added
 2. **Run automated code review** by spawning a sub-agent:
    ```
    Agent(subagent_type: "general-purpose", prompt: "Run /code-review to review all changes in the current PR. Report back with any issues found.")
@@ -338,6 +340,7 @@ Each phase already has its own PR against the project branch. After the final ph
 ### Ticket Workflows
 
 1. **Create a PR** using `/ks:create_pr`
+   - `/ks:create_pr` records the PR in the workflow's `state.yaml` under `prs[]` — verify the entry was added
 2. **Run automated code review** by spawning a sub-agent:
    ```
    Agent(subagent_type: "general-purpose", prompt: "Run /code-review to review all changes in the current PR. Report back with any issues found.")
