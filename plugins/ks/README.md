@@ -49,6 +49,14 @@ Add `.md` files to `commands/`. They become available as `/ks:filename`.
 ### Agents
 Add `.md` files to `agents/`. Reference them with `subagent_type: "ks:agent-name"`.
 
+The research agents (`codebase-locator`, `codebase-analyzer`, `codebase-pattern-finder`, `web-search-researcher`) also hold `SendMessage`, so the orchestrator can keep a follow-up conversation with a running agent instead of re-spawning it with lost context.
+
+### Skills
+Add a directory to `skills/` containing a `SKILL.md` with `name` + `description` frontmatter (plus optional `references/` files it links to). Claude Code auto-discovers it — no manifest entry needed — and loads it when the description matches the task.
+
+Current skills:
+- `add-page-ai-chat` — wire a data-modifying Karmie AI chat onto a KarmaSuite page (new `ReportAgentKind`, handler, `*Core` extraction, AI tools, FAB/drawer wiring, optional domain Agent Skill).
+
 ### Hooks
 Edit `hooks/hooks.json` to add event handlers.
 
@@ -56,3 +64,5 @@ The following scripts run automatically on Stop and SubagentStop events:
 - `quality-format.sh` — Prettier formatting
 - `quality-lint.sh` — ESLint validation
 - `quality-typecheck.sh` — TypeScript type checking
+
+All three resolve their changed-file set through `quality-files.sh`, which honours an optional `.quality-ignore` in the target repo root — see `scripts/README.md`.
