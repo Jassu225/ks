@@ -22,7 +22,7 @@ prs:
       url: "https://karmasuite.slack.com/archives/C051A3TSM5K/p1772719401182549"
 ```
 
-If no matching `prs[]` entry exists (PR was created outside the workflow), append a new entry with `url` set to `{PR_URL}` and the `review_thread` filled in. (Legacy state files may have `slack.pr_review_threads[]` — that key is deprecated; write new data to `prs[]` only.)
+If no matching `prs[]` entry exists (PR was created outside the workflow), append a new entry (`url`, `branch`, `created_at`, `review_thread` — the shape enforced by the state schemas) with `url` set to `{PR_URL}` and the `review_thread` filled in. Never write `slack.pr_review_threads[]` — that key has been removed from the schemas. It may still exist in older state files (entries shaped `{channel_id, channel_name, ts, url, pr_url}` with the PR link in `pr_url`); read it only as a fallback and migrate the data to `prs[]` on the next write.
 
 ## Template
 
