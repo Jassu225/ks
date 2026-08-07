@@ -98,6 +98,27 @@ This will:
 3. Prompt you to select PRD, TAD, Prototype, and Implementation Plan tickets
 4. Generate a workflow state YAML file
 
+### Quality checks
+
+`quality-format.sh` (Prettier), `quality-lint.sh` (ESLint), and `quality-typecheck.sh` (tsc) run automatically on Stop and SubagentStop via `hooks/hooks.json`, and can also be run by hand:
+
+```bash
+plugins/ks/scripts/quality-format.sh
+plugins/ks/scripts/quality-lint.sh
+plugins/ks/scripts/quality-typecheck.sh
+```
+
+All three source `quality-files.sh`, which collects the changed `.ts`/`.tsx` files (staged + unstaged + untracked + everything on the branch vs. its base).
+
+**`.quality-ignore`** — optional file in the target repo root that excludes paths from that set. One pattern per line, matched as a fixed substring against the repo-relative path; `#` comments and blank lines ignored:
+
+```
+# broken on main since KAR-9999, tracked separately
+apps/www/src/legacy/report-builder.tsx
+```
+
+Use it only for files that are *already* failing on the main branch — otherwise a one-line comment edit pulls them into the changed set and fails the hook for whoever touched them. It suppresses real errors rather than fixing them, so keep the list short and justify every entry.
+
 ## Output Format
 
 The generated `state.yaml` follows this structure:

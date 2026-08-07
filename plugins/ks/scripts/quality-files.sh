@@ -38,6 +38,20 @@ for file in $STAGED_FILES $UNSTAGED_FILES $UNTRACKED_FILES $BRANCH_FILES; do
 done
 ALL_FILES=$(echo "$ALL_FILES" | sort -u | sed '/^$/d')
 
+# Drop files listed in an optional per-repo `.quality-ignore`, so a file that is
+# already broken on main doesn't fail the hook for whoever happens to touch it
+# next (a one-line comment edit is enough to pull it into the changed set). One
+# pattern per line, matched against the repo-relative path; `#` comments and
+# blank lines are ignored. Keep the list SHORT and justified — this suppresses
+# real errors, it does not fix them.
+QUALITY_IGNORE="$(git rev-parse --show-toplevel)/.quality-ignore"
+if [ -f "$QUALITY_IGNORE" ]; then
+  IGNORE_PATTERNS=$(grep -vE '^\s*(#|$)' "$QUALITY_IGNORE" || true)
+  if [ -n "$IGNORE_PATTERNS" ]; then
+    ALL_FILES=$(echo "$ALL_FILES" | grep -vFf <(echo "$IGNORE_PATTERNS") || true)
+  fi
+fi
+
 # Exit early if no files to process
 if [ -z "$ALL_FILES" ]; then
   exit 0
