@@ -196,17 +196,30 @@
           "$ref": "#/$defs/slack_thread",
           "description": "General project/task communication thread"
         },
-        "pr_review_threads": {
-          "type": "array",
-          "description": "PR review request threads (latest appended at end)",
-          "items": { "$ref": "#/$defs/slack_pr_review_thread" }
-        },
         "release_thread": {
           "$ref": "#/$defs/slack_thread",
           "description": "Release announcement thread (stored for reference)"
         }
       },
-      "required": ["project_thread", "pr_review_threads", "release_thread"]
+      "required": ["project_thread", "release_thread"]
+    },
+    "prs": {
+      "type": "array",
+      "description": "Pull requests raised for this workflow, recorded at PR-creation time (latest appended at end)",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": { "type": "string", "format": "uri", "description": "GitHub PR URL" },
+          "branch": { "type": "string", "description": "Head branch of the PR" },
+          "created_at": { "type": "string", "format": "date-time", "description": "When the PR was created (ISO 8601)" },
+          "review_thread": {
+            "$ref": "#/$defs/slack_thread",
+            "description": "Slack PR review request thread; null until the PR is sent for review"
+          }
+        },
+        "required": ["url", "branch", "created_at", "review_thread"]
+      }
     }
   },
   "$defs": {
@@ -221,22 +234,10 @@
       },
       "required": ["channel_id", "channel_name", "ts"]
     },
-    "slack_pr_review_thread": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "channel_id": { "type": "string", "description": "Slack channel ID (e.g., 'C051A3TSM5K')" },
-        "channel_name": { "type": "string", "description": "Slack channel name (e.g., '#engineering')" },
-        "ts": { "type": "string" },
-        "url": { "type": ["string", "null"], "format": "uri" },
-        "pr_url": { "type": ["string", "null"], "format": "uri", "description": "GitHub PR URL" }
-      },
-      "required": ["channel_id", "channel_name", "ts"]
-    },
     "phase": {
       "type": "object",
-      "description": "A workflow phase",
-      "required": ["number", "name", "status", "started_at", "ended_at"],
+      "description": "A workflow phase. Phases that support iteration (implementation-plan-creation, implementation) track timestamps in the iterations array instead of the top-level started_at/ended_at",
+      "required": ["number", "name", "status"],
       "additionalProperties": false,
       "properties": {
         "number": {
@@ -256,12 +257,33 @@
         "started_at": {
           "type": ["string", "null"],
           "format": "date-time",
-          "description": "When the phase was started (ISO 8601)"
+          "description": "When the phase was started (ISO 8601). Not used by iterating phases — see iterations"
         },
         "ended_at": {
           "type": ["string", "null"],
           "format": "date-time",
-          "description": "When the phase was completed/skipped (ISO 8601)"
+          "description": "When the phase was completed/skipped (ISO 8601). Not used by iterating phases — see iterations"
+        },
+        "iterations": {
+          "type": "array",
+          "description": "Iteration history for phases that can cycle (phases 9 and 10). Used instead of top-level started_at/ended_at; the current iteration number is the array length",
+          "items": {
+            "type": "object",
+            "required": ["started_at", "ended_at"],
+            "additionalProperties": false,
+            "properties": {
+              "started_at": {
+                "type": ["string", "null"],
+                "format": "date-time",
+                "description": "When the iteration was started (ISO 8601)"
+              },
+              "ended_at": {
+                "type": ["string", "null"],
+                "format": "date-time",
+                "description": "When the iteration was completed (ISO 8601), null while in progress"
+              }
+            }
+          }
         }
       }
     }

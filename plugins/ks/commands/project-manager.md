@@ -241,9 +241,7 @@ Phases not in the array are `NOT_STARTED`.
 ```yaml
 prs:
   - url: "https://github.com/karmasuite/karmasuite/pull/5643"
-    title: "fix(issue-groups): (KAR-11291) improve error messages"
     branch: "kar-11291-improve-error-messages"
-    target: "main"
     created_at: "2026-07-05T12:00:00Z"
     review_thread:            # null until sent for review in Slack
       channel_id: "C051A3TSM5K"
@@ -252,7 +250,9 @@ prs:
       url: "https://karmasuite.slack.com/archives/C051A3TSM5K/p1772719401182549"
 ```
 
-(`slack.pr_review_threads[]` in older state files is deprecated — new writes go to `prs[]`.)
+The entry shape is defined by the state schema (`scripts/ticket-state.schema.json` / `scripts/project-state.schema.json`): only `url`, `branch`, `created_at`, `review_thread` — no other keys.
+
+**Legacy state files**: older workflows may have `slack.pr_review_threads[]` instead — entries shaped `{channel_id, channel_name, ts, url, pr_url}` (the PR link lives in `pr_url`; branch/created_at were not recorded). Read it as a fallback when resuming old projects, but never write it — migrate the data to `prs[]` on the next state update.
 
 ---
 

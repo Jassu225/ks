@@ -135,9 +135,7 @@ If this PR belongs to a ks workflow (a `{project-directory-path}/state.yaml` is 
 ```yaml
 prs:
   - url: "https://github.com/karmasuite/karmasuite/pull/5643"
-    title: "fix(issue-groups): (KAR-11291) improve error messages"
     branch: "kar-11291-improve-error-messages"
-    target: "main"
     created_at: "2026-07-05T12:00:00Z"
     review_thread: null
 ```

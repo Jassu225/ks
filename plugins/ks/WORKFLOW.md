@@ -82,9 +82,16 @@ Phases can be skipped — they are marked as `SKIPPED` in `state.yaml`.
 
 Each phase tracks its status: `NOT_STARTED` | `IN_PROGRESS` | `COMPLETED` | `SKIPPED` | `REVISITING` | `INVALIDATED`
 
+Timestamps depend on whether the phase iterates:
+
+- **Non-iterating phases (1–8)** — `started_at` / `ended_at` on the phase itself.
+- **Iterating phases (9 Implementation Plan, 10 Implementation)** — an `iterations[]` array of `{started_at, ended_at}` instead; the current iteration number is the array length, and `ended_at: null` means that iteration is still in progress. The phase-level `started_at`/`ended_at` are unused there.
+
+Both shapes are enforced by `scripts/project-state.schema.json` / `scripts/ticket-state.schema.json`, where only `number`, `name`, and `status` are required.
+
 ## PR Tracking
 
-Every PR raised for a workflow is recorded in `state.yaml` under a top-level `prs[]` array **at PR-creation time** (`/ks:create_pr` writes the entry: `url`, `title`, `branch`, `target`, `created_at`, `review_thread: null`). When the PR is sent for review in Slack (`pr-review-request` template), the same entry's `review_thread` is updated with the Slack thread reference (`channel_id`, `channel_name`, `ts`, `url`). The legacy `slack.pr_review_threads[]` key is deprecated — kept only as a read fallback for older state files.
+Every PR raised for a workflow is recorded in `state.yaml` under a top-level `prs[]` array **at PR-creation time** (`/ks:create_pr` writes the entry: `url`, `branch`, `created_at`, `review_thread: null`). When the PR is sent for review in Slack (`pr-review-request` template), the same entry's `review_thread` is updated with the Slack thread reference (`channel_id`, `channel_name`, `ts`, `url`). The entry shape is enforced by the state schemas (`scripts/ticket-state.schema.json`, `scripts/project-state.schema.json`) — no other keys are allowed. The legacy `slack.pr_review_threads[]` key has been removed from the schemas; do not write it. When **reading older state files**, that key may still be present — each entry holds a review thread with `channel_id`, `channel_name`, `ts`, `url`, and the PR link in `pr_url` (PR-level metadata like branch/created_at was not recorded). Treat it as a read-only fallback and migrate to `prs[]` on the next write.
 
 ## Workflow Directory Layout
 
