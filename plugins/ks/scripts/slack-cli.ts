@@ -91,14 +91,101 @@ async function resolveChannel(client: WebClient, nameOrId: string): Promise<stri
   process.exit(1);
 }
 
+/** The subset of `users.list` / `users.info` member fields this CLI reads. */
+type SlackMember = {
+  id?: string;
+  name?: string;
+  real_name?: string;
+  is_admin?: boolean;
+  is_bot?: boolean;
+  is_app_user?: boolean;
+  deleted?: boolean;
+  profile?: { display_name?: string; status_text?: string; status_emoji?: string };
+};
+
+/** The subset of `usergroups.list` fields this CLI reads. */
+type SlackUserGroup = {
+  id?: string;
+  name?: string;
+  handle?: string;
+  description?: string;
+  is_external?: boolean;
+  date_create?: number;
+  date_update?: number;
+  date_delete?: number;
+  created_by?: string;
+  user_count?: number;
+  auto_type?: string | null;
+  prefs?: { channels?: string[]; groups?: string[] };
+};
+
+/**
+ * Fetch workspace members, following the `users.list` cursor.
+ *
+ * `max` caps the number returned; page size is capped at Slack's recommended
+ * 200. Returns the members plus whether Slack had more to give, so callers can
+ * tell "that's everyone" from "that's the first N".
+ */
+async function fetchUsers(
+  client: WebClient,
+  max: number = Infinity
+): Promise<{ members: SlackMember[]; truncated: boolean }> {
+  const members: SlackMember[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const remaining = max === Infinity ? 200 : max - members.length;
+    if (remaining <= 0) {
+      return { members, truncated: true };
+    }
+    const result = await client.users.list({ limit: Math.min(200, remaining), cursor });
+    members.push(...(result.members ?? []));
+    cursor = result.response_metadata?.next_cursor || undefined;
+  } while (cursor);
+
+  return { members, truncated: false };
+}
+
+/** Every workspace member, fetched at most once per invocation. */
+let cachedUsers: SlackMember[] | undefined;
+
+async function allUsers(client: WebClient): Promise<SlackMember[]> {
+  if (!cachedUsers) {
+    cachedUsers = (await fetchUsers(client)).members;
+  }
+  return cachedUsers;
+}
+
+function matchUser(members: SlackMember[], handle: string): SlackMember | undefined {
+  const wanted = handle.toLowerCase();
+  return members.find(
+    m =>
+      m.name?.toLowerCase() === wanted ||
+      m.real_name?.toLowerCase() === wanted ||
+      m.profile?.display_name?.toLowerCase() === wanted
+  );
+}
+
+/** Every user group (disabled ones included), fetched at most once per invocation. */
+let cachedUserGroups: SlackUserGroup[] | undefined;
+
+async function allUserGroups(client: WebClient): Promise<SlackUserGroup[]> {
+  if (!cachedUserGroups) {
+    const result = await client.usergroups.list({ include_disabled: true, include_count: true });
+    cachedUserGroups = (result.usergroups ?? []) as SlackUserGroup[];
+  }
+  return cachedUserGroups;
+}
+
 async function resolveUser(client: WebClient, nameOrId: string): Promise<string> {
-  // If it looks like a Slack user ID (U followed by uppercase alphanumeric)
-  if (/^U[A-Z0-9]+$/.test(nameOrId)) {
+  // Slack user IDs start with U, or W on Enterprise Grid.
+  if (/^[UW][A-Z0-9]+$/.test(nameOrId)) {
     return nameOrId;
   }
 
-  // If it contains @, try email lookup
-  if (nameOrId.includes('@')) {
+  // If it contains @ anywhere but the front, treat it as an email
+  // ('@handle' is a handle, not an address).
+  if (nameOrId.includes('@') && !nameOrId.startsWith('@')) {
     try {
       const result = await client.users.lookupByEmail({ email: nameOrId });
       if (result.user?.id) {
@@ -109,27 +196,98 @@ async function resolveUser(client: WebClient, nameOrId: string): Promise<string>
     }
   }
 
-  // Search by name/display_name
-  const stripped = nameOrId.replace(/^@/, '');
-  let cursor: string | undefined;
-  do {
-    const result = await client.users.list({ limit: 200, cursor });
-
-    const user = result.members?.find(
-      m =>
-        m.name === stripped ||
-        m.real_name?.toLowerCase() === stripped.toLowerCase() ||
-        m.profile?.display_name?.toLowerCase() === stripped.toLowerCase()
-    );
-    if (user?.id) {
-      return user.id;
-    }
-
-    cursor = result.response_metadata?.next_cursor;
-  } while (cursor);
+  // Search by name/real_name/display_name
+  const user = matchUser(await allUsers(client), nameOrId.replace(/^@/, ''));
+  if (user?.id) {
+    return user.id;
+  }
 
   console.error(chalk.red(`User not found: ${nameOrId}`));
   process.exit(1);
+}
+
+async function resolveUserGroup(client: WebClient, nameOrId: string): Promise<SlackUserGroup> {
+  const groups = await allUserGroups(client);
+  const wanted = nameOrId.replace(/^@/, '').toLowerCase();
+
+  const group = /^S[A-Z0-9]+$/.test(nameOrId)
+    ? groups.find(g => g.id === nameOrId)
+    : groups.find(g => g.handle?.toLowerCase() === wanted || g.name?.toLowerCase() === wanted);
+
+  if (!group) {
+    console.error(chalk.red(`User group not found: ${nameOrId}`));
+    process.exit(1);
+  }
+  return group;
+}
+
+/** @here, @channel, @everyone — encoded as bang-mentions rather than user IDs. */
+const SPECIAL_MENTIONS = new Set(['here', 'channel', 'everyone']);
+
+/**
+ * Plain `@handle` text does not notify anyone — Slack only pings on encoded
+ * mentions. Rewrite handles into that syntax: users become `<@U123>`, user
+ * groups become `<!subteam^S123|@handle>`, and @here/@channel/@everyone become
+ * `<!here>` and friends.
+ *
+ * The lookbehind keeps email addresses (`a@b.com`) and already-encoded mentions
+ * (`<@U123>`, `<!subteam^S1|@eng>`) out of the match. Handles that resolve to
+ * nothing are left exactly as typed.
+ */
+async function resolveMentions(client: WebClient, text: string): Promise<string> {
+  const MENTION = /(?<![A-Za-z0-9._%+\-<|^])@([A-Za-z0-9][A-Za-z0-9._-]*)/g;
+
+  const handles = [...text.matchAll(MENTION)].map(m => m[1].replace(/[._-]+$/, ''));
+  if (handles.length === 0) {
+    return text;
+  }
+
+  const encoded = new Map<string, string>();
+  // A token without users:read / usergroups:read must still be able to post —
+  // failed lookups downgrade to literal text instead of aborting the message.
+  let usersUnavailable = false;
+  let groupsUnavailable = false;
+
+  for (const handle of new Set(handles)) {
+    const key = handle.toLowerCase();
+    if (encoded.has(key)) continue;
+
+    if (SPECIAL_MENTIONS.has(key)) {
+      encoded.set(key, `<!${key}>`);
+      continue;
+    }
+
+    if (!usersUnavailable) {
+      try {
+        const user = matchUser(await allUsers(client), handle);
+        if (user?.id) {
+          encoded.set(key, `<@${user.id}>`);
+          continue;
+        }
+      } catch {
+        usersUnavailable = true;
+      }
+    }
+
+    if (groupsUnavailable) continue;
+    try {
+      const group = (await allUserGroups(client)).find(
+        g => g.handle?.toLowerCase() === key || g.name?.toLowerCase() === key
+      );
+      if (group?.id) {
+        encoded.set(key, `<!subteam^${group.id}|@${group.handle ?? handle}>`);
+      }
+    } catch {
+      groupsUnavailable = true;
+    }
+  }
+
+  return text.replace(MENTION, (full, raw: string) => {
+    const handle = raw.replace(/[._-]+$/, '');
+    const replacement = encoded.get(handle.toLowerCase());
+    // Re-attach trailing punctuation that was trimmed off the handle.
+    return replacement ? replacement + raw.slice(handle.length) : full;
+  });
 }
 
 // ============================================================================
@@ -472,17 +630,19 @@ async function setChannelPurpose(channel: string, purpose: string, options: { js
 // Message Commands
 // ============================================================================
 
-async function sendMessage(channel: string, text: string, options: { threadTs?: string; blocks?: string; file?: string[]; json?: boolean }): Promise<void> {
+async function sendMessage(channel: string, text: string, options: { threadTs?: string; blocks?: string; file?: string[]; resolveMentions?: boolean; json?: boolean }): Promise<void> {
   const client = getClient();
 
   try {
     const channelId = await resolveChannel(client, channel);
     const files = options.file ?? [];
+    // --no-resolve-mentions sets this false; --blocks content is never rewritten.
+    const body = options.resolveMentions === false ? text : await resolveMentions(client, text);
 
     if (files.length > 0) {
       const result = await client.filesUploadV2({
         channel_id: channelId,
-        initial_comment: text,
+        initial_comment: body,
         thread_ts: options.threadTs,
         file_uploads: files.map((p) => ({
           file: createReadStream(p),
@@ -510,7 +670,7 @@ async function sendMessage(channel: string, text: string, options: { threadTs?: 
 
     const params: Record<string, unknown> = {
       channel: channelId,
-      text,
+      text: body,
     };
 
     if (options.threadTs) {
@@ -553,12 +713,13 @@ async function sendMessage(channel: string, text: string, options: { threadTs?: 
   }
 }
 
-async function updateMessage(channel: string, ts: string, text: string, options: { json?: boolean }): Promise<void> {
+async function updateMessage(channel: string, ts: string, text: string, options: { resolveMentions?: boolean; json?: boolean }): Promise<void> {
   const client = getClient();
 
   try {
     const channelId = await resolveChannel(client, channel);
-    const result = await client.chat.update({ channel: channelId, ts, text });
+    const body = options.resolveMentions === false ? text : await resolveMentions(client, text);
+    const result = await client.chat.update({ channel: channelId, ts, text: body });
 
     const data = {
       ok: result.ok,
@@ -608,14 +769,15 @@ async function deleteMessage(channel: string, ts: string, options: { json?: bool
   }
 }
 
-async function replyToMessage(channel: string, ts: string, text: string, options: { json?: boolean }): Promise<void> {
+async function replyToMessage(channel: string, ts: string, text: string, options: { resolveMentions?: boolean; json?: boolean }): Promise<void> {
   const client = getClient();
 
   try {
     const channelId = await resolveChannel(client, channel);
+    const body = options.resolveMentions === false ? text : await resolveMentions(client, text);
     const result = await client.chat.postMessage({
       channel: channelId,
-      text,
+      text: body,
       thread_ts: ts,
     });
 
@@ -653,8 +815,9 @@ async function listUsers(options: { limit?: number; json?: boolean }): Promise<v
   const client = getClient();
 
   try {
-    const result = await client.users.list({ limit: options.limit || 100 });
-    const members = result.members || [];
+    // Paginated: a single users.list page caps out well below most workspaces,
+    // so an unpaginated call silently drops members and misreports the total.
+    const { members, truncated } = await fetchUsers(client, options.limit || 100);
 
     const data = members.map(m => ({
       id: m.id,
@@ -662,6 +825,7 @@ async function listUsers(options: { limit?: number; json?: boolean }): Promise<v
       display_name: m.profile?.display_name || '',
       is_admin: m.is_admin || false,
       is_bot: m.is_bot || false,
+      is_app_user: m.is_app_user || false,
       deleted: m.deleted || false,
       status_text: m.profile?.status_text || '',
       status_emoji: m.profile?.status_emoji || '',
@@ -674,12 +838,16 @@ async function listUsers(options: { limit?: number; json?: boolean }): Promise<v
       data.forEach(u => {
         const activeIcon = u.deleted ? chalk.gray('○') : chalk.green('●');
         const adminBadge = u.is_admin ? chalk.yellow(' [admin]') : '';
-        const botBadge = u.is_bot ? chalk.blue(' [bot]') : '';
+        const botBadge = u.is_bot ? chalk.blue(' [bot]') : u.is_app_user ? chalk.blue(' [app]') : '';
         const status = u.status_text ? chalk.gray(` ${u.status_emoji} ${u.status_text}`) : '';
         const displayName = u.display_name ? chalk.gray(` (@${u.display_name})`) : '';
         console.log(`${activeIcon} ${chalk.cyan(u.real_name || u.id)}${displayName} ${chalk.gray(u.id)}${adminBadge}${botBadge}${status}`);
       });
-      console.log(`\n${chalk.gray(`Total: ${data.length} users`)}`);
+      const total = truncated ? `First ${data.length} users` : `Total: ${data.length} users`;
+      console.log(`\n${chalk.gray(total)}`);
+      if (truncated) {
+        console.log(chalk.gray('More available — raise --limit to see them.'));
+      }
     }
   } catch (error) {
     const err = error as Error & { data?: { error?: string; response_metadata?: { messages?: string[] } } };
@@ -720,6 +888,7 @@ async function getUserInfo(user: string, options: { json?: boolean }): Promise<v
       tz_label: u.tz_label,
       is_admin: u.is_admin || false,
       is_bot: u.is_bot || false,
+      is_app_user: u.is_app_user || false,
       deleted: u.deleted || false,
       updated: u.updated,
     };
@@ -823,6 +992,163 @@ async function getMe(options: { json?: boolean }): Promise<void> {
   } catch (error) {
     const err = error as Error & { data?: { error?: string; response_metadata?: { messages?: string[] } } };
     console.error(chalk.red(`Failed to get auth info: ${err.data?.error || err.message}`));
+    if (err.data?.response_metadata?.messages) {
+      err.data.response_metadata.messages.forEach((msg: string) => {
+        console.error(chalk.red(`  ${msg}`));
+      });
+    }
+    process.exit(1);
+  }
+}
+
+// ============================================================================
+// User Group Commands (read-only — requires usergroups:read)
+// ============================================================================
+
+/** Slack marks a group disabled by stamping date_delete rather than removing it. */
+function isDisabledGroup(g: SlackUserGroup): boolean {
+  return Boolean(g.date_delete);
+}
+
+async function listUserGroups(options: { includeDisabled?: boolean; json?: boolean }): Promise<void> {
+  const client = getClient();
+
+  try {
+    const groups = (await allUserGroups(client)).filter(
+      g => options.includeDisabled || !isDisabledGroup(g)
+    );
+
+    const data = groups.map(g => ({
+      id: g.id,
+      handle: g.handle || '',
+      name: g.name || '',
+      description: g.description || '',
+      user_count: g.user_count ?? null,
+      auto_type: g.auto_type || null,
+      disabled: isDisabledGroup(g),
+      default_channels: g.prefs?.channels || [],
+    }));
+
+    if (options.json) {
+      output(data, true);
+    } else {
+      console.log(chalk.bold('\nUser groups:\n'));
+      data.forEach(g => {
+        const activeIcon = g.disabled ? chalk.gray('○') : chalk.green('●');
+        const members = g.disabled
+          ? chalk.gray(' [disabled]')
+          : chalk.gray(` ${g.user_count ?? '?'} member${g.user_count === 1 ? '' : 's'}`);
+        const auto = g.auto_type ? chalk.yellow(` [auto: ${g.auto_type}]`) : '';
+        console.log(`${activeIcon} ${chalk.cyan(`@${g.handle}`)} ${g.name} ${chalk.gray(g.id)}${members}${auto}`);
+      });
+      console.log(`\n${chalk.gray(`Total: ${data.length} user groups`)}`);
+    }
+  } catch (error) {
+    const err = error as Error & { data?: { error?: string; response_metadata?: { messages?: string[] } } };
+    console.error(chalk.red(`Failed to list user groups: ${err.data?.error || err.message}`));
+    if (err.data?.response_metadata?.messages) {
+      err.data.response_metadata.messages.forEach((msg: string) => {
+        console.error(chalk.red(`  ${msg}`));
+      });
+    }
+    process.exit(1);
+  }
+}
+
+async function getUserGroupInfo(group: string, options: { json?: boolean }): Promise<void> {
+  const client = getClient();
+
+  try {
+    const g = await resolveUserGroup(client, group);
+    const creator = g.created_by
+      ? (await allUsers(client)).find(m => m.id === g.created_by)
+      : undefined;
+
+    const data = {
+      id: g.id,
+      handle: g.handle || '',
+      name: g.name || '',
+      description: g.description || '',
+      user_count: g.user_count ?? null,
+      auto_type: g.auto_type || null,
+      is_external: g.is_external || false,
+      disabled: isDisabledGroup(g),
+      created_by: g.created_by || null,
+      created_by_name: creator?.real_name || creator?.name || null,
+      created_at: g.date_create || null,
+      updated_at: g.date_update || null,
+      default_channels: g.prefs?.channels || [],
+    };
+
+    if (options.json) {
+      output(data, true);
+    } else {
+      console.log(chalk.bold(`\n@${data.handle} — ${data.name}\n`));
+      console.log(`ID: ${data.id}`);
+      if (data.description) console.log(`Description: ${data.description}`);
+      console.log(`Members: ${data.user_count ?? 'N/A'}`);
+      console.log(`Disabled: ${data.disabled ? 'Yes' : 'No'}`);
+      if (data.auto_type) console.log(`Auto group: ${data.auto_type}`);
+      if (data.is_external) console.log('Externally managed: Yes (edits happen in your IdP)');
+      if (data.created_by) console.log(`Created by: ${data.created_by_name || data.created_by}`);
+      if (data.created_at) console.log(`Created: ${formatTimestamp(String(data.created_at))}`);
+      if (data.default_channels.length > 0) {
+        console.log(`Default channels: ${data.default_channels.join(', ')}`);
+      }
+      console.log(chalk.gray(`\nMembers: slack usergroup users @${data.handle}`));
+    }
+  } catch (error) {
+    const err = error as Error & { data?: { error?: string; response_metadata?: { messages?: string[] } } };
+    console.error(chalk.red(`Failed to get user group info: ${err.data?.error || err.message}`));
+    if (err.data?.response_metadata?.messages) {
+      err.data.response_metadata.messages.forEach((msg: string) => {
+        console.error(chalk.red(`  ${msg}`));
+      });
+    }
+    process.exit(1);
+  }
+}
+
+async function listUserGroupUsers(group: string, options: { json?: boolean }): Promise<void> {
+  const client = getClient();
+
+  try {
+    const g = await resolveUserGroup(client, group);
+    // include_disabled keeps deactivated accounts in the list, so the count
+    // matches what Slack shows for the group.
+    const result = await client.usergroups.users.list({
+      usergroup: g.id as string,
+      include_disabled: true,
+    });
+
+    const members = await allUsers(client);
+    const data = (result.users || []).map(id => {
+      const m = members.find(u => u.id === id);
+      return {
+        id,
+        real_name: m?.real_name || '',
+        display_name: m?.profile?.display_name || '',
+        is_bot: m?.is_bot || false,
+        is_app_user: m?.is_app_user || false,
+        deleted: m?.deleted || false,
+      };
+    });
+
+    if (options.json) {
+      output({ usergroup: { id: g.id, handle: g.handle, name: g.name }, users: data }, true);
+    } else {
+      console.log(chalk.bold(`\n@${g.handle} — ${g.name}\n`));
+      data.forEach(u => {
+        const activeIcon = u.deleted ? chalk.gray('○') : chalk.green('●');
+        const botBadge = u.is_bot ? chalk.blue(' [bot]') : u.is_app_user ? chalk.blue(' [app]') : '';
+        const displayName = u.display_name ? chalk.gray(` (@${u.display_name})`) : '';
+        console.log(`${activeIcon} ${chalk.cyan(u.real_name || u.id)}${displayName} ${chalk.gray(u.id)}${botBadge}`);
+      });
+      console.log(`\n${chalk.gray(`Total: ${data.length} members`)}`);
+    }
+  } catch (error) {
+    const err = error as Error & { data?: { error?: string; response_metadata?: { messages?: string[] } } };
+    console.error(chalk.red(`Failed to list user group members: ${err.data?.error || err.message}`));
     if (err.data?.response_metadata?.messages) {
       err.data.response_metadata.messages.forEach((msg: string) => {
         console.error(chalk.red(`  ${msg}`));
@@ -1587,12 +1913,14 @@ messageCmd
   .option('--thread-ts <ts>', 'Thread timestamp to reply to')
   .option('--blocks <json>', 'Block Kit blocks as JSON string')
   .option('-f, --file <path>', 'Attach a file (repeatable for multiple attachments)', (v: string, acc: string[]) => acc.concat([v]), [] as string[])
+  .option('--no-resolve-mentions', 'Leave @handles as literal text (no notification)')
   .option('-j, --json', 'Output as JSON')
   .action(sendMessage);
 
 messageCmd
   .command('update <channel> <ts> <text>')
   .description('Update a message')
+  .option('--no-resolve-mentions', 'Leave @handles as literal text (no notification)')
   .option('-j, --json', 'Output as JSON')
   .action(updateMessage);
 
@@ -1605,6 +1933,7 @@ messageCmd
 messageCmd
   .command('reply <channel> <ts> <text>')
   .description('Reply to a message in a thread')
+  .option('--no-resolve-mentions', 'Leave @handles as literal text (no notification)')
   .option('-j, --json', 'Output as JSON')
   .action(replyToMessage);
 
@@ -1635,6 +1964,28 @@ userCmd
   .description('Get current authenticated user')
   .option('-j, --json', 'Output as JSON')
   .action(getMe);
+
+// User group commands (read-only)
+const usergroupCmd = program.command('usergroup').description('User group operations (read-only)');
+
+usergroupCmd
+  .command('list')
+  .description('List workspace user groups')
+  .option('--include-disabled', 'Include disabled groups')
+  .option('-j, --json', 'Output as JSON')
+  .action(listUserGroups);
+
+usergroupCmd
+  .command('info <group>')
+  .description('Get user group info (handle, name, or ID)')
+  .option('-j, --json', 'Output as JSON')
+  .action(getUserGroupInfo);
+
+usergroupCmd
+  .command('users <group>')
+  .description('List members of a user group')
+  .option('-j, --json', 'Output as JSON')
+  .action(listUserGroupUsers);
 
 // File commands
 const fileCmd = program.command('file').description('File operations');
