@@ -19,5 +19,8 @@ export function loadEnv(): void {
       path.join(SCRIPTS_DIR, '.env'),
       path.join(PLUGIN_DIR, '.config'),
     ],
+    // Without this, dotenv v17 prints an "injecting env" banner to STDOUT,
+    // which corrupts every `--json` output when piped into jq.
+    quiet: true,
   });
 }
