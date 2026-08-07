@@ -1,5 +1,5 @@
 ---
-description: Interact with Slack — read channels, send messages, manage files, search, reactions, pins, status, and more. Triggers - slack, Slack message, send message, channel history, slack status.
+description: Interact with Slack — read channels, send messages (with @mention encoding), inspect users and user groups, manage files, search, reactions, pins, status, and more. Triggers - slack, Slack message, send message, channel history, slack status, slack user group.
 argument-hint: <action> [args...]
 allowed-tools: Bash(slack:*), Read
 ---
@@ -58,12 +58,22 @@ slack message reply general 1234567890.123456 "Thread reply"
 # Update / delete a message
 slack message update general 1234567890.123456 "Updated text"
 slack message delete general 1234567890.123456
+
+# @handles in the text are encoded so they actually notify:
+#   @username  -> <@U01ABCDEF>            @engineers -> <!subteam^S06UD9DDCBV|@engineers>
+#   @here / @channel / @everyone -> <!here> / <!channel> / <!everyone>
+slack message send general "@engineers PR is ready, cc @username"
+
+# Keep handles as literal text (nobody gets pinged)
+slack message send general "mention @username in your reply" --no-resolve-mentions
 ```
+
+Mention encoding skips email addresses and mentions you already encoded yourself, and leaves unknown handles untouched. It does **not** touch `--blocks` JSON — encode mentions inline there.
 
 ### Users
 
 ```bash
-# List workspace users
+# List workspace users (paginated; --limit caps the result, default 100)
 slack user list --limit 50
 
 # Get user info (by name, email, or ID)
@@ -77,6 +87,36 @@ slack user presence @username
 # Current authenticated user
 slack user me
 ```
+
+`user list` returns every workspace **member**, which includes each installed app's bot user (badged `[bot]`) and `USLACKBOT` — on a typical workspace that is a large share of the rows. Filter with `--json` + `jq`:
+
+```bash
+# Humans only
+slack user list --limit 1000 --json | jq '[.[] | select(.is_bot == false and .deleted == false and .id != "USLACKBOT")]'
+
+# Bots and app users only
+slack user list --limit 1000 --json | jq '[.[] | select(.is_bot or .is_app_user)]'
+```
+
+Apps themselves are not listed — you get an app's bot user (`U…`), never the app entity (`A…`), and a message's `bot_id` (`B…`) cannot be resolved to an app through this CLI.
+
+### User groups (read-only)
+
+```bash
+# List groups (disabled ones hidden unless asked for)
+slack usergroup list
+slack usergroup list --include-disabled
+
+# Group details — by handle, name, or ID
+slack usergroup info @engineers
+slack usergroup info "Engineering Team"
+slack usergroup info S06UD9DDCBV
+
+# Who is in the group (deactivated members shown as ○)
+slack usergroup users @engineers
+```
+
+Read-only by design: there is no create/update/enable/disable. Change membership in Slack itself. Requires `usergroups:read`; groups are a paid-plan feature, and IdP-synced groups report `is_external`.
 
 ### Files
 
@@ -181,10 +221,12 @@ When the user asks to interact with Slack:
 
 ## Notes
 
-- Channel and user arguments accept names or IDs interchangeably
+- Channel and user arguments accept names or IDs interchangeably; user group arguments accept handle, name, or `S…` ID
+- User IDs start with `U`, or `W` on Enterprise Grid — both resolve
 - Message timestamps (`ts`) are Slack's unique message identifiers (e.g., `1234567890.123456`)
 - Emoji names work with or without colons (`:thumbsup:` or `thumbsup`)
 - Search and status commands require a user token (`xoxp-`), not a bot token
 - Use `--json` when you need to parse output programmatically or extract IDs/timestamps
 - `--json` responses can be long (especially `message send` with attachments — includes file metadata and OAuth scopes). The `"ok"` / `"ts"` / `"channel"` fields are at the **top** of the response, so `head` works but `tail` will clip to noisy auth/scope blocks that can look like errors. Prefer redirecting to a temp file and inspecting it, or piping to `jq`. Re-running a `send` / `reply` / `update` / `delete` to "see more output" posts again — verify via `channel history` instead.
 - Token is read from `SLACK_TOKEN` in `scripts/.env`
+- `--json` output is clean stdout — safe to pipe straight into `jq`

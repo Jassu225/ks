@@ -34,7 +34,11 @@ After creating a PR via `/ks:create_pr`, run `/code-review` for automated code r
 
 ## Slack
 
-Always use the `/ks:slack` command for any Slack-related operations. The `slack` CLI is available in `$PATH`. When a message should mention or address someone (e.g., "ask John…", "tell Sarah…"), resolve the person's name to a Slack user ID first using `slack user info <name> --json`. If the lookup fails, fall back to `slack user list --json` and find the closest match. Use `<@USER_ID>` in the message text for proper mentions. Always show the user the full message and target channel, and get explicit confirmation before sending.
+Always use the `/ks:slack` command for any Slack-related operations. The `slack` CLI is available in `$PATH`.
+
+When a message should mention or address someone (e.g., "ask John…", "tell Sarah…") or a team ("ask the engineers…"), write the plain handle — `@john`, `@engineers` — in the message text. `slack message send` / `reply` / `update` encode handles into real mentions (`<@U…>` for users, `<!subteam^S…|@handle>` for user groups, `<!here>`/`<!channel>`/`<!everyone>` for the broadcast ones), so no manual ID lookup is needed. Confirm the handle exists first with `slack user info <name>` or `slack usergroup info <name>` — an unresolvable handle is silently left as literal text and notifies nobody. Handles inside `--blocks` JSON are NOT encoded; write `<@U…>` there yourself.
+
+Always show the user the full message and target channel, and get explicit confirmation before sending.
 
 ## Semantic Code Analysis (Serena)
 
