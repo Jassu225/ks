@@ -19,7 +19,7 @@ A monorepo for Claude Code plugins:
 │       ├── commands/                  # Slash commands (/ks:command-name)
 │       ├── agents/                    # Specialized subagents
 │       ├── hooks/hooks.json           # Quality hooks (format, lint, typecheck)
-│       ├── skills/                    # Coding standards (empty, .gitkeep)
+│       ├── skills/                    # Skills (add-page-ai-chat)
 │       ├── stash/skills/              # Coding standards reference (stashed)
 │       ├── scripts/                   # CLI tools and scripts
 │       ├── rules/ks-rules.md         # Plugin-level rules
@@ -104,6 +104,16 @@ Research agents are **documentarians** — they describe what exists in the code
 | `ks:code-simplifier` | Refine code for clarity (has edit access) |
 | `ks:web-search-researcher` | External research via web search |
 
+The research agents also hold `SendMessage`, so a follow-up question can be sent to a still-running agent instead of re-spawning it and losing its context.
+
+## Skills
+
+Skills live in `plugins/ks/skills/<name>/SKILL.md` and load automatically when their `description` matches the task — no manifest entry, no explicit invocation required.
+
+| Skill | Purpose |
+|-------|---------|
+| `add-page-ai-chat` | Wire a data-modifying Karmie AI chat onto a KarmaSuite page — new `ReportAgentKind` + handler, tRPC→`*Core` extraction, AI tools, FAB/drawer wiring, and (for document-interpreting agents) an uploaded Anthropic Agent Skill |
+
 ## Two Workflow Types
 
 **Project Workflow** (all 10 phases): Full feature development from concept to implementation. Started via `ks-start-project.ts` with a `project` key in state.yaml.
@@ -144,7 +154,7 @@ Provides LSP-powered semantic tools for symbol navigation, reference tracing, an
 - **Planning**: `/ks:create_plan` runs in PLAN MODE — no task creation, no code changes. Use `ExitPlanMode` when approved.
 - **Phase 9 boundary**: Planning only. Implementation happens in Phase 10.
 - **Research agents are read-only**: They document what exists. Findings must be verified in actual code.
-- **Hooks run automatically**: Format, lint, and typecheck run on every Stop and SubagentStop event.
+- **Hooks run automatically**: Format, lint, and typecheck run on every Stop and SubagentStop event. A repo may exclude already-broken files via `.quality-ignore` in its root (see `plugins/ks/scripts/README.md`) — never add a file you broke yourself.
 
 ## Environment Setup
 
@@ -157,6 +167,7 @@ LINEAR_API_KEY=lin_api_your_key_here
 
 - **Commands**: Add `.md` files to `plugins/ks/commands/` → available as `/ks:filename`
 - **Agents**: Add `.md` files to `plugins/ks/agents/` → reference with `subagent_type: "ks:agent-name"`
+- **Skills**: Add `plugins/ks/skills/<name>/SKILL.md` (`name` + `description` frontmatter, optional `references/`) → auto-discovered, loaded when the description matches the task
 - **Hooks**: Edit `plugins/ks/hooks/hooks.json` for event-driven automation
 
 ## Adding a New Plugin
