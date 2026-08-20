@@ -22,11 +22,47 @@ echo "=== Building CLI tools ==="
 npm run build
 
 echo ""
+echo "=== Checking claude-real-video (crv) ==="
+# Optional dependency: `grain recording watch` exports a Grain call and hands the
+# folder to crv, which turns it into keyframes + transcript an agent can read.
+if command -v crv >/dev/null 2>&1; then
+  echo "crv found: $(command -v crv)"
+elif [ ! -t 0 ]; then
+  echo "crv not installed (non-interactive run) — install later with: pipx install \"claude-real-video[whisper]\""
+elif command -v pipx >/dev/null 2>&1 || command -v pip3 >/dev/null 2>&1; then
+  INSTALL_CRV=""
+  read -rp "Install claude-real-video (enables 'grain recording watch')? [y/N]: " INSTALL_CRV || true
+  if [[ "$INSTALL_CRV" =~ ^[Yy]$ ]]; then
+    if command -v pipx >/dev/null 2>&1; then
+      pipx install "claude-real-video[whisper]" || echo "Warning: pipx install failed — install crv manually"
+    else
+      pip3 install --user "claude-real-video[whisper]" || echo "Warning: pip3 install failed — install crv manually"
+    fi
+  else
+    echo "Skipped. Install later with: pipx install \"claude-real-video[whisper]\""
+  fi
+else
+  echo "No pipx or pip3 found — skipping crv. Install later with: pipx install \"claude-real-video[whisper]\""
+fi
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "Warning: ffmpeg not found. crv needs ffmpeg/ffprobe — install with: brew install ffmpeg"
+fi
+
+echo ""
 echo "=== Configuring shell ==="
 ZSHRC="$HOME/.zshrc"
 
 # Set DEV and KS_PLUGIN_DIR in scripts/.env
 ENV_FILE="$SCRIPTS_DIR/.env"
+
+# Seed a fresh .env from .env.example so every CLI's token slot is visible
+# (LINEAR_API_KEY, SLACK_TOKEN, GRAIN_API_TOKEN). Never overwrites an existing one.
+if [ ! -f "$ENV_FILE" ] && [ -f "$SCRIPTS_DIR/.env.example" ]; then
+  cp "$SCRIPTS_DIR/.env.example" "$ENV_FILE"
+  echo "Created $ENV_FILE from .env.example — fill in the tokens you need"
+fi
+
 if [ "$DEV_MODE" = true ]; then
   if [ -f "$ENV_FILE" ]; then
     if grep -q "^DEV=" "$ENV_FILE" 2>/dev/null; then
@@ -106,3 +142,14 @@ echo "  2. Get a Slack bot token from:"
 echo "     https://api.slack.com/apps/A0AFPCG7PQD/oauth"
 echo "     Then add it to $SCRIPTS_DIR/.env:"
 echo "     SLACK_TOKEN=xoxb-your-token-here"
+echo ""
+echo "  3. Get a Grain API token from:"
+echo "     https://grain.com/app/settings/integrations?tab=api"
+echo "     Personal token = your own recordings; Workspace token = all workspace data"
+echo "     Then add it to $SCRIPTS_DIR/.env:"
+echo "     GRAIN_API_TOKEN=your_grain_token_here"
+echo "     Verify with: grain auth check"
+echo ""
+echo "  4. Optional: 'grain recording watch <id>' needs claude-real-video + ffmpeg:"
+echo "       pipx install \"claude-real-video[whisper]\" && brew install ffmpeg"
+echo "     It downloads a call, then turns it into keyframes + transcript to read."

@@ -7,12 +7,14 @@
     "linear": "npx tsx linear-cli.ts",
     "start-project": "npx tsx ks-start-project.ts",
     "slack": "npx tsx slack-cli.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "grain": "npx tsx grain-cli.ts"
   },
   "bin": {
     "linear-cli": "./dist/linear-cli.js",
     "ks-start-project": "./dist/ks-start-project.js",
-    "slack-cli": "./dist/slack-cli.js"
+    "slack-cli": "./dist/slack-cli.js",
+    "grain-cli": "./dist/grain-cli.js"
   },
   "dependencies": {
     "@linear/sdk": "^29.0.0",

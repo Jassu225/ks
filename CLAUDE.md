@@ -19,7 +19,7 @@ A monorepo for Claude Code plugins:
 │       ├── commands/                  # Slash commands (/ks:command-name)
 │       ├── agents/                    # Specialized subagents
 │       ├── hooks/hooks.json           # Quality hooks (format, lint, typecheck)
-│       ├── skills/                    # Skills (add-page-ai-chat, create-report-agent)
+│       ├── skills/                    # Skills (add-page-ai-chat, create-report-agent, grain-cli)
 │       ├── stash/skills/              # Coding standards reference (stashed)
 │       ├── scripts/                   # CLI tools and scripts
 │       ├── rules/ks-rules.md         # Plugin-level rules
@@ -66,6 +66,10 @@ cd plugins/ks/scripts && npm run build
 npx tsx plugins/ks/scripts/linear-cli.ts --help
 npx tsx plugins/ks/scripts/linear-cli.ts issue get KAR-123
 
+# Run Grain CLI directly (meeting recordings, transcripts, webhooks)
+npx tsx plugins/ks/scripts/grain-cli.ts --help
+npx tsx plugins/ks/scripts/grain-cli.ts recording list --after 2026-08-01 -i ai_summary
+
 # Initialize a project workflow from Linear
 npx tsx plugins/ks/scripts/ks-start-project.ts <linear-project-url> [output-path]
 
@@ -103,8 +107,9 @@ Research agents are **documentarians** — they describe what exists in the code
 | `ks:codebase-pattern-finder` | Show existing patterns and usage examples (read-only) |
 | `ks:code-simplifier` | Refine code for clarity (has edit access) |
 | `ks:web-search-researcher` | External research via web search |
+| `ks:grain-recording-watcher` | Watch a Grain meeting recording and report what was said **and shown** — locates the call, narrows to the relevant window from the transcript, runs `grain recording watch`, reads the keyframes, and leaves a `findings-*.md` report next to the analysis. Runs headless: clarify which call/window first, and it pauses with an `AWAITING APPROVAL` cost estimate before downloading — relay it and reply with `SendMessage` |
 
-The research agents also hold `SendMessage`, so a follow-up question can be sent to a still-running agent instead of re-spawning it and losing its context.
+The research agents also hold `SendMessage`, so a follow-up question can be sent to a still-running agent instead of re-spawning it and losing its context. `grain-recording-watcher` depends on this: it pauses for watch approval and resumes from the message you send back.
 
 ## Skills
 
@@ -114,6 +119,7 @@ Skills live in `plugins/ks/skills/<name>/SKILL.md` and load automatically when t
 |-------|---------|
 | `add-page-ai-chat` | Wire a data-modifying Karmie AI chat onto a KarmaSuite page — new `ReportAgentKind` + handler, tRPC→`*Core` extraction, AI tools, FAB/drawer wiring, and (for document-interpreting agents) an uploaded Anthropic Agent Skill |
 | `create-report-agent` | Build and iterate a KarmaSuite report agent that reproduces a customer's grant report — intake questions, probes, ground-truth reconstruction, ruleset authoring, the run→score→fix loop, replay validation, prod cutover. Configuration only, no repo changes |
+| `grain-cli` | Operate the `grain` CLI (`plugins/ks/scripts/grain-cli.ts`) for anything Grain — list/search calls, transcripts, AI summaries and action items, `recording export` to archive media+subtitles, `recording watch` to see what was on screen via claude-real-video, tag/share, webhooks. Loads on any mention of Grain, a call/meeting recording, a meeting transcript or summary, or a grain.com link. `references/cli-reference.md` is the per-command flag/output/cost reference |
 
 ## Two Workflow Types
 
@@ -159,9 +165,11 @@ Provides LSP-powered semantic tools for symbol navigation, reference tracing, an
 
 ## Environment Setup
 
-The Linear CLI requires a `LINEAR_API_KEY` in `plugins/ks/scripts/.env`:
+The CLIs read `plugins/ks/scripts/.env` (see `.env.example` for the annotated copy):
 ```
-LINEAR_API_KEY=lin_api_your_key_here
+LINEAR_API_KEY=lin_api_your_key_here    # Linear CLI
+SLACK_TOKEN=xoxp-your-token-here        # Slack CLI
+GRAIN_API_TOKEN=your_grain_token_here   # Grain CLI
 ```
 
 ## Adding New Components
