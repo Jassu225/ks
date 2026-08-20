@@ -19,7 +19,7 @@ A monorepo for Claude Code plugins:
 │       ├── commands/                  # Slash commands (/ks:command-name)
 │       ├── agents/                    # Specialized subagents
 │       ├── hooks/hooks.json           # Quality hooks (format, lint, typecheck)
-│       ├── skills/                    # Skills (add-page-ai-chat)
+│       ├── skills/                    # Skills (add-page-ai-chat, create-report-agent)
 │       ├── stash/skills/              # Coding standards reference (stashed)
 │       ├── scripts/                   # CLI tools and scripts
 │       ├── rules/ks-rules.md         # Plugin-level rules
@@ -113,6 +113,7 @@ Skills live in `plugins/ks/skills/<name>/SKILL.md` and load automatically when t
 | Skill | Purpose |
 |-------|---------|
 | `add-page-ai-chat` | Wire a data-modifying Karmie AI chat onto a KarmaSuite page — new `ReportAgentKind` + handler, tRPC→`*Core` extraction, AI tools, FAB/drawer wiring, and (for document-interpreting agents) an uploaded Anthropic Agent Skill |
+| `create-report-agent` | Build and iterate a KarmaSuite report agent that reproduces a customer's grant report — intake questions, probes, ground-truth reconstruction, ruleset authoring, the run→score→fix loop, replay validation, prod cutover. Configuration only, no repo changes |
 
 ## Two Workflow Types
 

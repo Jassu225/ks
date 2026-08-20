@@ -56,6 +56,7 @@ Add a directory to `skills/` containing a `SKILL.md` with `name` + `description`
 
 Current skills:
 - `add-page-ai-chat` — wire a data-modifying Karmie AI chat onto a KarmaSuite page (new `ReportAgentKind`, handler, `*Core` extraction, AI tools, FAB/drawer wiring, optional domain Agent Skill).
+- `create-report-agent` — build and iterate a report agent that reproduces a customer's grant report (intake questions, probes, ruleset authoring, run→score→fix loop, replay validation, prod cutover). Pure configuration — a `report_agent` row's `agentContext`, no repo changes.
 
 ### Hooks
 Edit `hooks/hooks.json` to add event handlers.
