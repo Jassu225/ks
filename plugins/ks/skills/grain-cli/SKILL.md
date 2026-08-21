@@ -316,6 +316,8 @@ Note that you may not be able to `ps` to check for a competing run — it is blo
 
 If the target folder is not writable (a subagent's sandbox often denies `~/Documents`), write to `$TMPDIR/grain-findings/`, name both paths, and say it needs copying — don't silently skip the report.
 
+`--full-res` names its output by **absolute source timecode** (`t00-38-08.jpg`), so citations need no offset arithmetic and cannot silently drift — the failure that produced a report citing 00:38:08 for a frame that was at 30:32. `frames-hires/frame-map.tsv` resolves crv's clip-relative `frame_NNN.jpg` to the same moments. Navigate with crv's names; quote the timecoded ones.
+
 **Check your citations before you send.** Every frame you cite must exist at the path you give, and its timestamp plus any window offset must equal the source time you quote. A report has already shipped with correct findings and unfollowable citations — wrong offset, missing directories — which is the failure mode that destroys trust in all of it.
 
 After answering a question from a recording, write the findings next to the analysis that produced them: `<analysis dir>/findings-<slug>.md` — `crv-out/` for a full watch, `crv-out_<from>_<to>/` for a window. Front matter with the recording id, the window (and which time base), frame counts, and the question; body split into what was **said**, what was **shown**, decisions, and what could not be determined. The next person asking about that call — including you next week — gets the answer without re-watching. The `ks:grain-recording-watcher` agent does this by default; do it too when driving the CLI directly.

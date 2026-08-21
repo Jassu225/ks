@@ -1050,7 +1050,8 @@ function clipMedia(mediaFile: string, target: string, from: number, to: number |
 function extractFullResFrames(
   mediaFile: string,
   analysisDir: string,
-  force: boolean
+  force: boolean,
+  offsetSec = 0
 ): { dir: string; extracted: number; skipped: number } | undefined {
   const framesJson = join(analysisDir, 'frames.json');
   if (!existsSync(framesJson)) {
@@ -1067,13 +1068,25 @@ function extractFullResFrames(
   let extracted = 0;
   let skipped = 0;
 
+  // Name by ABSOLUTE source timecode, not by crv's clip-relative frame_NNN.
+  // crv numbers frames per clip, so `frame_051.jpg` means a different moment in
+  // every window — and a report that cites it has to carry the window offset in
+  // its head. Getting that offset wrong is exactly how a real report ended up
+  // citing 00:38:08 for a frame that was at 30:32. A filename of t00-38-08.jpg
+  // cannot be misaligned: the frame says what it is.
+  const map: string[] = ['crv_frame\tsource_timecode\tsource_sec\thires_file'];
+
   for (const frame of data.frames || []) {
-    const target = join(dir, frame.file);
+    const sourceSec = frame.timestamp_sec + offsetSec;
+    const name = `t${timecodeSlug(sourceSec)}.jpg`;
+    map.push(`${frame.file}\t${timecodeSlug(sourceSec).replace(/-/g, ':')}\t${sourceSec.toFixed(3)}\t${name}`);
+
+    const target = join(dir, name);
     if (existsSync(target) && !force) {
       skipped++;
       continue;
     }
-    // -ss before -i seeks without decoding the whole file; one frame out.
+    // Seek is clip-relative (the media here may be a clip); the NAME is absolute.
     const run = spawnSync(
       'ffmpeg',
       ['-loglevel', 'error', '-y', '-ss', String(frame.timestamp_sec), '-i', mediaFile,
@@ -1085,11 +1098,14 @@ function extractFullResFrames(
       process.exit(1);
     }
     if (run.status !== 0) {
-      console.error(chalk.yellow(`ffmpeg could not extract ${frame.file} @${frame.timestamp_sec}s — continuing`));
+      console.error(chalk.yellow(`ffmpeg could not extract ${name} (clip ${frame.timestamp_sec}s) — continuing`));
       continue;
     }
     extracted++;
   }
+
+  // So a manifest citation of frame_051.jpg can still be resolved to a file.
+  writeFileSync(join(dir, 'frame-map.tsv'), `${map.join('\n')}\n`);
 
   return { dir, extracted, skipped };
 }
@@ -1383,7 +1399,7 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
           console.log(chalk.yellow(`\nReusing the analysis already in ${analysisDir} (pass --force to redo it).`));
         }
         const hires = options.fullRes
-          ? extractFullResFrames(mediaForCrv, analysisDir, false)
+          ? extractFullResFrames(mediaForCrv, analysisDir, false, window?.from ?? 0)
           : undefined;
         watched.push({
           id: entry.recording.id,
@@ -1458,7 +1474,7 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
     }
 
     const hires = options.fullRes
-      ? extractFullResFrames(mediaForCrv, analysisDir, Boolean(options.force))
+      ? extractFullResFrames(mediaForCrv, analysisDir, Boolean(options.force), window?.from ?? 0)
       : undefined;
     if (hires && !options.json) {
       console.log(
@@ -1498,7 +1514,10 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
     const crvTranscript = join(w.analysis, 'transcript.txt');
     console.log(`  transcript: ${existsSync(crvTranscript) ? crvTranscript : w.transcript || '(none)'}`);
     console.log(`  keyframes:  ${join(w.analysis, 'frames')}/  ${chalk.gray('(640px — crv downscales)')}`);
-    if (w.hiresFrames) console.log(`  full-res:   ${w.hiresFrames}/  ${chalk.gray('(source resolution)')}`);
+    if (w.hiresFrames) {
+      console.log(`  full-res:   ${w.hiresFrames}/  ${chalk.gray('(source resolution, named by absolute source timecode)')}`);
+      console.log(chalk.gray(`  frame map:  ${join(w.hiresFrames, 'frame-map.tsv')}  (crv frame_NNN → source time)`));
+    }
   });
   console.log(
     chalk.gray(

@@ -149,12 +149,18 @@ Your sandbox may deny writes to the recording folder — `~/Documents` is common
 3. **Tell the caller both paths explicitly** — where it landed and where it belongs — and say it needs copying. Record the same in the front matter.
 4. If nothing is writable, put the whole report in your reply. The content matters more than the filing.
 
+## Cite by source timecode
+
+With `--full-res`, frames land in `frames-hires/` named by **absolute source timecode** — `t00-38-08.jpg` is 00:38:08 of the recording, in every window, with no offset arithmetic. Cite those names. `frames-hires/frame-map.tsv` maps crv's clip-relative `frame_NNN.jpg` to the same moment, so a manifest reference can still be resolved.
+
+crv's own `frames/` are numbered per clip, so `frame_051.jpg` means a different moment in every window and only makes sense alongside the offset. Use them to navigate; quote the timecoded names.
+
 ## Verify your own citations before sending
 
 A report whose frame references cannot be followed is worse than one with fewer claims — its content may be right while its provenance is unusable, and nobody can tell which. Before you send:
 
 - every cited frame file **exists** at the path you name
-- its `timestamp_sec` plus the window offset **equals** the source time you quote
+- a timecoded name matches the time you quote (`t00-38-08.jpg` cited as 00:38:08); for a clip-relative `frame_NNN.jpg`, its `timestamp_sec` plus the window offset **equals** the source time you quote — check it against `frame-map.tsv` rather than doing the arithmetic in your head
 - the analysis directories you name exist on disk
 - the front matter states the window you were actually approved for and actually ran — not the one originally proposed
 
