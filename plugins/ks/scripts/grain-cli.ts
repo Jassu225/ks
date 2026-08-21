@@ -1229,6 +1229,20 @@ function extractFullResFrames(
   return { dir, extracted, skipped };
 }
 
+/** Width and height of a media file in pixels; zeros if ffprobe can't say. */
+function sourceDimensions(mediaFile: string): { width: number; height: number } {
+  const probe = spawnSync(
+    'ffprobe',
+    ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', mediaFile],
+    { encoding: 'utf8' }
+  );
+  const [width, height] = (probe.stdout || '').trim().split(',').map(Number);
+  return {
+    width: Number.isFinite(width) ? width : 0,
+    height: Number.isFinite(height) ? height : 0,
+  };
+}
+
 /** Long edge of a media file in pixels, or 0 if ffprobe can't say. */
 function sourceLongEdgeProbe(mediaFile: string): number {
   const probe = spawnSync(
@@ -1315,9 +1329,21 @@ async function extractFrames(
       process.exit(1);
     }
     const cellWidth = Number(options.gridCellWidth || 480);
-    const factor = (sourceLongEdgeProbe(entry.mediaFile) || 1280) / cellWidth;
+    const sourceWidth = sourceDimensions(entry.mediaFile).width;
+    if (!sourceWidth) {
+      console.error(chalk.red('Cannot read the source width with ffprobe, so --crop-in-grid cannot be scaled.'));
+      console.error(chalk.yellow('Pass --crop W:H:X:Y in source pixels instead.'));
+      process.exit(1);
+    }
+    // Grids are laid out by WIDTH, so the factor is source width ÷ cell width.
+    // It is not a constant: 1280px source → 2.667, 1920px → 4.0. Hardcoding it
+    // would silently mis-frame every non-720p recording — extracting fine, just
+    // of the wrong region, which reads downstream as "the content wasn't there".
+    const factor = sourceWidth / cellWidth;
     crop = cell.map(n => Math.round(n * factor)).join(':');
-    console.log(chalk.gray(`--crop-in-grid ${options.cropInGrid} × ${factor.toFixed(3)} → --crop ${crop}`));
+    console.log(
+      chalk.gray(`--crop-in-grid ${options.cropInGrid} × ${factor.toFixed(3)} (${sourceWidth}÷${cellWidth}) → --crop ${crop}`)
+    );
   }
   if (crop) filters.push(`crop=${crop}`);
   if (options.upscale) {
