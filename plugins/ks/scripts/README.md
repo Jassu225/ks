@@ -81,6 +81,61 @@ npx tsx linear-cli.ts user me
 npx tsx linear-cli.ts document list --project <id>
 ```
 
+### Grain CLI
+
+CLI for the [Grain public API v2](https://developers.grain.com/) — meeting recordings, transcripts, AI summaries, webhooks. Needs `GRAIN_API_TOKEN` in `.env` (Personal or Workspace token from <https://grain.com/app/settings/integrations?tab=api>).
+
+```bash
+# Verify the token (Grain has no whoami endpoint — this probes POST /v2/users)
+./grain auth check
+
+# Find calls
+./grain recording list -s "onboarding" --after 2026-08-01 --scope external
+./grain recording list -i participants,ai_summary --limit 20 --json
+
+# One call in full, transcript, media
+./grain recording get <recording-id> -i all --ai-format markdown
+./grain recording transcript <recording-id> -f vtt -o call.vtt
+./grain recording download <recording-id> -o call.mp4
+
+# Archive media + transcript together, one folder per recording
+./grain recording export <recording-id>                          # mp4 + vtt + metadata json
+./grain recording export <id-a> <id-b> -f vtt,srt --force        # several calls, overwrite
+./grain recording export <recording-id> --no-media -f txt        # transcript only
+./grain recording export <recording-id> --dir ~/Archive/Grain    # one-off storage root
+
+# Watch a call: export, then keyframes + transcript via claude-real-video
+./grain recording watch <recording-id> -w "what did the demo show?"
+./grain recording watch <recording-id> --from 12:30 --to 18:00     # window only
+./grain recording watch <recording-id> --from 12:30                # from there to the end
+./grain recording watch <recording-id> --max-frames 60 --scene 0.2
+./grain recording watch <recording-id> --skip-export             # reuse an existing export
+
+# Mutations
+./grain recording update <recording-id> --title "Q3 kickoff"
+./grain recording tag add <recording-id> customer-escalation
+./grain recording share team <recording-id> <team-id>
+
+# Webhooks and directory
+./grain hook create https://example.com/hook --type recording_added -i participants
+./grain hook list --state enabled
+./grain user list -s luke
+./grain team list
+./grain meeting-type list
+
+# OAuth2 (for distributable integrations, not for your own token).
+# Client id/secret and refresh token come from .env — flags are for one-off use.
+./grain oauth authorize-url --redirect-uri https://example.com/cb
+./grain oauth token --code <code> --code-verifier <verifier>
+./grain oauth refresh
+```
+
+`recording export` writes to `$GRAIN_STORAGE_DIR` (default `~/Documents/Grain`), one folder per recording named `<start-date>_<title-slug>_<id-prefix>/`, with the media, each requested transcript format, and the recording JSON all sharing that base name. Existing files are left alone unless `--force` — and the media existence check happens *before* the download, so a re-run never re-pulls gigabytes.
+
+`recording watch` adds [claude-real-video](https://github.com/HUANGCHIHHUNGLeo/claude-real-video) on top: it exports, then runs `crv` on the media to produce `crv-out/MANIFEST.txt` + `frames/*.jpg` + `transcript.txt` inside the recording's folder — which is how an agent reads what was *on screen*. Because the export writes `<base>.vtt` next to `<base>.mp4` with the same stem, crv reuses Grain's transcript instead of running Whisper. `--from`/`--to` clip a window with ffmpeg first (crv itself has no time-range flag) and trim the sidecar to match. When a recording 406s on `.vtt`/`.srt`, the subtitle file is rebuilt locally from the JSON transcript so the sidecar is always there. Needs `crv` and `ffmpeg` on `PATH`; `./init` offers to install both.
+
+Worth knowing before you script against it: reads are `POST` with the filters in a JSON body; `recording list` paginates by opaque cursor with **no server-side page size** (`--all` walks every page, `--pages`/`--limit` cap it) against a 300 req/min limit; transcripts are one extra request per recording; upload completion is reported **only** to an `upload_status` webhook; and there is no delete-recording endpoint. The `grain-cli` skill (`plugins/ks/skills/grain-cli/`) carries the full API reference and the documented gaps.
+
 ### KS Start Project
 
 Initialize a workflow state YAML from a Linear project.
