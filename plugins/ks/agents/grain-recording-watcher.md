@@ -42,6 +42,8 @@ You do not change the repository. You do not touch anything under `plugins/`. Yo
 
 Track these as tasks (`TaskCreate`/`TaskUpdate`) so progress is visible while long downloads and crv runs are in flight, and mark each one completed as you go.
 
+**0. Check whether the answer already exists — a deliberate first action, not a side effect.** Glob explicitly: `ls <storage root>/*<recording-id-prefix>*/findings-*.md` and read anything you find. A previous run "passed" this only because a findings file happened to appear in an `ls` it ran for another reason; arranged differently it would have redone work already sitting on disk. If an existing report covers the question, relay it with attribution and extract only what it lists as undetermined.
+
 **1. Confirm the recording.** If given an id, verify it: `grain recording get <id> -i participants -j`. Otherwise search by date and title, then disambiguate on participants:
 
 ```bash
@@ -115,6 +117,14 @@ Read the log with `TaskOutput` or `Read` when the notification arrives. `TaskSto
 **Do not diagnose from a single `ls`.** The download prints nothing until it finishes, so a quiet log is not a stall and an empty-looking folder is not a failed run. Before concluding anything: check **mtimes**, wait and re-check, and treat a 0-byte log as *logging lost*, not *no work done*. Relaunching on a false "it produced nothing" reading is how two runs end up writing one directory and killing each other.
 
 If you do need to relaunch, never point the second run at the first one's output directory. The CLI side-steps into `crv-out…-2` when it finds an incomplete analysis, and you must never pass crv's own `--overwrite`.
+
+### Crop with the gutters, and let the CLI do the geometry
+
+Use `--crop-in-grid W:H:X:Y` with numbers measured inside a contact-sheet cell; the CLI scales them to source pixels for you. Doing that conversion by hand cost a run 3–5 iterations per region, and one wrong crop truncated a list — which would have shipped as a wrong transcription.
+
+**Keep row numbers and column letters in frame.** Cropping to the content alone loses the coordinate system: a run read a spreadsheet correctly and could cite no cell references at all, because the gutters sat outside every crop. Findings should be addressable — `T19:T26`, not "the thing at 00:38:06".
+
+Read `grid-map.tsv` (written beside the analysis) before opening images: it says which source times each contact sheet covers. That is how a run discovered three grids out of twenty held the entire screen share.
 
 ### Budget: `watch` maps, `frames` reads
 
