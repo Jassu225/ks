@@ -19,6 +19,17 @@ fi
 current_k=$((current_tokens / 1000))
 total_k=$((context_size / 1000))
 
+# Get the peer-addressable session name — the name ListAgents prints and SendMessage
+# takes. It lives in the session registry, not in the statusline payload (payload
+# .session_name is the auto-generated conversation title, a different thing).
+session_id=$(echo "$input" | jq -r '.session_id // empty')
+peer_name=""
+if [ -n "$session_id" ]; then
+    peer_name=$(jq -r --arg sid "$session_id" \
+        'select(.sessionId == $sid) | .name // empty' \
+        "$HOME"/.claude/sessions/*.json 2>/dev/null | head -1)
+fi
+
 # Get git branch
 git_branch=""
 if git rev-parse --git-dir > /dev/null 2>&1; then
@@ -125,7 +136,11 @@ if [ -n "$five_h_pct" ] || [ -n "$seven_d_pct" ]; then
     fi
 fi
 
-# Line 1: context + git branch (+ rate limits if branch is short)
+# Line 1: session name + context + git branch (+ rate limits if there is room)
+if [ -n "$peer_name" ]; then
+    printf '\033[38;5;39m@%s\033[0m | ' "$peer_name"
+fi
+
 printf '\033[38;5;183m%dk/%dk (%d%%)\033[0m' "$current_k" "$total_k" "$context_pct"
 
 if [ -n "$git_branch" ]; then
@@ -133,7 +148,8 @@ if [ -n "$git_branch" ]; then
 fi
 
 if [ -n "$rate_limits" ]; then
-    if [ -n "$git_branch" ] && [ "${#git_branch}" -gt 32 ]; then
+    # The session name eats into the same line budget the branch was measured against.
+    if [ -n "$git_branch" ] && [ $(( ${#git_branch} + ${#peer_name} )) -gt 32 ]; then
         # Line 2: rate limits on a new line when branch name is long
         printf '\n%s' "$rate_limits"
     else

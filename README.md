@@ -20,7 +20,9 @@ ks/
 
 ## Statusline
 
-The `ks` plugin includes a custom statusline script (`plugins/ks/scripts/statusline`) that displays context window usage, git branch, and rate limit info (5-hour and 7-day windows with reset countdowns). Color-coded: green < 50%, yellow 50-79%, red >= 80%. When the branch name exceeds 32 characters, rate limits wrap to a second line.
+The `ks` plugin includes a custom statusline script (`plugins/ks/scripts/statusline`) that displays the session name, context window usage, git branch, and rate limit info (5-hour and 7-day windows with reset countdowns). Color-coded: green < 50%, yellow 50-79%, red >= 80%. When the session name plus branch name exceeds 32 characters, rate limits wrap to a second line.
+
+The session name is shown as `@<name>` — the peer-addressable name that `ListAgents` prints and `SendMessage` takes, read live from the session registry (`~/.claude/sessions/<pid>.json`), so it can be quoted directly when telling one session to message another. It is not the payload's `session_name`, which is the auto-generated conversation title.
 
 ## Adding a New Plugin
 
