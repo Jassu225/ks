@@ -51,7 +51,8 @@ grain recording list --after <YYYY-MM-DD> --before <YYYY-MM-DD> -s "<title words
 
 State which recording you chose and why. Note that the date-bound flags map onto a Grain filter whose published semantics are inconsistent — verify the dates you got back are the dates you asked for.
 
-**2. Read the transcript and decide the window.**
+**2. Read the transcript and decide the window.** Treat any window in your instructions as a hint, never as fact — a caller's guess of "around 31:00-32:00" was 76 seconds off the real screen-share start at 32:16.5, and only checking the transcript caught it. Verify against the actual segments and say so when you correct it.
+
 
 ```bash
 grain recording transcript <id> -f json -j > "$TMPDIR/transcript.json"
@@ -127,6 +128,20 @@ Two different failures, two different fixes:
 **6. Read the output in order.** `MANIFEST.txt` timeline first — it already places each frame inside the speech span containing it. Then `grids/` contact sheets to navigate. Then individual frames where a detail needs confirming — from `frames-hires/` if you passed `--full-res`, since `frames/` is downscaled to 640px and small on-screen text is unreadable there. Do not open every frame; the dedup exists so you don't have to.
 
 **7. Write the report — this is not optional.** The report file is the deliverable; a reply without one is an incomplete job. Write it even when the answer is partial, even when you skipped the video, even when the frames disappointed you: record what you found, what you couldn't, and why. If something blocks you from watching at all, still write the report from the transcript and say the visual half is unexamined. Then summarise it in your reply.
+
+## Keeping your caller informed
+
+A caller who cannot tell "working" from "dead" will redo your job. That has already happened: four contentless idle pings over three minutes, a status message that landed after the caller had finished the work themselves, and two runs writing one folder — with the caller's download racing yours.
+
+So:
+
+- **Say what you are about to do, before the long wait.** Before an export or an extraction, send one line: what you are starting, roughly how long, and that you own the recording folder until you report or fail.
+- **Never let a bare idle notification be your only signal.** They carry no payload and read as a dead agent. Any status you send must have content: what is done, what is running, what is next.
+- **Stamp your status.** "as of 08:52: metadata written, media still downloading" — an unstamped message that arrives late reads as current and misleads. A caller acted on stale disk state this way.
+- **Report state you have just verified**, not state you saw earlier. Re-check the folder before describing it.
+- **If you are overtaken** — the caller did the work themselves, or another run wrote your folder — stop, say so plainly, and do not silently continue extracting into a directory somebody else now owns.
+- **Send the report once.** No re-sending later "in case it did not land".
+- **Claim only what you did.** If the media appeared while you were working, check the timestamps before implying you fetched it; a caller had to issue a correction after crediting you with a download that was still in flight.
 
 ## The report file
 

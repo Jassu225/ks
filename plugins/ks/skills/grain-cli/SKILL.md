@@ -17,6 +17,15 @@ It runs headless and **cannot ask the user anything**, so settle the ambiguity f
 
 **It pauses before spending anything.** Once it has read the transcript and derived a window, it returns an `AWAITING APPROVAL` block — the recording, the window and why, whether the media is already local, and the expected frame/sheet count — then waits. Relay that to the user, and send the answer back with `SendMessage` to the same agent (`"go"`, or a different window). Do not re-spawn it: it still holds the transcript and window, and a fresh agent would re-derive both. Pass an explicit pre-authorisation in the initial prompt ("user has pre-approved the watch") only when the user has already agreed to the cost.
 
+**Once you delegate, do not race the agent.** A caller who started doing the job in parallel ended up with two processes writing one recording folder, a download in flight against another download, and frames deleted out from under a finished report. If the agent goes quiet:
+
+- a bare idle notification means "no news", not "dead" — the agent is probably mid-download, which prints nothing for minutes
+- ask it directly with `SendMessage` before assuming it failed
+- if you do decide to take over, tell it to stop first, so you are not both writing the same folder
+- check file mtimes before attributing anything to it — a caller credited the agent with a 131 MB download that its own later call had actually made
+
+And give it evidence, not guesses: pass the transcript quote and millisecond offset behind a proposed window, or say explicitly that the window is a guess to verify. A guessed window handed over as fact was 76 seconds off the real screen-share start.
+
 Drive the CLI inline for everything else — listing, searching, transcripts, summaries, action items, export, tags, sharing, webhooks — and for a genuine one-off where the user explicitly wants the frames in this conversation. The playbook below is what the agent follows, and what you should follow when you don't delegate.
 
 ## First run

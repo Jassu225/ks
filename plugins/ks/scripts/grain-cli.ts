@@ -1095,8 +1095,12 @@ async function extractFrames(
     process.exit(1);
   }
   if (maxDim > 0) {
+    // The commas inside min() must reach ffmpeg backslash-escaped, or it reads
+    // them as filterchain separators and dies with "No option name near 'min(ih'".
+    // In a JS template literal that means `\\,` — a single `\,` collapses to a
+    // bare comma and every extraction fails.
     filters.push(
-      `scale=w=min(iw\,${maxDim}):h=min(ih\,${maxDim}):force_original_aspect_ratio=decrease:flags=lanczos`
+      `scale=w=min(iw\\,${maxDim}):h=min(ih\\,${maxDim}):force_original_aspect_ratio=decrease:flags=lanczos`
     );
   }
 
@@ -1105,6 +1109,7 @@ async function extractFrames(
 
   const written: string[] = [];
   const skipped: string[] = [];
+  const failed: string[] = [];
 
   for (const t of [...new Set(seconds)].sort((a, b) => a - b)) {
     const name = `t${timecodeSlug(t)}.jpg`;
@@ -1125,13 +1130,23 @@ async function extractFrames(
     }
     if (run.status !== 0) {
       console.error(chalk.yellow(`ffmpeg could not extract ${name} — continuing`));
+      failed.push(name);
       continue;
     }
     written.push(name);
   }
 
+  // A run that extracts nothing must not look like a successful no-op: every
+  // frame failing used to print "0 frame(s)" and exit 0, which reads as "there
+  // was nothing to do" rather than "the filter was malformed".
+  if (!written.length && failed.length) {
+    console.error(chalk.red(`\nExtraction failed for all ${failed.length} frame(s) — no images written.`));
+    console.error(chalk.yellow('The ffmpeg output above carries the reason. Check --crop / --upscale / --max-dim values.'));
+    process.exit(1);
+  }
+
   if (options.json) {
-    output({ folder: entry.folder, dir, media: entry.mediaFile, written, skipped }, true);
+    output({ folder: entry.folder, dir, media: entry.mediaFile, written, skipped, failed }, true);
     return;
   }
 
