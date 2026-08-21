@@ -273,9 +273,28 @@ So treat them as different tools:
 - **`recording frames --every N --crop … --upscale …`** to *read* the screen. This is where legible content comes from.
 - **On a follow-up question about a call you have already mapped, skip `watch` entirely** and go straight to `frames` with the timecodes you already know.
 
+## Cropping: keep the gutters, and let the CLI do the geometry
+
+Cropping to the content throws away the coordinate system. A run cropped tightly to a spreadsheet region, read every value correctly, and could not give a single cell reference — row numbers and column letters sit at the viewport edges, outside every region it framed. Keeping the gutters costs a few dozen pixels and makes findings addressable (`T19:T26` rather than "the enumeration at 00:38:06").
+
+Don't compute crop geometry by hand. Measure the region **inside a contact-sheet cell** and let the CLI scale it:
+
+```bash
+grain recording frames <id> --at 2286 --crop-in-grid 172:112:210:56 --upscale 3
+# → --crop-in-grid 172:112:210:56 × 2.667 → --crop 459:299:560:149
+```
+
+A run doing that arithmetic itself needed 3–5 iterations per region, and one early crop cut the top off a list — which would have yielded a *wrong* transcription, five entries instead of seven. Confirm a crop shows the whole thing before reading values off it.
+
+## Find the interesting stretch with `grid-map.tsv`
+
+`--full-res` writes `grid-map.tsv` beside the analysis: which source times each contact sheet covers. Read it before opening any image. On a real call it showed grids 01–16 were all lead-in at ~3s spacing while grids **17–19 held the entire 15-minute screen share** — five grids opened instead of twenty.
+
 ## When the frames aren't readable
 
 Two independent limits, and they need different fixes. Both were hit in real use.
+
+**`--full-res` is not a fix for small text on a small source.** On a 720p recording it produces 1280px frames in which spreadsheet cells stay unreadable — a run got *every* legible read from `frames --crop --upscale` instead, and used `frames-hires/` mainly as the home of `frame-map.tsv`. The CLI now warns when the source is ≤1280px. Use `--full-res` for genuinely high-resolution sources, or for timecoded copies of crv's selection; use `frames --crop --upscale` when you need to read text.
 
 **crv downscales.** It extracts at a hardcoded `scale=640:-1`, so `frames/` are 640px wide and grid cells only 480px. Faces survive that; spreadsheet cells, code, and dense UI do not — and opening the individual `frames/*.jpg` does **not** rescue it, because the file itself is downscaled. Fix: `grain recording watch <id> --full-res`, which re-extracts crv's own chosen timestamps from the local media at source resolution into `frames-hires/` (same `frame_NNN.jpg` names, so manifest citations resolve in either directory). No Grain requests, one local ffmpeg seek per frame.
 

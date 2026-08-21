@@ -172,6 +172,30 @@ Runs `export` (media forced on), then invokes [claude-real-video](https://github
 
 ---
 
+## `recording frames`
+
+`grain recording frames <recording-id> [--at <list>] [--every <n>] [--from <tc>] [--to <tc>] [--crop <W:H:X:Y>] [--crop-in-grid <W:H:X:Y>] [--grid-cell-width <px>] [--upscale <n>] [--max-dim <px>] [-d <dir>] [-o <dir>] [--force] [-j]`
+
+Arbitrary-timestamp extraction at source resolution — the escape hatch from crv's dedup, and where **every legible read of on-screen text comes from**.
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--at <list>` | – | Comma-separated source timecodes (`2286`, `0:38:06`) |
+| `--every <n>` | – | Sample every N seconds across `--from`/`--to`, ignoring dedup entirely |
+| `--from` / `--to <tc>` | 0 / end | Range for `--every` |
+| `--crop <W:H:X:Y>` | – | ffmpeg crop, in **source pixels** |
+| `--crop-in-grid <W:H:X:Y>` | – | Crop measured **inside a contact-sheet cell**, scaled to source for you. Use this after eyeballing a grid — deriving the factor by hand cost one run 3–5 iterations per region, and a bad crop silently truncated a list into a wrong transcription |
+| `--grid-cell-width <px>` | `480` | Cell width the `--crop-in-grid` numbers came from |
+| `--upscale <n>` | – | Lanczos factor after cropping — what makes small text readable |
+| `--max-dim <px>` | `2000` | Clamp the long edge; `0` disables. Claude rejects images over 2000px per side once a request holds more than 20. A clamp that eats into a requested `--upscale` now names the effective factor (`--upscale 3` on a 700px crop → 2.86) |
+| `--force` | off | Overwrite existing frames. Note that a skip is silent (`N already present`), so a partial no-op is possible without `--force` |
+
+**Filenames** are source timecodes plus a crop/upscale fingerprint — `t00-38-06_c459x299x560x149_x3.jpg`. The timecode means citations need no offset arithmetic; the fingerprint means two different crops of one moment can't overwrite each other, which previously happened mid-run under `--force` and invalidated citations silently.
+
+**Cost:** 1 metadata request + media (if not already exported) + one local ffmpeg seek per timestamp. No Grain requests for the extraction itself. Exits 1 if every frame fails.
+
+**Keep the gutters.** Cropping to the content alone discards the coordinate system — a run read a spreadsheet correctly and couldn't cite a single cell, because row numbers and column letters sat outside every crop.
+
 ## `recording upload`
 
 `grain recording upload <file> [-u <user-id>] [-j]`
@@ -287,6 +311,7 @@ For debugging an unexpected response or a raw-body error message.
 |---|---|
 | `recording list` | `POST /v2/recordings` |
 | `recording window` | `GET /v2/recordings/:id/transcript` |
+| `recording frames` | `POST /v2/recordings/:id` + `GET …/download` (once), then local ffmpeg |
 | `recording get`, `export`/`watch` (metadata) | `POST /v2/recordings/:id` |
 | `recording transcript`, `export`/`watch` (transcripts) | `GET /v2/recordings/:id/transcript[.txt\|.vtt\|.srt]` |
 | `recording download`, `export`/`watch` (media) | `GET /v2/recordings/:id/download` |

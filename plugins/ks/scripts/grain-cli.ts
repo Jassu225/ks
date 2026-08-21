@@ -1155,6 +1155,20 @@ function extractFullResFrames(
   const dir = join(analysisDir, 'frames-hires');
   mkdirSync(dir, { recursive: true });
 
+  // "Full resolution" is only as good as the source. On a 720p recording these
+  // frames are 1280px and spreadsheet text stays unreadable — a real run got
+  // every legible read from `frames --crop --upscale` instead, and used this
+  // directory mainly for frame-map.tsv. Say so before spending 180 seeks.
+  const longEdge = sourceLongEdgeProbe(mediaFile);
+  if (longEdge && longEdge <= 1280) {
+    console.error(
+      chalk.yellow(
+        `Note: source long edge is ${longEdge}px, so --full-res buys little for small on-screen text.\n` +
+          '  For readable spreadsheet cells or code use: grain recording frames <id> --at <sec> --crop … --upscale 3'
+      )
+    );
+  }
+
   let extracted = 0;
   let skipped = 0;
 
@@ -1197,7 +1211,33 @@ function extractFullResFrames(
   // So a manifest citation of frame_051.jpg can still be resolved to a file.
   writeFileSync(join(dir, 'frame-map.tsv'), `${map.join('\n')}\n`);
 
+  // Which source times each contact sheet covers. Grids hold 9 frames in order,
+  // so this is derivable — but deriving it by hand every run is the difference
+  // between opening 5 grids and opening 20. A run that built this map found the
+  // entire 15-minute screen share lived in grids 17-19.
+  const perGrid = 9;
+  const gridLines = ['grid\tfirst_source\tlast_source\tframes'];
+  const kept = (data.frames || []).map((f, i) => ({ i, at: timecodeSlug(f.timestamp_sec + offsetSec).replace(/-/g, ':') }));
+  for (let g = 0; g * perGrid < kept.length; g++) {
+    const slice = kept.slice(g * perGrid, (g + 1) * perGrid);
+    gridLines.push(
+      `grid_${String(g + 1).padStart(2, '0')}.jpg\t${slice[0].at}\t${slice[slice.length - 1].at}\t${slice.length}`
+    );
+  }
+  writeFileSync(join(analysisDir, 'grid-map.tsv'), `${gridLines.join('\n')}\n`);
+
   return { dir, extracted, skipped };
+}
+
+/** Long edge of a media file in pixels, or 0 if ffprobe can't say. */
+function sourceLongEdgeProbe(mediaFile: string): number {
+  const probe = spawnSync(
+    'ffprobe',
+    ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', mediaFile],
+    { encoding: 'utf8' }
+  );
+  const [w, h] = (probe.stdout || '').trim().split(',').map(Number);
+  return Number.isFinite(w) && Number.isFinite(h) ? Math.max(w, h) : 0;
 }
 
 /**
@@ -1220,6 +1260,8 @@ async function extractFrames(
     from?: string;
     to?: string;
     crop?: string;
+    cropInGrid?: string;
+    gridCellWidth?: string;
     upscale?: string;
     maxDim?: string;
     dir?: string;
@@ -1261,7 +1303,23 @@ async function extractFrames(
   }
 
   const filters: string[] = [];
-  if (options.crop) filters.push(`crop=${options.crop}`);
+
+  // Crop geometry is the hardest manual step: coordinates have to be in SOURCE
+  // pixels, but the only thing you have looked at is a 480px-wide grid cell.
+  // --crop-in-grid takes the numbers measured in that cell and scales them.
+  let crop = options.crop;
+  if (options.cropInGrid) {
+    const cell = options.cropInGrid.split(':').map(Number);
+    if (cell.length !== 4 || cell.some(n => !Number.isFinite(n))) {
+      console.error(chalk.red(`--crop-in-grid needs W:H:X:Y measured inside a grid cell, got: ${options.cropInGrid}`));
+      process.exit(1);
+    }
+    const cellWidth = Number(options.gridCellWidth || 480);
+    const factor = (sourceLongEdgeProbe(entry.mediaFile) || 1280) / cellWidth;
+    crop = cell.map(n => Math.round(n * factor)).join(':');
+    console.log(chalk.gray(`--crop-in-grid ${options.cropInGrid} × ${factor.toFixed(3)} → --crop ${crop}`));
+  }
+  if (crop) filters.push(`crop=${crop}`);
   if (options.upscale) {
     const factor = Number(options.upscale);
     if (!Number.isFinite(factor) || factor <= 0) {
@@ -1280,19 +1338,15 @@ async function extractFrames(
     console.error(chalk.red(`--max-dim must be a non-negative number, got: ${options.maxDim}`));
     process.exit(1);
   }
-  const sourceLongEdge = (() => {
-    const probe = spawnSync(
-      'ffprobe',
-      ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', entry.mediaFile],
-      { encoding: 'utf8' }
-    );
-    const [w, h] = (probe.stdout || '').trim().split(',').map(Number);
-    return Number.isFinite(w) && Number.isFinite(h) ? Math.max(w, h) : 0;
-  })();
+  const sourceLongEdge = sourceLongEdgeProbe(entry.mediaFile);
 
-  // Clamping a source already smaller than the cap is a pure no-op; only an
-  // upscale earlier in the chain can push past it. A 720p call hit neither.
-  const needsClamp = maxDim > 0 && (options.upscale !== undefined || sourceLongEdge > maxDim);
+  // Decide the clamp on the geometry this run will actually produce, not on
+  // "an upscale was requested" — a run that clamps nothing must not claim it
+  // clamped, and one that silently halves a requested upscale must say so.
+  const cropLongEdge = crop ? Math.max(...crop.split(':').slice(0, 2).map(Number)) : sourceLongEdge;
+  const upscaleFactor = options.upscale ? Number(options.upscale) : 1;
+  const producedLongEdge = cropLongEdge * upscaleFactor;
+  const needsClamp = maxDim > 0 && producedLongEdge > maxDim;
 
   if (needsClamp) {
     // The commas inside min() must reach ffmpeg backslash-escaped, or it reads
@@ -1311,8 +1365,18 @@ async function extractFrames(
   const skipped: string[] = [];
   const failed: string[] = [];
 
+  // A crop is part of a frame's identity. Naming by timecode alone let two
+  // different crops of one moment overwrite each other mid-run under --force,
+  // which silently invalidates any citation made before the overwrite.
+  const variant = [
+    crop ? `c${crop.replace(/[:]/g, 'x')}` : '',
+    options.upscale ? `x${options.upscale}` : '',
+  ]
+    .filter(Boolean)
+    .join('_');
+
   for (const t of [...new Set(seconds)].sort((a, b) => a - b)) {
-    const name = `t${timecodeSlug(t)}.jpg`;
+    const name = variant ? `t${timecodeSlug(t)}_${variant}.jpg` : `t${timecodeSlug(t)}.jpg`;
     const target = join(dir, name);
     if (existsSync(target) && !options.force) {
       skipped.push(name);
@@ -1355,8 +1419,16 @@ async function extractFrames(
   console.log(chalk.gray('Filenames are source-video timecodes, so citations need no offset.'));
   if (needsClamp) {
     console.log(chalk.gray(`Long edge clamped to ${maxDim}px — past that Claude downscales anyway.`));
-  } else if (sourceLongEdge) {
-    console.log(chalk.gray(`Source long edge is ${sourceLongEdge}px; no clamp needed.`));
+    if (options.upscale) {
+      console.log(
+        chalk.yellow(
+          `  --upscale ${options.upscale} would have reached ${Math.round(producedLongEdge)}px, so the effective ` +
+            `factor is ${(maxDim / cropLongEdge).toFixed(2)}. Pass --max-dim 0 to get the full ${options.upscale}x.`
+        )
+      );
+    }
+  } else if (producedLongEdge) {
+    console.log(chalk.gray(`Output long edge ${Math.round(producedLongEdge)}px; under the ${maxDim || 'disabled'} cap, no clamp applied.`));
   }
   if (!filters.length) {
     console.log(
@@ -1607,6 +1679,7 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
     if (w.hiresFrames) {
       console.log(`  full-res:   ${w.hiresFrames}/  ${chalk.gray('(source resolution, named by absolute source timecode)')}`);
       console.log(chalk.gray(`  frame map:  ${join(w.hiresFrames, 'frame-map.tsv')}  (crv frame_NNN → source time)`));
+      console.log(chalk.gray(`  grid map:   ${join(w.analysis, 'grid-map.tsv')}  (which source times each contact sheet covers)`));
     }
   });
   console.log(
@@ -2102,7 +2175,9 @@ recordingCmd
   .option('--every <n>', 'Sample every N seconds across the range (ignores dedup entirely)')
   .option('--from <timecode>', 'Range start for --every (default 0)')
   .option('--to <timecode>', 'Range end for --every (default end of recording)')
-  .option('--crop <W:H:X:Y>', 'ffmpeg crop filter — isolate the region that matters (e.g. a shared window)')
+  .option('--crop <W:H:X:Y>', 'ffmpeg crop filter in SOURCE pixels — isolate the region that matters')
+  .option('--crop-in-grid <W:H:X:Y>', 'Same, but measured inside a contact-sheet cell; scaled to source for you')
+  .option('--grid-cell-width <px>', 'Grid cell width the --crop-in-grid numbers came from (default 480)')
   .option('--upscale <n>', 'Lanczos upscale factor after cropping, e.g. 3 — what makes small text readable')
   .option(
     '--max-dim <px>',
