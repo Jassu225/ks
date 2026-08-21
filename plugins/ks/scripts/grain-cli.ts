@@ -20,7 +20,7 @@
 import { Command, Option } from 'commander';
 import { spawnSync } from 'child_process';
 import chalk from 'chalk';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { basename, join } from 'path';
 
@@ -677,7 +677,85 @@ async function fetchMedia(recordingId: string): Promise<{ buffer: Buffer; ext: s
           ? 'mov'
           : 'mp4');
 
-  return { buffer: Buffer.from(await res.arrayBuffer()), ext: ext.toLowerCase() };
+  // Report progress while the bytes come down. A silent multi-minute download
+  // looks hung, and a caller who cannot tell working from dead relaunches —
+  // which is how two runs ended up writing one recording folder.
+  const total = Number(res.headers.get('content-length') || 0);
+  const chunks: Buffer[] = [];
+  let received = 0;
+  let lastReport = Date.now();
+
+  if (res.body) {
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      chunks.push(Buffer.from(chunk));
+      received += chunk.length;
+      if (Date.now() - lastReport > 5000) {
+        const of = total ? ` of ${formatBytes(total)}` : '';
+        const pct = total ? ` (${Math.round((received / total) * 100)}%)` : '';
+        console.error(chalk.gray(`  downloading… ${formatBytes(received)}${of}${pct}`));
+        lastReport = Date.now();
+      }
+    }
+  } else {
+    chunks.push(Buffer.from(await res.arrayBuffer()));
+  }
+
+  return { buffer: Buffer.concat(chunks), ext: ext.toLowerCase() };
+}
+
+/**
+ * One run per recording folder. A `watch` that looks hung gets relaunched, and
+ * two runs in one folder delete each other's frames — so refuse the second one
+ * instead of letting them race.
+ */
+function acquireFolderLock(folder: string, operation: string): () => void {
+  const lockPath = join(folder, '.grain-lock');
+  const STALE_MS = 30 * 60 * 1000;
+
+  if (existsSync(lockPath)) {
+    try {
+      const held = JSON.parse(readFileSync(lockPath, 'utf8')) as { pid: number; started: string; operation: string };
+      const age = Date.now() - new Date(held.started).getTime();
+      const alive = (() => {
+        try {
+          process.kill(held.pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+
+      if (alive && age < STALE_MS) {
+        console.error(chalk.red(`\nAnother \`grain ${held.operation}\` (pid ${held.pid}) is already working in`));
+        console.error(chalk.red(`  ${folder}`));
+        console.error(chalk.yellow(`Started ${Math.round(age / 1000)}s ago. Wait for it rather than running a second one —`));
+        console.error(chalk.yellow('two runs in one folder overwrite each other\'s frames. Delete .grain-lock only if you'));
+        console.error(chalk.yellow('are certain that process is gone.'));
+        process.exit(1);
+      }
+      console.error(chalk.yellow(`Clearing a stale lock from pid ${held.pid} (${Math.round(age / 60000)}m old).`));
+    } catch {
+      console.error(chalk.yellow('Clearing an unreadable .grain-lock.'));
+    }
+  }
+
+  writeFileSync(lockPath, JSON.stringify({ pid: process.pid, started: new Date().toISOString(), operation }));
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    try {
+      if (existsSync(lockPath)) unlinkSync(lockPath);
+    } catch {
+      /* nothing useful to do if the lock is already gone */
+    }
+  };
+  process.once('exit', release);
+  process.once('SIGINT', () => {
+    release();
+    process.exit(130);
+  });
+  return release;
 }
 
 async function getTranscript(
@@ -780,6 +858,7 @@ async function exportOne(
   const base = recordingFolderName(recording);
   const folder = join(storageRoot(options.dir), base);
   mkdirSync(folder, { recursive: true });
+  const releaseLock = acquireFolderLock(folder, 'export');
 
   const files: string[] = [];
   const skipped: string[] = [];
@@ -829,6 +908,7 @@ async function exportOne(
     write(name, text);
   }
 
+  releaseLock();
   return { recording, folder, base, mediaFile, files, skipped };
 }
 
@@ -1094,7 +1174,21 @@ async function extractFrames(
     console.error(chalk.red(`--max-dim must be a non-negative number, got: ${options.maxDim}`));
     process.exit(1);
   }
-  if (maxDim > 0) {
+  const sourceLongEdge = (() => {
+    const probe = spawnSync(
+      'ffprobe',
+      ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', entry.mediaFile],
+      { encoding: 'utf8' }
+    );
+    const [w, h] = (probe.stdout || '').trim().split(',').map(Number);
+    return Number.isFinite(w) && Number.isFinite(h) ? Math.max(w, h) : 0;
+  })();
+
+  // Clamping a source already smaller than the cap is a pure no-op; only an
+  // upscale earlier in the chain can push past it. A 720p call hit neither.
+  const needsClamp = maxDim > 0 && (options.upscale !== undefined || sourceLongEdge > maxDim);
+
+  if (needsClamp) {
     // The commas inside min() must reach ffmpeg backslash-escaped, or it reads
     // them as filterchain separators and dies with "No option name near 'min(ih'".
     // In a JS template literal that means `\\,` — a single `\,` collapses to a
@@ -1153,8 +1247,10 @@ async function extractFrames(
   console.log(chalk.green(`\n${written.length} frame(s) → ${dir}`));
   if (skipped.length) console.log(chalk.yellow(`${skipped.length} already present (pass --force to overwrite)`));
   console.log(chalk.gray('Filenames are source-video timecodes, so citations need no offset.'));
-  if (maxDim > 0) {
+  if (needsClamp) {
     console.log(chalk.gray(`Long edge clamped to ${maxDim}px — past that Claude downscales anyway.`));
+  } else if (sourceLongEdge) {
+    console.log(chalk.gray(`Source long edge is ${sourceLongEdge}px; no clamp needed.`));
   }
   if (!filters.length) {
     console.log(

@@ -129,6 +129,37 @@ Two different failures, two different fixes:
 
 **7. Write the report — this is not optional.** The report file is the deliverable; a reply without one is an incomplete job. Write it even when the answer is partial, even when you skipped the video, even when the frames disappointed you: record what you found, what you couldn't, and why. If something blocks you from watching at all, still write the report from the transcript and say the visual half is unexamined. Then summarise it in your reply.
 
+## Never sit on finished work
+
+The worst failure this agent has produced was not a crash. A run completed a good 16 KB report, told its caller it had nothing, acknowledged a stand-down without mentioning the report, and the caller redid the entire job by hand while the better answer sat on disk.
+
+So, without exception:
+
+- **Finishing means delivering.** The moment a report exists, send it — path and summary — before doing anything else, including replying to any other question.
+- **Never acknowledge a stand-down, cancellation, or "never mind" while holding an artifact.** Flush it first: say what you produced and where it is, then stand down.
+- **If you are stopped mid-run**, say what exists so far and where. Partial work that someone can find beats silence.
+- **A report the caller cannot see does not exist.** Writing the file is not delivery.
+
+## When the report has nowhere to go
+
+Your sandbox may deny writes to the recording folder — `~/Documents` is commonly blocked for a subagent even though the CLI can write there. That is not a reason to skip the report:
+
+1. Try the recording's export folder first.
+2. On `operation not permitted`, write to `$TMPDIR/grain-findings/` instead.
+3. **Tell the caller both paths explicitly** — where it landed and where it belongs — and say it needs copying. Record the same in the front matter.
+4. If nothing is writable, put the whole report in your reply. The content matters more than the filing.
+
+## Verify your own citations before sending
+
+A report whose frame references cannot be followed is worse than one with fewer claims — its content may be right while its provenance is unusable, and nobody can tell which. Before you send:
+
+- every cited frame file **exists** at the path you name
+- its `timestamp_sec` plus the window offset **equals** the source time you quote
+- the analysis directories you name exist on disk
+- the front matter states the window you were actually approved for and actually ran — not the one originally proposed
+
+A real report failed all four: it cited `frame_051.jpg @00:38:08` when that file was at 30:32, used a +1920s offset when the real one was +1770, and named two analysis directories that did not exist. The findings were correct; the citations were unfollowable.
+
 ## Keeping your caller informed
 
 A caller who cannot tell "working" from "dead" will redo your job. That has already happened: four contentless idle pings over three minutes, a status message that landed after the caller had finished the work themselves, and two runs writing one folder — with the caller's download racing yours.
