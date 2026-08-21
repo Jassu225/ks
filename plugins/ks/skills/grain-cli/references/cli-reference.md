@@ -59,6 +59,23 @@ Ordering is newest-first and not controllable.
 
 ---
 
+## `recording window`
+
+`grain recording window <recording-id> [-s <names>] [-m <regex>] [-p <seconds>] [--after <tc>] [--before <tc>] [-j]`
+
+Derives a watch window from the transcript — **1 request, no media**. The step that most needs doing before spending anything, and the one that was previously improvised with ad-hoc jq on every run.
+
+| Flag | Default | Effect |
+|---|---|---|
+| `-s, --speakers <names>` | – | Comma-separated, loose substring match (`"Jon,Jaswanth"` matches `Jonathan Allen`) |
+| `-m, --match <regex>` | – | Keep only segments whose text matches, case-insensitive |
+| `-p, --pad <seconds>` | `15` | Padding either side — on-screen artefacts appear before and after the words |
+| `--after` / `--before <tc>` | – | Restrict the search to part of the call |
+
+Human output gives the suggested `--from/--to` in both seconds and `HH:MM:SS`, the matching segment count, **the transcript line at each boundary** as evidence, and a speaker tally for the whole recording. JSON adds `from_sec`, `to_sec`, `span_sec`, `matched_segments`, `first_match`, `last_match`, and `speakers`.
+
+Read the boundary lines before extracting: a boundary that reads like small talk means the window is too wide, and a match on the very last segment means it is probably too narrow.
+
 ## `recording transcript`
 
 `grain recording transcript <recording-id> [-f json|txt|vtt|srt] [-o <file>] [-j]`
@@ -269,6 +286,7 @@ For debugging an unexpected response or a raw-body error message.
 | Command | Endpoint |
 |---|---|
 | `recording list` | `POST /v2/recordings` |
+| `recording window` | `GET /v2/recordings/:id/transcript` |
 | `recording get`, `export`/`watch` (metadata) | `POST /v2/recordings/:id` |
 | `recording transcript`, `export`/`watch` (transcripts) | `GET /v2/recordings/:id/transcript[.txt\|.vtt\|.srt]` |
 | `recording download`, `export`/`watch` (media) | `GET /v2/recordings/:id/download` |

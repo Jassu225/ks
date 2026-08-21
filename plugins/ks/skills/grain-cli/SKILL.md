@@ -56,6 +56,7 @@ Using the other kind doesn't warn — it errors or silently returns less. `grain
 | Add detail to a list | `grain recording list -i participants,ai_summary --limit 20` |
 | One call, everything | `grain recording get <id> -i all --ai-format markdown` |
 | Transcript to stdout or file | `grain recording transcript <id> [-f json\|txt\|vtt\|srt] [-o file]` |
+| **Derive a watch window** | `grain recording window <id> [--speakers "Jon,Jaswanth"] [--match <regex>] [--pad 15]` |
 | Media file | `grain recording download <id> [-o call.mp4]` |
 | **Archive media + transcript** | `grain recording export <id...> [-f vtt,srt] [--no-media] [--dir <path>] [--force]` |
 | **Actually watch a call** | `grain recording watch <id...> [-w "what to look for"] [--from 12:30 --to 18:00] [--max-frames 60]` |
@@ -93,7 +94,18 @@ grain recording list --after 2026-08-10 --before 2026-08-11 -s "engineering sync
 
 If several match, add `-i participants` and pick the one whose attendees fit the question. Say which you picked and why. (Heads-up: the date-bound flags map onto a Grain filter whose semantics are documented inconsistently — verify the returned dates are what you asked for before trusting the set.)
 
-**2 — Read the transcript and find the time range.** Grain's transcript carries per-segment `start`/`end` in **milliseconds** plus speaker names, which is everything needed to convert a fuzzy ask ("near the end", "where John and I discussed the wrapper") into a concrete window:
+**2 — Derive the window from the transcript.** Use the command rather than hand-rolled jq:
+
+```bash
+grain recording window <id> --match "share my screen|let me illustrate"   # find the share boundary
+grain recording window <id> --speakers "Jon,Jaswanth" --after 20:00       # bound by who is talking
+```
+
+It prints the suggested `--from/--to`, the matching segment count, and **the transcript lines at both boundaries** so you can see whether you have caught the real edge or 50 seconds of small talk. One request, no media. A run that did this properly corrected its caller's proposed window at *both* ends before spending anything — that is the highest-leverage step in the whole workflow.
+
+For anything the command can't express, the raw segments are still there:
+
+**2b — Read the transcript directly when you need more than boundaries.** Grain's transcript carries per-segment `start`/`end` in **milliseconds** plus speaker names, which is everything needed to convert a fuzzy ask ("near the end", "where John and I discussed the wrapper") into a concrete window:
 
 ```bash
 grain recording transcript <id> -f json -j > /tmp/t.json
@@ -251,6 +263,16 @@ Frame-budget flags pass straight through: `--max-frames`, `--scene` (0.30, lower
 
 **Check the installed crv's own `--help`** before relying on a flag from its README: 0.9.3 ships `--adaptive`, `--text-anchors`, `--speakers` (diarization), `--viewer`, `--whisper-model`, `--overwrite`, and `--export llc` that the published table omits, and its `--max-frames` default differs from the README's.
 
+## `watch` maps, `frames` reads
+
+Measured on a real call: of 180 frames `watch` kept, only **~23 landed inside the 15-minute screen share** — 144 went to webcam tiles, because talking heads change far more between frames than a spreadsheet being typed into. Every on-screen state change in the final answer came from targeted `recording frames` passes, not from `watch`.
+
+So treat them as different tools:
+
+- **`watch`** to *map* the call — where the share starts and ends, which stretch matters. Its scene-change selection is genuinely good at that, and it catches transients uniform sampling misses (a four-line enumeration typed into a sheet and deleted 25 seconds later was found this way).
+- **`recording frames --every N --crop … --upscale …`** to *read* the screen. This is where legible content comes from.
+- **On a follow-up question about a call you have already mapped, skip `watch` entirely** and go straight to `frames` with the timecodes you already know.
+
 ## When the frames aren't readable
 
 Two independent limits, and they need different fixes. Both were hit in real use.
@@ -285,6 +307,12 @@ Grain allows **300 requests/minute**. The CLI waits out `Retry-After` and retrie
 - `recording watch` → same as `export`, plus local CPU in ffmpeg/crv (no extra Grain requests; `--from/--to` adds none)
 
 So exporting 100 recordings with `-f vtt,srt` is ~400 requests: run it, but expect the CLI to pause on rate limits.
+
+## Never trust figures from the transcript
+
+Grain's transcript mangles anything numeric on screen. Observed on one call: an on-screen GL account `6000 salaries` transcribed as "$6,000 salary", and `7010` became "710". A caller relayed those corrupted figures downstream before frames came back and had to correct them.
+
+Numbers, account codes, IDs, and amounts must come from a frame you have actually read, not from the transcript. Use the transcript for *what was discussed and when* — that is what it is reliable for.
 
 ## When something goes wrong
 

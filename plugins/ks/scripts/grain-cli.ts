@@ -796,6 +796,96 @@ async function getTranscript(
   });
 }
 
+/**
+ * Derive a watch window from the transcript, before spending a byte.
+ *
+ * This is the highest-leverage step in a watch and it was being improvised with
+ * ad-hoc jq every time: a run that did it properly corrected its caller's
+ * proposed window at BOTH ends on transcript evidence — one boundary was 50s of
+ * small talk, the other would have truncated the payoff. One request, no media.
+ */
+async function suggestWindow(
+  recordingId: string,
+  options: { speakers?: string; match?: string; pad?: string; after?: string; before?: string; json?: boolean }
+): Promise<void> {
+  const segments = JSON.parse(
+    (await fetchTranscript(recordingId, 'json')).text
+  ) as TranscriptSegment[];
+
+  if (!segments.length) {
+    console.error(chalk.yellow('Transcript is empty — no window can be derived.'));
+    process.exit(1);
+  }
+
+  const pad = options.pad === undefined ? 15 : Number(options.pad);
+  const lower = options.after ? parseTimecode(options.after, '--after') * 1000 : 0;
+  const upper = options.before ? parseTimecode(options.before, '--before') * 1000 : Number.POSITIVE_INFINITY;
+
+  let pool = segments.filter(seg => seg.start >= lower && seg.start <= upper);
+
+  if (options.speakers) {
+    const wanted = options.speakers.split(',').map(n => n.trim().toLowerCase()).filter(Boolean);
+    pool = pool.filter(seg => wanted.some(n => (seg.speaker || '').toLowerCase().includes(n)));
+  }
+  if (options.match) {
+    const re = new RegExp(options.match, 'i');
+    pool = pool.filter(seg => re.test(seg.text || ''));
+  }
+
+  if (!pool.length) {
+    console.error(chalk.yellow('No transcript segments matched those filters — widen them before extracting anything.'));
+    process.exit(1);
+  }
+
+  const first = pool[0];
+  const last = pool[pool.length - 1];
+  const from = Math.max(0, first.start / 1000 - pad);
+  const to = last.end / 1000 + pad;
+
+  const speakerTally = new Map<string, number>();
+  for (const seg of segments) {
+    speakerTally.set(seg.speaker || '(unknown)', (speakerTally.get(seg.speaker || '(unknown)') || 0) + 1);
+  }
+
+  if (options.json) {
+    output(
+      {
+        from_sec: Number(from.toFixed(3)),
+        to_sec: Number(to.toFixed(3)),
+        from: timecodeSlug(from).replace(/-/g, ':'),
+        to: timecodeSlug(to).replace(/-/g, ':'),
+        matched_segments: pool.length,
+        span_sec: Number((to - from).toFixed(3)),
+        first_match: { start_sec: first.start / 1000, speaker: first.speaker, text: first.text },
+        last_match: { start_sec: last.start / 1000, speaker: last.speaker, text: last.text },
+        speakers: [...speakerTally.entries()].map(([speaker, segments]) => ({ speaker, segments })),
+      },
+      true
+    );
+    return;
+  }
+
+  const span = to - from;
+  console.log(chalk.bold(`\nSuggested window: ${timecodeSlug(from).replace(/-/g, ':')} → ${timecodeSlug(to).replace(/-/g, ':')}`));
+  console.log(chalk.gray(`  --from ${Math.round(from)} --to ${Math.round(to)}   (${formatDuration(span * 1000)}, ${pool.length} matching segment(s), ${pad}s padding)`));
+
+  console.log(chalk.bold('\nEvidence at the boundaries — check these before you spend anything:'));
+  console.log(`  ${chalk.cyan('opens')}  ${timecodeSlug(first.start / 1000).replace(/-/g, ':')}  ${first.speaker}: ${(first.text || '').slice(0, 120)}`);
+  console.log(`  ${chalk.cyan('closes')} ${timecodeSlug(last.end / 1000).replace(/-/g, ':')}  ${last.speaker}: ${(last.text || '').slice(0, 120)}`);
+
+  console.log(chalk.bold('\nSpeakers in this recording:'));
+  [...speakerTally.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .forEach(([speaker, count]) => console.log(`  ${speaker} ${chalk.gray(`(${count} segments)`)}`));
+
+  console.log(
+    chalk.gray(
+      '\nA boundary that reads like small talk means the window is too wide; a match at the very\n' +
+        'last segment means it is probably too narrow. Adjust before extracting, not after.'
+    )
+  );
+}
+
 async function downloadRecording(recordingId: string, options: { output?: string }): Promise<void> {
   const { buffer, ext } = await fetchMedia(recordingId);
   const target = options.output || `grain-${recordingId}.${ext}`;
@@ -1964,6 +2054,17 @@ withIncludeOptions(
 withIncludeOptions(recordingCmd.command('get <recording-id>').description('Get one recording'))
   .option('-j, --json', 'Output as JSON')
   .action(getRecording);
+
+recordingCmd
+  .command('window <recording-id>')
+  .description('Derive a watch window from the transcript — one request, no media')
+  .option('-s, --speakers <names>', 'Comma-separated speaker names (loose match, e.g. "Jon,Jaswanth")')
+  .option('-m, --match <regex>', 'Only segments whose text matches this pattern (case-insensitive)')
+  .option('-p, --pad <seconds>', 'Padding either side (default 15 — on-screen artefacts precede the words)')
+  .option('--after <timecode>', 'Ignore anything before this point')
+  .option('--before <timecode>', 'Ignore anything after this point')
+  .option('-j, --json', 'Output as JSON')
+  .action(suggestWindow);
 
 recordingCmd
   .command('transcript <recording-id>')

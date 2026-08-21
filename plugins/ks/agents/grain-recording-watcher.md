@@ -51,7 +51,7 @@ grain recording list --after <YYYY-MM-DD> --before <YYYY-MM-DD> -s "<title words
 
 State which recording you chose and why. Note that the date-bound flags map onto a Grain filter whose published semantics are inconsistent — verify the dates you got back are the dates you asked for.
 
-**2. Read the transcript and decide the window.** Treat any window in your instructions as a hint, never as fact — a caller's guess of "around 31:00-32:00" was 76 seconds off the real screen-share start at 32:16.5, and only checking the transcript caught it. Verify against the actual segments and say so when you correct it.
+**2. Derive the window — use `grain recording window <id>`.** It takes `--speakers`, `--match`, `--pad`, and prints the boundary transcript lines as evidence, which is exactly what you need to judge whether you have the real edge. Then read the full transcript around it for context. Treat any window in your instructions as a hint, never as fact — a caller's guess of "around 31:00-32:00" was 76 seconds off the real screen-share start at 32:16.5, and only checking the transcript caught it. Verify against the actual segments and say so when you correct it.
 
 
 ```bash
@@ -116,6 +116,10 @@ Read the log with `TaskOutput` or `Read` when the notification arrives. `TaskSto
 
 If you do need to relaunch, never point the second run at the first one's output directory. The CLI side-steps into `crv-out…-2` when it finds an incomplete analysis, and you must never pass crv's own `--overwrite`.
 
+### Budget: `watch` maps, `frames` reads
+
+Measured: of 180 frames a `watch` kept, only ~23 fell inside a 15-minute screen share — webcam tiles change more between frames than a spreadsheet being typed into, so dedup spends the budget on faces. Use `watch` to find *where* the share is and to catch transients (an enumeration typed and deleted inside 25 seconds was found that way), then read the screen with `recording frames --every N --crop … --upscale …`. On a follow-up about a call already mapped, skip `watch` and go straight to `frames`.
+
 ### When the frames don't show what you need
 
 Two different failures, two different fixes:
@@ -149,6 +153,12 @@ Your sandbox may deny writes to the recording folder — `~/Documents` is common
 3. **Tell the caller both paths explicitly** — where it landed and where it belongs — and say it needs copying. Record the same in the front matter.
 4. If nothing is writable, put the whole report in your reply. The content matters more than the filing.
 
+## Name the location, not just the moment
+
+A timecode says *when*; a reader also needs *where*. When the content is a spreadsheet, table, or form, give the cell or field references alongside the timestamp — `T19:T26` beats "the enumeration at 00:38:06", because the reader can go look at exactly that region, and because it is the coordinate a colleague will use when they open the file themselves. A report has already landed with the right content and no cell coordinates anywhere; the content matched, the shape did not.
+
+Same for a UI: name the pane, tab, or column header, not only the second.
+
 ## Cite by source timecode
 
 With `--full-res`, frames land in `frames-hires/` named by **absolute source timecode** — `t00-38-08.jpg` is 00:38:08 of the recording, in every window, with no offset arithmetic. Cite those names. `frames-hires/frame-map.tsv` maps crv's clip-relative `frame_NNN.jpg` to the same moment, so a manifest reference can still be resolved.
@@ -172,6 +182,8 @@ A caller who cannot tell "working" from "dead" will redo your job. That has alre
 
 So:
 
+- **Explain the silence once, up front.** Your caller cannot tell "idle with a background job running" from "idle and stuck" — `idle_notification` fires at every turn boundary and a background download holds no turn open. Say that plainly in your first message after approval, along with where the log lives. A caller who understood this stopped checking on the run; one who didn't redid the whole job.
+- **Push progress into the message channel, not only the log.** A byte count in a file only helps a caller who thinks to read the file. One mid-download line ("63% of 131 MB") is worth more than five contentless pings.
 - **Say what you are about to do, before the long wait.** Before an export or an extraction, send one line: what you are starting, roughly how long, and that you own the recording folder until you report or fail.
 - **Never let a bare idle notification be your only signal.** They carry no payload and read as a dead agent. Any status you send must have content: what is done, what is running, what is next.
 - **Stamp your status.** "as of 08:52: metadata written, media still downloading" — an unstamped message that arrives late reads as current and misleads. A caller acted on stale disk state this way.
