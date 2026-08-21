@@ -1,6 +1,6 @@
 ---
 name: grain-cli
-description: Work with Grain meeting recordings through the `grain` CLI (plugins/ks/scripts/grain-cli.ts) — list and search calls, read transcripts and AI summaries/action items, download/export media and subtitles, watch what was on screen via claude-real-video, tag and share recordings, and manage webhooks. Trigger whenever Grain is mentioned at all, or on any of: list/find/search Grain recordings or calls (by date, day, title, team, meeting type, internal vs external); a named meeting, sync, standup, demo, onboarding, customer or sales call to look up; get a transcript, meeting notes, summary, action items, attendees, or highlights of a call; what was said or shown/screen-shared in a meeting; download, export, archive, or sync recordings to disk; watch, view, or analyze a call's video, slides, or keyframes; clip a time range of a call; upload a recording; tag, share, unshare, or rename a recording; set up or inspect a Grain webhook; or a grain.com link, share URL, or recording id.
+description: Work with Grain meeting recordings through the `grain` CLI (plugins/ks/scripts/grain-cli.ts). **If the request involves watching a recording — what was on screen, what a demo showed, what happened in a call — delegate to the `ks:grain-recording-watcher` agent instead of running the CLI inline.** Everything else, drive the CLI directly: — list and search calls, read transcripts and AI summaries/action items, download/export media and subtitles, watch what was on screen via claude-real-video, tag and share recordings, and manage webhooks. Trigger whenever Grain is mentioned at all, or on any of: list/find/search Grain recordings or calls (by date, day, title, team, meeting type, internal vs external); a named meeting, sync, standup, demo, onboarding, customer or sales call to look up; get a transcript, meeting notes, summary, action items, attendees, or highlights of a call; what was said or shown/screen-shared in a meeting; download, export, archive, or sync recordings to disk; watch, view, or analyze a call's video, slides, or keyframes; clip a time range of a call; upload a recording; tag, share, unshare, or rename a recording; set up or inspect a Grain webhook; or a grain.com link, share URL, or recording id.
 ---
 
 # The `grain` CLI
@@ -8,6 +8,16 @@ description: Work with Grain meeting recordings through the `grain` CLI (plugins
 `grain` is this plugin's CLI for Grain meeting recordings, at `plugins/ks/scripts/grain-cli.ts`. Invoke it as `grain <command>` (the `./init` script puts `plugins/ks/scripts/` on `PATH`), or `npx tsx plugins/ks/scripts/grain-cli.ts <command>` if `PATH` isn't set up.
 
 **References:** `references/cli-reference.md` for the exhaustive per-command flag list, JSON output shapes, request counts, and exit behavior. `references/crv-output.md` for what `recording watch` writes to disk, how its frames are selected, and how to read them — read it before interpreting a watch result. This file is the working guide.
+
+## First: is this a watching request?
+
+**If the answer requires looking at the video — what was on screen, what a demo showed, what a diagram said, "watch this call and tell me X" — stop and delegate to the `ks:grain-recording-watcher` agent.** Do not start running commands. Watching means a 700+ line manifest and dozens of JPEG contact sheets; the agent absorbs that and returns an answer plus a written report, keeping the images out of the main conversation.
+
+It runs headless and **cannot ask the user anything**, so settle the ambiguity first — which recording, whose conversation, a window or the whole call — then pass the recording id (or everything known about the call) plus the actual question. If it still can't proceed it returns `NEEDS INPUT` with options rather than guessing, because a wrong guess costs a large download and minutes of processing.
+
+**It pauses before spending anything.** Once it has read the transcript and derived a window, it returns an `AWAITING APPROVAL` block — the recording, the window and why, whether the media is already local, and the expected frame/sheet count — then waits. Relay that to the user, and send the answer back with `SendMessage` to the same agent (`"go"`, or a different window). Do not re-spawn it: it still holds the transcript and window, and a fresh agent would re-derive both. Pass an explicit pre-authorisation in the initial prompt ("user has pre-approved the watch") only when the user has already agreed to the cost.
+
+Drive the CLI inline for everything else — listing, searching, transcripts, summaries, action items, export, tags, sharing, webhooks — and for a genuine one-off where the user explicitly wants the frames in this conversation. The playbook below is what the agent follows, and what you should follow when you don't delegate.
 
 ## First run
 
@@ -60,16 +70,6 @@ Some sessions have a Grain MCP (`list_meetings`, `search_in_transcripts`, `fetch
 - **CLI for anything with media** — `watch`, `frames`, `export`, `download`, `upload`, plus tagging, sharing, and webhooks. The MCP has no video or frame capability at all.
 
 Two MCP traps worth knowing: a `title_search` filter silently under-returns, so never conclude "no such meeting exists" from a filtered list — drop the filter and page the date range instead; and `search_in_transcripts` groups its results under a **`recording`** key, not `meeting`.
-
-## Delegate the watching
-
-For "what happened / what was shown in this call" requests, prefer the **`ks:grain-recording-watcher`** agent over doing it inline. Watching means a 700+ line manifest and dozens of JPEG contact sheets; the agent absorbs that and returns an answer plus a written report, keeping the images out of the main conversation.
-
-It runs headless and **cannot ask the user anything**, so settle the ambiguity first — which recording, whose conversation, a window or the whole call — then pass the recording id (or everything known about the call) plus the actual question. If it still can't proceed it returns `NEEDS INPUT` with options rather than guessing, because a wrong guess costs a large download and minutes of processing.
-
-**It pauses before spending anything.** Once it has read the transcript and derived a window, it returns an `AWAITING APPROVAL` block — the recording, the window and why, whether the media is already local, and the expected frame/sheet count — then waits. Relay that to the user, and send the answer back with `SendMessage` to the same agent (`"go"`, or a different window). Do not re-spawn it: it still holds the transcript and window, and a fresh agent would re-derive both. Pass an explicit pre-authorisation in the initial prompt ("user has pre-approved the watch") only when the user has already agreed to the cost.
-
-Do it inline instead when the request is a one-off on a recording already exported, or when the user is watching you work and wants the frames in the conversation. The playbook below is what the agent follows, and what you should follow when you don't delegate.
 
 ## Playbook: "find the call where X happened, watch it, tell me what you learned"
 
@@ -165,6 +165,8 @@ grain recording list --after 2026-07-01 --all -j | jq -r '.recordings[].id' | xa
 Enrich the sidecar JSON with the same include flags: `grain recording export <id> -i participants,ai_summary,ai_action_items`.
 
 ## `recording watch` — read a call's visuals
+
+> Reminder: this is the inline path. Unless the user asked you to work in this conversation, hand watching requests to `ks:grain-recording-watcher`.
 
 `watch` is `export` plus [claude-real-video](https://github.com/HUANGCHIHHUNGLeo/claude-real-video) (`crv`): it downloads the call, then turns it into scene-detected keyframes plus a transcript you can actually read. Use it when the answer is *on screen* — a demo, a shared deck, a whiteboard, a UI walkthrough — and the transcript alone won't do.
 
