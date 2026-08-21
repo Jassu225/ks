@@ -22,32 +22,20 @@ echo "=== Building CLI tools ==="
 npm run build
 
 echo ""
-echo "=== Checking claude-real-video (crv) ==="
-# Optional dependency: `grain recording watch` exports a Grain call and hands the
-# folder to crv, which turns it into keyframes + transcript an agent can read.
-if command -v crv >/dev/null 2>&1; then
-  echo "crv found: $(command -v crv)"
-elif [ ! -t 0 ]; then
-  echo "crv not installed (non-interactive run) — install later with: pipx install \"claude-real-video[whisper]\""
-elif command -v pipx >/dev/null 2>&1 || command -v pip3 >/dev/null 2>&1; then
-  INSTALL_CRV=""
-  read -rp "Install claude-real-video (enables 'grain recording watch')? [y/N]: " INSTALL_CRV || true
-  if [[ "$INSTALL_CRV" =~ ^[Yy]$ ]]; then
-    if command -v pipx >/dev/null 2>&1; then
-      pipx install "claude-real-video[whisper]" || echo "Warning: pipx install failed — install crv manually"
-    else
-      pip3 install --user "claude-real-video[whisper]" || echo "Warning: pip3 install failed — install crv manually"
-    fi
-  else
-    echo "Skipped. Install later with: pipx install \"claude-real-video[whisper]\""
-  fi
+echo "=== Checking video analysis prerequisites ==="
+# `grain recording export` only needs the API; watching a recording additionally
+# needs the claude-video-vision MCP plugin (which shells out to ffmpeg itself).
+if command -v ffmpeg >/dev/null 2>&1; then
+  echo "ffmpeg found: $(command -v ffmpeg)"
 else
-  echo "No pipx or pip3 found — skipping crv. Install later with: pipx install \"claude-real-video[whisper]\""
+  echo "Warning: ffmpeg not found — needed to analyse recording frames."
+  echo "  Install with: brew install ffmpeg"
 fi
 
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "Warning: ffmpeg not found. crv needs ffmpeg/ffprobe — install with: brew install ffmpeg"
-fi
+echo "To watch recordings (frame extraction), install the video plugin from inside Claude Code:"
+echo "  /plugin marketplace add https://github.com/jordanrendric/claude-video-vision"
+echo "  /plugin install claude-video-vision"
+echo "  /claude-video-vision:setup-video-vision"
 
 echo ""
 echo "=== Configuring shell ==="
@@ -150,6 +138,6 @@ echo "     Then add it to $SCRIPTS_DIR/.env:"
 echo "     GRAIN_API_TOKEN=your_grain_token_here"
 echo "     Verify with: grain auth check"
 echo ""
-echo "  4. Optional: 'grain recording watch <id>' needs claude-real-video + ffmpeg:"
-echo "       pipx install \"claude-real-video[whisper]\" && brew install ffmpeg"
-echo "     It downloads a call, then turns it into keyframes + transcript to read."
+echo "  4. Optional, to see what was on screen in a call: install the video plugin"
+echo "     (/plugin install claude-video-vision) and ffmpeg. 'grain recording export'"
+echo "     puts the media + transcript on disk; the plugin reads the frames."

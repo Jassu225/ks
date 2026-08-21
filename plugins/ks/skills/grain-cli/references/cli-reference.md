@@ -9,7 +9,7 @@ Operator's reference for driving `plugins/ks/scripts/grain-cli.ts`. Every comman
 - **Exit codes:** `0` success; `1` for every failure (missing token, validation error, HTTP error, network error). Errors go to **stderr**, data to **stdout** — so `cmd -j 2>/dev/null | jq` is safe.
 - **Rate limiting:** on `429` the CLI sleeps `Retry-After` seconds and retries, up to 3 attempts, logging each wait to stderr. Limit is 300 requests/minute.
 - **Validation before I/O:** bad include key, bad transcript format, malformed date, and invalid tag are rejected before any request is sent, with the valid values printed.
-- **Env:** `GRAIN_STORAGE_DIR` (export root, default `~/Documents/Grain`), `GRAIN_CRV_BIN` (claude-real-video binary, default `crv`), `GRAIN_API_VERSION` (default `2025-10-31`), `GRAIN_API_BASE_URL` (default `https://api.grain.com`), `GRAIN_OAUTH_CLIENT_ID`, `GRAIN_OAUTH_CLIENT_SECRET`, `GRAIN_OAUTH_REFRESH_TOKEN`.
+- **Env:** `GRAIN_STORAGE_DIR` (export root, default `~/Documents/Grain`), `GRAIN_API_VERSION` (default `2025-10-31`), `GRAIN_API_BASE_URL` (default `https://api.grain.com`), `GRAIN_OAUTH_CLIENT_ID`, `GRAIN_OAUTH_CLIENT_SECRET`, `GRAIN_OAUTH_REFRESH_TOKEN`.
 
 ### Shared include flags
 
@@ -111,49 +111,9 @@ The archiver: media + transcript(s) + sidecar JSON, one folder per recording.
 
 ---
 
-## `recording watch`
+## Watching (frames) — not this CLI
 
-`grain recording watch <recording-id...> [-w <text>] [-d <dir>] [-o <dir>] [-f <formats>] [--max-frames <n>] [--scene <n>] [--fps-floor <n>] [--crv-args "<flags>"] [--crv <bin>] [--skip-export] [--force] [include] [-j]`
-
-Runs `export` (media forced on), then invokes [claude-real-video](https://github.com/HUANGCHIHHUNGLeo/claude-real-video) on the downloaded file so its keyframes and transcript can be read. Use for questions whose answer is on screen rather than in the words.
-
-| Flag | Default | Effect |
-|---|---|---|
-| `-w, --why <text>` | – | Forwarded as crv `--why`; orients the manifest around your question |
-| `-d, --dir <path>` | `$GRAIN_STORAGE_DIR`, else `~/Documents/Grain` | Export storage root |
-| `-o, --out <path>` | `<recording folder>/crv-out` | crv output directory |
-| `-f, --formats <list>` | `vtt` | Transcript sidecars written by the export step |
-| `--max-frames <n>` | crv's 150 | Hard cap on frames |
-| `--scene <n>` | crv's 0.30 | Scene sensitivity; lower = more frames |
-| `--fps-floor <n>` | crv's 1.0 | At least one frame every N seconds |
-| `--from <timecode>` | – | Analyze only from this point; clips with ffmpeg first (crv has no time-range flag) |
-| `--to <timecode>` | – | Analyze only up to this point; either bound may be omitted |
-| `--precise` | off | Re-encode the clip for an exact cut instead of the fast keyframe-aligned stream copy |
-| `--no-grid` | grid on | Skip crv's 3×3 contact sheets (they are requested by default — fewer images to read) |
-| `--crv-args "<flags>"` | – | Space-split and appended verbatim (e.g. `"--report --keep-audio"`) |
-| `--crv <binary>` | `$GRAIN_CRV_BIN`, else `crv` | Executable to run |
-| `--skip-export` | off | Reuse an already-exported folder; fails if no media is there |
-| `--force` | off | Re-download and overwrite export files |
-
-**Preconditions:** `crv` and `ffmpeg`/`ffprobe` on `PATH`. Missing `crv` exits 1 with `pip install "claude-real-video[whisper]"`; a missing `ffmpeg` surfaces as a crv failure. crv's exit status is propagated.
-
-**Transcript reuse:** the export step writes `<base>.vtt` next to `<base>.mp4` with an identical stem, which is the sidecar crv prefers over transcribing — so Whisper never runs and no flag is required. The human output states which path was taken. If you need crv's own `--no-transcribe` (visual-only, audio untouched), pass it through `--crv-args "--no-transcribe"`.
-
-**Time windows:** `--from`/`--to` accept seconds (`90`), `mm:ss` (`12:30`), or `hh:mm:ss(.ms)`. Omitting `--to` runs to the end of the file (no `-to` is passed to ffmpeg) and slugs as `end`. The clip is written next to the full media as `<base>_<from>_<to>.<ext>` (e.g. `..._00-12-30_00-18-00.mp4`) and its analysis goes to `crv-out_<from>_<to>/`, so windowed and full passes coexist. The exported `.vtt` is trimmed to the window and re-based to zero — cues overlapping a boundary are kept and clamped — so the clip keeps a same-stem sidecar and Whisper still never runs. Clipping is skipped when the clip already exists (unless `--force`), and costs no Grain requests. Requires `ffmpeg` on `PATH`.
-
-**Analysis output** (in the crv directory): `MANIFEST.txt` (frame index with timestamps + transcript — read first), `grids/*.jpg` (3×3 contact sheets), `transcript.txt`, `frames/*.jpg`. Human output ends with those paths; the transcript path falls back to the exported sidecar when crv wrote none.
-
-**JSON:** `{ "watched": [{ "id", "title", "folder", "media", "transcript", "analysis" }] }`. Passing `-j` silences crv's own stdout.
-
-**Cost:** identical Grain requests to `export` (1 metadata + 1 media + 1 per format, per recording, none when `--skip-export`), plus local CPU in crv. Recordings are processed sequentially.
-
-**Output contract:** see `crv-output.md` in this folder for every file crv writes, the frame-selection rules, and the manifest layout.
-
-**Reading the result:** `MANIFEST.txt` → `grids/` contact sheets → individual `frames/` only where detail is needed, citing timestamps. The manifest's `--- timeline ---` already places each frame inside the speech span containing it (and marks `(no speech)` gaps), so frame-to-transcript alignment needs no work on your side. Loading every file in `frames/` defeats the dedup that makes this cheap.
-
-**Sizing:** with `--max-frames` unset, crv keeps `clamp(150, duration_seconds × 1.5, 600)` frames — a 47-minute call hits the 600 ceiling (67 grids). crv also copies the input to `crv-out/source.mp4`, so budget ~2× the media size on disk.
-
----
+Frame extraction lives in the **claude-video-vision** MCP server (`video_info`, `video_analyze`, `video_watch`, `video_detail`), not here. The CLI's job ends at `export`: media plus subtitle sidecar plus metadata on disk. See `watching-recordings.md` for the seam, including the two settings that matter most for meeting recordings (`skip_audio: true`, and a high `resolution` with `frame_format: "png"` for on-screen text).
 
 ## `recording upload`
 
@@ -269,9 +229,9 @@ For debugging an unexpected response or a raw-body error message.
 | Command | Endpoint |
 |---|---|
 | `recording list` | `POST /v2/recordings` |
-| `recording get`, `export`/`watch` (metadata) | `POST /v2/recordings/:id` |
-| `recording transcript`, `export`/`watch` (transcripts) | `GET /v2/recordings/:id/transcript[.txt\|.vtt\|.srt]` |
-| `recording download`, `export`/`watch` (media) | `GET /v2/recordings/:id/download` |
+| `recording get`, `export` (metadata) | `POST /v2/recordings/:id` |
+| `recording transcript`, `export` (transcripts) | `GET /v2/recordings/:id/transcript[.txt\|.vtt\|.srt]` |
+| `recording download`, `export` (media) | `GET /v2/recordings/:id/download` |
 | `recording upload` | `POST /v2/recordings/upload` then `PUT <presigned url>` |
 | `recording update` | `PATCH /v2/recordings/:id` |
 | `recording tag add` / `rm` | `PUT /v2/recordings/:id/tags` / `DELETE /v2/recordings/:id/tags/:tag` |

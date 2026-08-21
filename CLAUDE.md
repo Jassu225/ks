@@ -41,7 +41,21 @@ A monorepo for Claude Code plugins:
 - **Production**: `cd plugins/ks && ./init`
 - **Development**: `cd plugins/ks && ./init-dev`
 
-This installs dependencies, builds CLI tools, and adds `plugins/ks/scripts/` to `PATH`. Use `claude-ks` to launch Claude Code with the plugin loaded.
+This installs dependencies, builds CLI tools, adds `plugins/ks/scripts/` to `PATH`, and seeds `plugins/ks/scripts/.env` from `.env.example` when absent. It is idempotent — re-run it any time. Use `claude-ks` to launch Claude Code with the plugin loaded; the skills and agents only load in sessions started that way.
+
+Add the API tokens you need to `plugins/ks/scripts/.env` (see [Environment Setup](#environment-setup)), then `source ~/.zshrc`.
+
+### Optional: video analysis for Grain recordings
+
+`grain recording export` puts a call's media and transcript on disk, but reading the *frames* needs the [claude-video-vision](https://github.com/jordanrendric/claude-video-vision) MCP plugin. `./init` cannot install it — that is a Claude Code operation, not a shell one — so run these once from inside Claude Code:
+
+```
+/plugin marketplace add https://github.com/jordanrendric/claude-video-vision
+/plugin install claude-video-vision
+/claude-video-vision:setup-video-vision
+```
+
+Also needs `ffmpeg` on `PATH` (`brew install ffmpeg`). The wizard's audio-backend choice is irrelevant for Grain work — the `grain-cli` skill always passes `skip_audio: true` and uses Grain's own transcript. Every other `grain` command works without this.
 
 ### Code Review
 
@@ -107,7 +121,7 @@ Research agents are **documentarians** — they describe what exists in the code
 | `ks:codebase-pattern-finder` | Show existing patterns and usage examples (read-only) |
 | `ks:code-simplifier` | Refine code for clarity (has edit access) |
 | `ks:web-search-researcher` | External research via web search |
-| `ks:grain-recording-watcher` | Watch a Grain meeting recording and report what was said **and shown** — locates the call, narrows to the relevant window from the transcript, runs `grain recording watch`, reads the keyframes, and leaves a `findings-*.md` report next to the analysis. Runs headless: clarify which call/window first, and it pauses with an `AWAITING APPROVAL` cost estimate before downloading — relay it and reply with `SendMessage` |
+| `ks:grain-recording-watcher` | Watch a Grain meeting recording and report what was said **and shown** — locates the call, narrows to the relevant window from the transcript, exports the media, extracts that window via the claude-video-vision MCP, reads the frames, and leaves a `findings-*.md` report beside the export. Runs headless: clarify which call/window first, and it pauses with an `AWAITING APPROVAL` cost estimate before downloading — relay it and reply with `SendMessage` |
 
 The research agents also hold `SendMessage`, so a follow-up question can be sent to a still-running agent instead of re-spawning it and losing its context. `grain-recording-watcher` depends on this: it pauses for watch approval and resumes from the message you send back.
 
@@ -119,7 +133,7 @@ Skills live in `plugins/ks/skills/<name>/SKILL.md` and load automatically when t
 |-------|---------|
 | `add-page-ai-chat` | Wire a data-modifying Karmie AI chat onto a KarmaSuite page — new `ReportAgentKind` + handler, tRPC→`*Core` extraction, AI tools, FAB/drawer wiring, and (for document-interpreting agents) an uploaded Anthropic Agent Skill |
 | `create-report-agent` | Build and iterate a KarmaSuite report agent that reproduces a customer's grant report — intake questions, probes, ground-truth reconstruction, ruleset authoring, the run→score→fix loop, replay validation, prod cutover. Configuration only, no repo changes |
-| `grain-cli` | Operate the `grain` CLI (`plugins/ks/scripts/grain-cli.ts`) for anything Grain — list/search calls, transcripts, AI summaries and action items, `recording export` to archive media+subtitles, `recording watch` to see what was on screen via claude-real-video, tag/share, webhooks. Loads on any mention of Grain, a call/meeting recording, a meeting transcript or summary, or a grain.com link. `references/cli-reference.md` is the per-command flag/output/cost reference |
+| `grain-cli` | Operate the `grain` CLI (`plugins/ks/scripts/grain-cli.ts`) for anything Grain — list/search calls, transcripts, AI summaries and action items, `recording export` to archive media+subtitles, `recording export` to put media+transcript on disk for the claude-video-vision MCP to read, tag/share, webhooks. Loads on any mention of Grain, a call/meeting recording, a meeting transcript or summary, or a grain.com link. `references/cli-reference.md` is the per-command flag/output/cost reference |
 
 ## Two Workflow Types
 
@@ -161,6 +175,7 @@ Provides LSP-powered semantic tools for symbol navigation, reference tracing, an
 - **Planning**: `/ks:create_plan` runs in PLAN MODE — no task creation, no code changes. Use `ExitPlanMode` when approved.
 - **Phase 9 boundary**: Planning only. Implementation happens in Phase 10.
 - **Research agents are read-only**: They document what exists. Findings must be verified in actual code.
+- **Watching a Grain recording**: delegate to `ks:grain-recording-watcher` rather than driving `grain` inline. Frames enter context as images; the agent absorbs that cost and leaves a `findings-*.md` behind. Inline `grain` use is for non-visual work (list, transcript, summary, export, tags, webhooks).
 - **Hooks run automatically**: Format, lint, and typecheck run on every Stop and SubagentStop event. A repo may exclude already-broken files via `.quality-ignore` in its root (see `plugins/ks/scripts/README.md`) — never add a file you broke yourself.
 
 ## Environment Setup

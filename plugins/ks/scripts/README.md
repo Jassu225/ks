@@ -83,7 +83,29 @@ npx tsx linear-cli.ts document list --project <id>
 
 ### Grain CLI
 
-CLI for the [Grain public API v2](https://developers.grain.com/) — meeting recordings, transcripts, AI summaries, webhooks. Needs `GRAIN_API_TOKEN` in `.env` (Personal or Workspace token from <https://grain.com/app/settings/integrations?tab=api>).
+CLI for the [Grain public API v2](https://developers.grain.com/) — meeting recordings, transcripts, AI summaries, webhooks.
+
+**Install:**
+
+```bash
+cd plugins/ks && ./init          # or ./init-dev
+source ~/.zshrc
+grain auth check                 # should print the base URL, API version, visible users
+```
+
+`./init` installs deps, builds `grain-cli.js`, puts `scripts/` on `PATH`, seeds `.env` from `.env.example` when absent, and checks for `ffmpeg`. It is idempotent — re-running never overwrites an existing `.env` or duplicates the `PATH` line. Add `GRAIN_API_TOKEN` to `.env` yourself (Personal or Workspace token from <https://grain.com/app/settings/integrations?tab=api>); the token kind decides what you can see.
+
+**To also watch recordings** (frame extraction), install the video plugin from inside Claude Code — `./init` cannot do this, it is not a shell operation:
+
+```
+/plugin marketplace add https://github.com/jordanrendric/claude-video-vision
+/plugin install claude-video-vision
+/claude-video-vision:setup-video-vision
+```
+
+Its setup wizard asks for an audio backend; the choice does not matter for Grain work, since we always pass `skip_audio: true` and read Grain's own transcript. `ffmpeg` must be on `PATH` (`brew install ffmpeg`) — the MCP server shells out to it. The `video_*` tools appear once the plugin loads, which may need a session restart.
+
+Note that the `grain-cli` skill and the `ks:grain-recording-watcher` agent only load in sessions started with the ks plugin (`claude-ks`, or via `KS_EXTRA_PLUGINS`).
 
 ```bash
 # Verify the token (Grain has no whoami endpoint — this probes POST /v2/users)
@@ -103,13 +125,6 @@ CLI for the [Grain public API v2](https://developers.grain.com/) — meeting rec
 ./grain recording export <id-a> <id-b> -f vtt,srt --force        # several calls, overwrite
 ./grain recording export <recording-id> --no-media -f txt        # transcript only
 ./grain recording export <recording-id> --dir ~/Archive/Grain    # one-off storage root
-
-# Watch a call: export, then keyframes + transcript via claude-real-video
-./grain recording watch <recording-id> -w "what did the demo show?"
-./grain recording watch <recording-id> --from 12:30 --to 18:00     # window only
-./grain recording watch <recording-id> --from 12:30                # from there to the end
-./grain recording watch <recording-id> --max-frames 60 --scene 0.2
-./grain recording watch <recording-id> --skip-export             # reuse an existing export
 
 # Mutations
 ./grain recording update <recording-id> --title "Q3 kickoff"
@@ -132,7 +147,7 @@ CLI for the [Grain public API v2](https://developers.grain.com/) — meeting rec
 
 `recording export` writes to `$GRAIN_STORAGE_DIR` (default `~/Documents/Grain`), one folder per recording named `<start-date>_<title-slug>_<id-prefix>/`, with the media, each requested transcript format, and the recording JSON all sharing that base name. Existing files are left alone unless `--force` — and the media existence check happens *before* the download, so a re-run never re-pulls gigabytes.
 
-`recording watch` adds [claude-real-video](https://github.com/HUANGCHIHHUNGLeo/claude-real-video) on top: it exports, then runs `crv` on the media to produce `crv-out/MANIFEST.txt` + `frames/*.jpg` + `transcript.txt` inside the recording's folder — which is how an agent reads what was *on screen*. Because the export writes `<base>.vtt` next to `<base>.mp4` with the same stem, crv reuses Grain's transcript instead of running Whisper. `--from`/`--to` clip a window with ffmpeg first (crv itself has no time-range flag) and trim the sidecar to match. When a recording 406s on `.vtt`/`.srt`, the subtitle file is rebuilt locally from the JSON transcript so the sidecar is always there. Needs `crv` and `ffmpeg` on `PATH`; `./init` offers to install both.
+Frame extraction is **not** in this CLI: `export` puts the media and a subtitle sidecar on disk, and the [claude-video-vision](https://github.com/jordanrendric/claude-video-vision) MCP plugin reads the pixels (`video_watch` / `video_detail` on the exported `.mp4`, with `skip_audio: true` since Grain already gave you the transcript). See the `grain-cli` skill's `references/watching-recordings.md`.
 
 Worth knowing before you script against it: reads are `POST` with the filters in a JSON body; `recording list` paginates by opaque cursor with **no server-side page size** (`--all` walks every page, `--pages`/`--limit` cap it) against a 300 req/min limit; transcripts are one extra request per recording; upload completion is reported **only** to an `upload_status` webhook; and there is no delete-recording endpoint. The `grain-cli` skill (`plugins/ks/skills/grain-cli/`) carries the full API reference and the documented gaps.
 
