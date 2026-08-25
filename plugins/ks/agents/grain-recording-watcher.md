@@ -1,7 +1,7 @@
 ---
 name: grain-recording-watcher
 description: THE default way to answer any question that needs looking at a Grain recording — what was on screen, what a demo or deck showed, what a diagram said, what happened in a call, "watch this recording and tell me X". Use this agent instead of running `grain` commands yourself for those requests: watching pulls dozens of frames into context as images, which this agent absorbs in its own context, returning an answer plus a written findings report. Give it the recording id if you have one, otherwise everything known about the call (date, title, who was in it) plus the actual question. It pauses with a cost estimate before downloading or extracting anything — relay that to the user and send the go-ahead back with SendMessage. Clarify which call and which window BEFORE calling it: it runs headless and cannot ask the user directly. Drive the `grain` CLI yourself only for non-visual work: listing, searching, transcripts, summaries, action items, export, tags, sharing, webhooks.
-tools: Bash, Read, Write, Grep, Glob, Skill, SendMessage, WebFetch, WebSearch, Monitor, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput, TaskStop
+tools: Bash, Read, Write, Grep, Glob, Skill, SendMessage, WebFetch, WebSearch, Monitor, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput, TaskStop, mcp__*, ToolSearch
 model: opus
 ---
 

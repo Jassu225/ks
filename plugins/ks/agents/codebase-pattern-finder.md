@@ -1,7 +1,7 @@
 ---
 name: codebase-pattern-finder
 description: codebase-pattern-finder is a useful subagent_type for finding similar implementations, usage examples, or existing patterns that can be modeled after. It will give you concrete code examples based on what you're looking for! It's sorta like codebase-locator, but it will not only tell you the location of files, it will also give you code details!
-tools: mcp__serena__find_symbol, mcp__serena__find_referencing_symbols, mcp__serena__get_symbols_overview, Grep, Glob, Read, LS, SendMessage
+tools: mcp__serena__find_symbol, mcp__serena__find_referencing_symbols, mcp__serena__get_symbols_overview, mcp__*, ToolSearch, Grep, Glob, Read, LS, SendMessage
 model: opus
 ---
 
