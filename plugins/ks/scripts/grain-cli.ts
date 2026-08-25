@@ -20,7 +20,7 @@
 import { Command, Option } from 'commander';
 import { spawnSync } from 'child_process';
 import chalk from 'chalk';
-import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { basename, join } from 'path';
 
@@ -1074,142 +1074,88 @@ function formatClock(seconds: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-const VTT_CUE = /^(\d{2,}:)?\d{2}:\d{2}[.,]\d{3}\s+-->\s+(\d{2,}:)?\d{2}:\d{2}[.,]\d{3}/;
-
 /**
- * Trim a WebVTT file to [from, to] and re-base its timestamps to zero, so the
- * clipped media keeps a same-stem sidecar and crv still skips Whisper.
- * Cues are kept when they overlap the window at all, then clamped to it.
+ * crv 0.10.0 extracts at `--frame-width` (issue #17), so `frames/` is already at
+ * whatever resolution we asked for — the second ffmpeg pass this used to run is
+ * gone. What remains is the naming problem it also solved.
+ *
+ * crv numbers frames per run, so `frame_051.jpg` means a different moment in
+ * every window, and a report citing it has to carry the window offset in its
+ * head. Getting that offset wrong is exactly how a real report ended up citing
+ * 00:38:08 for a frame that was at 30:32. So mirror the frames under names that
+ * cannot be misaligned — `t00-38-08.jpg` says what it is — and write the maps
+ * that let a `frame_NNN` citation still be resolved.
+ *
+ * The mirror is hardlinked, not copied: same bytes, one inode, no second copy of
+ * a 3840px frame set on disk. Falls back to a copy if the link cannot be made.
  */
-function trimSubtitle(source: string, from: number, to: number | undefined, format: string): string {
-  const upper = to ?? Number.POSITIVE_INFINITY;
-  const separator = format === 'srt' ? ',' : '.';
-  const blocks = source.replace(/\r\n/g, '\n').split(/\n{2,}/);
-  const kept: string[] = format === 'srt' ? [] : ['WEBVTT'];
-
-  for (const block of blocks) {
-    const lines = block.split('\n').filter(l => l.trim() !== '');
-    const timingIndex = lines.findIndex(l => VTT_CUE.test(l.trim()));
-    if (timingIndex === -1) continue; // header, NOTE, or stray cue id
-
-    const [rawStart, rawEnd] = lines[timingIndex].split('-->').map(t => t.trim().split(' ')[0].replace(',', '.'));
-    const start = parseTimecode(rawStart, 'transcript timestamp');
-    const end = parseTimecode(rawEnd, 'transcript timestamp');
-    if (end <= from || start >= upper) continue;
-
-    const timing =
-      `${msToStamp((Math.max(start, from) - from) * 1000, separator)} --> ` +
-      `${msToStamp((Math.min(end, upper) - from) * 1000, separator)}`;
-    kept.push([...lines.slice(0, timingIndex), timing, ...lines.slice(timingIndex + 1)].join('\n'));
-  }
-
-  return `${kept.join('\n\n')}\n`;
-}
-
-/**
- * crv has no time-range flag — it always processes the whole file — so a window
- * has to be cut before it runs. Stream-copies by default (fast, but the cut
- * lands on the nearest keyframe); `precise` re-encodes for an exact boundary.
- */
-function clipMedia(mediaFile: string, target: string, from: number, to: number | undefined, precise: boolean): void {
-  // `-to Infinity` is rejected by ffmpeg — with no upper bound, omit it entirely
-  // and let the clip run to the end of the file.
-  const upperBound = to === undefined ? [] : ['-to', String(to)];
-  const args = precise
-    ? ['-y', '-i', mediaFile, '-ss', String(from), ...upperBound, '-c:v', 'libx264', '-c:a', 'aac', target]
-    : ['-y', '-ss', String(from), ...upperBound, '-i', mediaFile, '-c', 'copy', target];
-
-  const run = spawnSync('ffmpeg', ['-loglevel', 'error', ...args], { stdio: 'inherit' });
-  if (run.error) {
-    console.error(chalk.red('Cannot run `ffmpeg` — required for --from/--to clipping'));
-    console.error(chalk.yellow('Install it with: brew install ffmpeg'));
-    process.exit(1);
-  }
-  if (run.status !== 0) {
-    console.error(chalk.red(`ffmpeg exited with status ${run.status ?? 'unknown'}`));
-    process.exit(run.status || 1);
-  }
-}
-
-/**
- * crv extracts at a hardcoded `scale=640:-1`, so its frames are 640px wide and
- * its grid cells 480px — fine for faces, unreadable for a shared spreadsheet or
- * code. crv's real value is choosing WHICH moments matter, so keep its selection
- * and re-extract those exact timestamps from the local media at full resolution.
- */
-function extractFullResFrames(
-  mediaFile: string,
+function mapFramesByTime(
   analysisDir: string,
   force: boolean,
-  offsetSec = 0
-): { dir: string; extracted: number; skipped: number } | undefined {
+  link: boolean
+): { dir?: string; linked: number; skipped: number } | undefined {
   const framesJson = join(analysisDir, 'frames.json');
   if (!existsSync(framesJson)) {
-    console.error(chalk.yellow(`No frames.json in ${analysisDir} — skipping full-resolution extraction`));
+    console.error(chalk.yellow(`No frames.json in ${analysisDir} — skipping the frame-time maps`));
     return undefined;
   }
 
   const data = JSON.parse(readFileSync(framesJson, 'utf8')) as {
     frames: { file: string; timestamp_sec: number }[];
   };
-  const dir = join(analysisDir, 'frames-hires');
-  mkdirSync(dir, { recursive: true });
+  const frames = data.frames || [];
 
-  // "Full resolution" is only as good as the source. On a 720p recording these
-  // frames are 1280px and spreadsheet text stays unreadable — a real run got
-  // every legible read from `frames --crop --upscale` instead, and used this
-  // directory mainly for frame-map.tsv. Say so before spending 180 seeks.
-  const longEdge = sourceLongEdgeProbe(mediaFile);
-  if (longEdge && longEdge <= 1280) {
-    console.error(
-      chalk.yellow(
-        `Note: source long edge is ${longEdge}px, so --full-res buys little for small on-screen text.\n` +
-          '  For readable spreadsheet cells or code use: grain recording frames <id> --at <sec> --crop … --upscale 3'
-      )
-    );
+  // crv 0.10.0 reports source timecodes even inside a --from/--to window
+  // ("a window shifts the analysis, not the clock"), so timestamp_sec needs no
+  // offset applied to it. That offset argument is what this function used to
+  // carry, and it is gone along with the clip that made it necessary.
+  // A timecode slug is second-resolution, and crv keeps frames closer together
+  // than that — 58 frames of a one-minute window collapsed onto 54 names, and
+  // the four that collided were silently dropped as "already present". So count
+  // the slugs first and give every member of a collision its milliseconds. A
+  // bare tHH-MM-SS name therefore always means exactly one frame.
+  const slugCounts = new Map<string, number>();
+  for (const frame of frames) {
+    const slug = timecodeSlug(frame.timestamp_sec);
+    slugCounts.set(slug, (slugCounts.get(slug) ?? 0) + 1);
   }
 
-  let extracted = 0;
+  const map: string[] = ['crv_frame\tsource_timecode\tsource_sec\tby_time_file'];
+  let linked = 0;
   let skipped = 0;
+  const dir = join(analysisDir, 'frames-by-time');
+  if (link) mkdirSync(dir, { recursive: true });
 
-  // Name by ABSOLUTE source timecode, not by crv's clip-relative frame_NNN.
-  // crv numbers frames per clip, so `frame_051.jpg` means a different moment in
-  // every window — and a report that cites it has to carry the window offset in
-  // its head. Getting that offset wrong is exactly how a real report ended up
-  // citing 00:38:08 for a frame that was at 30:32. A filename of t00-38-08.jpg
-  // cannot be misaligned: the frame says what it is.
-  const map: string[] = ['crv_frame\tsource_timecode\tsource_sec\thires_file'];
-
-  for (const frame of data.frames || []) {
-    const sourceSec = frame.timestamp_sec + offsetSec;
-    const name = `t${timecodeSlug(sourceSec)}.jpg`;
-    map.push(`${frame.file}\t${timecodeSlug(sourceSec).replace(/-/g, ':')}\t${sourceSec.toFixed(3)}\t${name}`);
+  for (const frame of frames) {
+    const sourceSec = frame.timestamp_sec;
+    const slug = timecodeSlug(sourceSec);
+    const ms = String(Math.round((sourceSec % 1) * 1000)).padStart(3, '0');
+    const name = `t${slug}${(slugCounts.get(slug) ?? 0) > 1 ? `-${ms}` : ''}.jpg`;
+    map.push(`${frame.file}\t${slug.replace(/-/g, ':')}\t${sourceSec.toFixed(3)}\t${link ? name : '(not linked)'}`);
+    if (!link) continue;
 
     const target = join(dir, name);
-    if (existsSync(target) && !force) {
-      skipped++;
+    const source = join(analysisDir, 'frames', frame.file);
+    if (existsSync(target)) {
+      if (!force) {
+        skipped++;
+        continue;
+      }
+      rmSync(target, { force: true });
+    }
+    if (!existsSync(source)) {
+      console.error(chalk.yellow(`crv listed ${frame.file} but it is not in frames/ — skipping`));
       continue;
     }
-    // Seek is clip-relative (the media here may be a clip); the NAME is absolute.
-    const run = spawnSync(
-      'ffmpeg',
-      ['-loglevel', 'error', '-y', '-ss', String(frame.timestamp_sec), '-i', mediaFile,
-       '-frames:v', '1', '-q:v', '2', target],
-      { stdio: 'inherit' }
-    );
-    if (run.error) {
-      console.error(chalk.red('Cannot run `ffmpeg` — required for --full-res'));
-      process.exit(1);
+    try {
+      linkSync(source, target);
+    } catch {
+      copyFileSync(source, target);
     }
-    if (run.status !== 0) {
-      console.error(chalk.yellow(`ffmpeg could not extract ${name} (clip ${frame.timestamp_sec}s) — continuing`));
-      continue;
-    }
-    extracted++;
+    linked++;
   }
 
-  // So a manifest citation of frame_051.jpg can still be resolved to a file.
-  writeFileSync(join(dir, 'frame-map.tsv'), `${map.join('\n')}\n`);
+  writeFileSync(join(analysisDir, 'frame-map.tsv'), `${map.join('\n')}\n`);
 
   // Which source times each contact sheet covers. Grids hold 9 frames in order,
   // so this is derivable — but deriving it by hand every run is the difference
@@ -1217,7 +1163,7 @@ function extractFullResFrames(
   // entire 15-minute screen share lived in grids 17-19.
   const perGrid = 9;
   const gridLines = ['grid\tfirst_source\tlast_source\tframes'];
-  const kept = (data.frames || []).map((f, i) => ({ i, at: timecodeSlug(f.timestamp_sec + offsetSec).replace(/-/g, ':') }));
+  const kept = frames.map((f, i) => ({ i, at: timecodeSlug(f.timestamp_sec).replace(/-/g, ':') }));
   for (let g = 0; g * perGrid < kept.length; g++) {
     const slice = kept.slice(g * perGrid, (g + 1) * perGrid);
     gridLines.push(
@@ -1226,7 +1172,7 @@ function extractFullResFrames(
   }
   writeFileSync(join(analysisDir, 'grid-map.tsv'), `${gridLines.join('\n')}\n`);
 
-  return { dir, extracted, skipped };
+  return { dir: link ? dir : undefined, linked, skipped };
 }
 
 /** Width and height of a media file in pixels; zeros if ffprobe can't say. */
@@ -1474,17 +1420,27 @@ interface WatchOptions extends ExportOptions {
   skipExport?: boolean;
   from?: string;
   to?: string;
-  precise?: boolean;
   grid?: boolean;
   fullRes?: boolean;
+  frameWidth?: string;
 }
 
 function requireCrv(binary: string): void {
-  const probe = spawnSync(binary, ['--help'], { stdio: 'ignore' });
+  const probe = spawnSync(binary, ['--help'], { encoding: 'utf8' });
   if (probe.error) {
     console.error(chalk.red(`Cannot run \`${binary}\` — claude-real-video is not installed or not on PATH`));
     console.error(chalk.yellow('Install it with:  pip install "claude-real-video[whisper]"'));
     console.error(chalk.yellow('It also needs ffmpeg/ffprobe on PATH (brew install ffmpeg).'));
+    process.exit(1);
+  }
+
+  // `watch` passes --from and --frame-width, both of which arrived in 0.10.0.
+  // An older crv would fail inside argparse with a message about this CLI's
+  // flags, which reads like a bug here rather than an install to update.
+  const help = `${probe.stdout || ''}${probe.stderr || ''}`;
+  if (!help.includes('--frame-width')) {
+    console.error(chalk.red(`\`${binary}\` is older than 0.10.0 — it has no --frame-width or --from`));
+    console.error(chalk.yellow('Upgrade it with:  pipx upgrade claude-real-video   (or pip install -U claude-real-video)'));
     process.exit(1);
   }
 }
@@ -1514,7 +1470,8 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
     media?: string;
     transcript?: string;
     analysis: string;
-    hiresFrames?: string;
+    byTimeFrames?: string;
+    frameWidth?: number;
   }[] = [];
 
   for (const recordingId of recordingIds) {
@@ -1545,32 +1502,85 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
     // sidecar over running Whisper — so no flag is needed to avoid transcribing.
     let sidecar = ['vtt', 'srt'].find(f => existsSync(join(entry.folder, `${entry.base}.${f}`)));
     let mediaForCrv = entry.mediaFile;
-    let windowSuffix = '';
 
-    if (window) {
-      windowSuffix = `_${timecodeSlug(window.from)}_${window.to === undefined ? 'end' : timecodeSlug(window.to)}`;
+    // A window no longer cuts the media — crv 0.10.0 takes --from/--to itself and
+    // reports source timecodes through it. The suffix still separates one
+    // window's analysis directory from another's.
+    const windowSuffix = window
+      ? `_${timecodeSlug(window.from)}_${window.to === undefined ? 'end' : timecodeSlug(window.to)}`
+      : '';
+
+    // crv 0.10.0 `--to` silently destroys every frame timestamp. Its `-t` is an
+    // output-side limit, so showinfo logs the whole pass while ffmpeg writes only
+    // the windowed frames; extract_frames() sees len(times) != count and returns
+    // [], so every record gets t=None, frames.json is never written, and MANIFEST
+    // quietly drops its `frame timestamps:` line. Measured on a 20s clip:
+    // --from alone → frames.json; --to in any combination → none.
+    //
+    // `--from` alone is correct, so give crv only that and impose the upper bound
+    // by handing it a head clip — 0 → to, origin unmoved. Because the clip starts
+    // at zero its clock IS the source clock, which is what makes this cheap: no
+    // offset arithmetic anywhere, and the exported subtitle stays valid as-is
+    // rather than needing to be trimmed and re-based.
+    if (window?.to !== undefined) {
       const ext = entry.mediaFile.split('.').pop() || 'mp4';
-      const clipBase = `${entry.base}${windowSuffix}`;
-      const clipFile = join(entry.folder, `${clipBase}.${ext}`);
+      const headBase = `${entry.base}_head_${timecodeSlug(window.to)}`;
+      const headFile = join(entry.folder, `${headBase}.${ext}`);
 
-      if (!existsSync(clipFile) || options.force) {
-        clipMedia(entry.mediaFile, clipFile, window.from, window.to, Boolean(options.precise));
-      }
-      mediaForCrv = clipFile;
-
-      // Re-base the transcript onto the clip so the sidecar still lines up.
-      // Both .srt and .vtt use the same cue grammar here, so one trimmer covers
-      // them; the output keeps whichever extension was exported.
-      const subtitleFormat = ['srt', 'vtt'].find(f => existsSync(join(entry.folder, `${entry.base}.${f}`)));
-      if (subtitleFormat) {
-        const source = join(entry.folder, `${entry.base}.${subtitleFormat}`);
-        const clipSubtitle = join(entry.folder, `${clipBase}.${subtitleFormat}`);
-        if (!existsSync(clipSubtitle) || options.force) {
-          writeFileSync(clipSubtitle, trimSubtitle(readFileSync(source, 'utf8'), window.from, window.to, subtitleFormat));
+      if (!existsSync(headFile) || options.force) {
+        if (!options.json) {
+          console.log(
+            chalk.gray(`  crv --to drops frame timestamps, so bounding with a head clip → ${basename(headFile)}`)
+          );
         }
-        sidecar = subtitleFormat;
+        const cut = spawnSync(
+          'ffmpeg',
+          ['-loglevel', 'error', '-y', '-i', entry.mediaFile, '-t', String(window.to), '-c', 'copy', headFile],
+          { stdio: 'inherit' }
+        );
+        if (cut.error) {
+          console.error(chalk.red('Cannot run `ffmpeg` — required to bound a --to window'));
+          console.error(chalk.yellow('Install it with: brew install ffmpeg'));
+          process.exit(1);
+        }
+        if (cut.status !== 0) {
+          console.error(chalk.red(`ffmpeg exited with status ${cut.status ?? 'unknown'}`));
+          process.exit(cut.status || 1);
+        }
+      }
+      mediaForCrv = headFile;
+
+      // Same clock, so the subtitle needs no editing — it only needs the clip's
+      // stem for crv to find it and skip Whisper. Hardlink, don't copy.
+      if (sidecar) {
+        const headSubtitle = join(entry.folder, `${headBase}.${sidecar}`);
+        if (!existsSync(headSubtitle)) {
+          const source = join(entry.folder, `${entry.base}.${sidecar}`);
+          try {
+            linkSync(source, headSubtitle);
+          } catch {
+            copyFileSync(source, headSubtitle);
+          }
+        }
       } else {
         sidecar = undefined;
+      }
+    }
+
+    // --frame-width (crv 0.10.0, issue #17) replaces the second ffmpeg pass this
+    // used to run. --full-res means "whatever the source actually is", so probe
+    // it; an explicit --frame-width wins over the probe.
+    let frameWidth = options.frameWidth ? Number(options.frameWidth) : undefined;
+    if (frameWidth === undefined && options.fullRes) {
+      const probed = sourceDimensions(entry.mediaFile).width;
+      if (!probed) {
+        console.error(chalk.red(`ffprobe could not read the frame width of ${basename(entry.mediaFile)}`));
+        console.error(chalk.yellow('Pass an explicit --frame-width <px> instead of --full-res.'));
+        process.exit(1);
+      }
+      frameWidth = probed;
+      if (!options.json) {
+        console.log(chalk.gray(`  --full-res → --frame-width ${frameWidth} (source width of ${basename(entry.mediaFile)})`));
       }
     }
 
@@ -1586,9 +1596,7 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
         if (!options.json) {
           console.log(chalk.yellow(`\nReusing the analysis already in ${analysisDir} (pass --force to redo it).`));
         }
-        const hires = options.fullRes
-          ? extractFullResFrames(mediaForCrv, analysisDir, false, window?.from ?? 0)
-          : undefined;
+        const hires = mapFramesByTime(analysisDir, false, Boolean(options.fullRes || options.frameWidth));
         watched.push({
           id: entry.recording.id,
           title: entry.recording.title,
@@ -1598,7 +1606,8 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
             ? join(entry.folder, `${basename(mediaForCrv).replace(/\.[^.]+$/, '')}.${sidecar}`)
             : undefined,
           analysis: analysisDir,
-          hiresFrames: hires?.dir,
+          byTimeFrames: hires?.dir,
+          frameWidth,
         });
         continue;
       }
@@ -1622,13 +1631,17 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
     if (options.maxFrames) args.push('--max-frames', options.maxFrames);
     if (options.scene) args.push('--scene', options.scene);
     if (options.fpsFloor) args.push('--fps-floor', options.fpsFloor);
+    // Never `--to` — see the head-clip note above. The upper bound is already
+    // baked into mediaForCrv when one was asked for.
+    if (window && window.from > 0) args.push('--from', String(window.from));
+    if (frameWidth !== undefined) args.push('--frame-width', String(frameWidth));
     if (options.crvArgs) args.push(...options.crvArgs.split(' ').filter(Boolean));
 
     if (!options.json) {
       printExported(entry);
       if (window) {
         const span = `${formatClock(window.from)} → ${window.to === undefined ? 'end' : formatClock(window.to)}`;
-        console.log(chalk.gray(`  window ${span} → ${basename(mediaForCrv)}`));
+        console.log(chalk.gray(`  window ${span} — timestamps stay on the source clock`));
       }
       console.log(
         chalk.gray(
@@ -1637,6 +1650,12 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
             : '  no transcript sidecar — crv will transcribe the audio with Whisper'
         )
       );
+      // crv windows Whisper but not a sidecar: existing_subtitles() takes no
+      // start/end, so with a Grain transcript on disk transcript.txt covers the
+      // whole call even when the frames cover a minute of it.
+      if (window && sidecar) {
+        console.log(chalk.gray('  note: the sidecar is not windowed — transcript.txt will cover the whole call'));
+      }
       console.log(chalk.bold(`\n${binary} ${args.join(' ')}\n`));
     }
 
@@ -1661,13 +1680,11 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
       process.exit(1);
     }
 
-    const hires = options.fullRes
-      ? extractFullResFrames(mediaForCrv, analysisDir, Boolean(options.force), window?.from ?? 0)
-      : undefined;
-    if (hires && !options.json) {
+    const hires = mapFramesByTime(analysisDir, Boolean(options.force), Boolean(options.fullRes || options.frameWidth));
+    if (hires?.dir && !options.json) {
       console.log(
         chalk.green(
-          `\nFull-resolution frames: ${hires.extracted} extracted` +
+          `\nFrames by source time: ${hires.linked} linked` +
             `${hires.skipped ? `, ${hires.skipped} already present` : ''} → ${hires.dir}`
         )
       );
@@ -1682,7 +1699,8 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
         ? join(entry.folder, `${basename(mediaForCrv).replace(/\.[^.]+$/, '')}.${sidecar}`)
         : undefined,
       analysis: analysisDir,
-      hiresFrames: hires?.dir,
+      byTimeFrames: hires?.dir,
+      frameWidth,
     });
   }
 
@@ -1701,12 +1719,15 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
     // exported sidecar so there is always a transcript path to open.
     const crvTranscript = join(w.analysis, 'transcript.txt');
     console.log(`  transcript: ${existsSync(crvTranscript) ? crvTranscript : w.transcript || '(none)'}`);
-    console.log(`  keyframes:  ${join(w.analysis, 'frames')}/  ${chalk.gray('(640px — crv downscales)')}`);
-    if (w.hiresFrames) {
-      console.log(`  full-res:   ${w.hiresFrames}/  ${chalk.gray('(source resolution, named by absolute source timecode)')}`);
-      console.log(chalk.gray(`  frame map:  ${join(w.hiresFrames, 'frame-map.tsv')}  (crv frame_NNN → source time)`));
-      console.log(chalk.gray(`  grid map:   ${join(w.analysis, 'grid-map.tsv')}  (which source times each contact sheet covers)`));
+    console.log(
+      `  keyframes:  ${join(w.analysis, 'frames')}/  ` +
+        chalk.gray(w.frameWidth ? `(${w.frameWidth}px — crv --frame-width)` : '(640px — crv default)')
+    );
+    if (w.byTimeFrames) {
+      console.log(`  by time:    ${w.byTimeFrames}/  ${chalk.gray('(the same frames, hardlinked under absolute source timecodes)')}`);
     }
+    console.log(chalk.gray(`  frame map:  ${join(w.analysis, 'frame-map.tsv')}  (crv frame_NNN → source time)`));
+    console.log(chalk.gray(`  grid map:   ${join(w.analysis, 'grid-map.tsv')}  (which source times each contact sheet covers)`));
   });
   console.log(
     chalk.gray(
@@ -2226,11 +2247,11 @@ withIncludeOptions(
     .option('--max-frames <n>', 'crv --max-frames (default 150)')
     .option('--scene <n>', 'crv --scene sensitivity, lower = more frames (default 0.30)')
     .option('--fps-floor <n>', 'crv --fps-floor, at least one frame every N seconds')
-    .option('--from <timecode>', 'Only analyze from this point (90, 1:30, 0:01:30.5) — clips with ffmpeg first')
+    .option('--from <timecode>', 'Only analyze from this point (90, 1:30, 0:01:30.5) — passed to crv, timestamps stay source-clock')
     .option('--to <timecode>', 'Only analyze up to this point')
-    .option('--precise', 'Re-encode the clip for an exact cut instead of the fast keyframe-aligned copy')
     .option('--no-grid', 'Skip crv 3x3 contact sheets (on by default — fewer images to read)')
-    .option('--full-res', 'Also re-extract every kept frame at source resolution into frames-hires/ (crv frames are 640px)')
+    .option('--full-res', 'Extract frames at the source width — probes it with ffprobe and passes crv --frame-width')
+    .option('--frame-width <px>', 'crv --frame-width in pixels (default 640); wins over --full-res')
     .option('--crv-args <args>', 'Extra flags forwarded verbatim to crv')
     .option('--crv <binary>', 'crv executable (default: $GRAIN_CRV_BIN, else crv)')
     .option('--skip-export', 'Reuse an already-exported folder instead of downloading')

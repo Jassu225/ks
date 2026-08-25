@@ -234,20 +234,20 @@ Reading all of `frames/` re-spends exactly the tokens crv's dedup was built to s
 
 ## Watching only part of a call
 
-crv has no time-range flag — it always processes the whole file — so `watch` cuts the window first with ffmpeg:
+crv 0.10.0 takes a time range itself, so a window no longer means cutting the media:
 
 ```bash
 grain recording watch <id> --from 12:30 --to 18:00 -w "what was on the shared screen?"
-grain recording watch <id> --from 90 --to 240 --precise      # exact cut, re-encodes
+grain recording watch <id> --from 90                # 90s to the end of the call
 ```
 
-Timecodes accept seconds (`90`), `mm:ss` (`12:30`), or `hh:mm:ss(.ms)` (`0:12:30.5`). Either bound may be omitted — `--from 12:30` alone runs to the end of the call, and the clip is named `..._00-12-30_end`.
+Timecodes accept seconds (`90`), `mm:ss` (`12:30`), or `hh:mm:ss(.ms)` (`0:12:30.5`). Either bound may be omitted — `--from 12:30` alone runs to the end of the call.
 
-- The clip is written beside the full file as `<base>_00-12-30_00-18-00.<ext>`, and its analysis lands in `crv-out_00-12-30_00-18-00/`, so windowed and full-length passes coexist and neither re-downloads.
-- The exported `.vtt` is **trimmed to the window and re-based to zero**, so the clip keeps a same-stem sidecar and Whisper still never runs. Cues straddling a boundary are kept and clamped.
-- The default cut stream-copies (fast; lands on the nearest keyframe, so the start can be off by a second or two). `--precise` re-encodes for an exact boundary at the cost of CPU time.
+**Timestamps stay on the source clock.** crv reports every frame time as a real recording time, in every window — *a window shifts the analysis, not the clock*. There is no offset to add and no clip-relative base to track. Analyses still land in `crv-out_<from>_<to>/`, so windowed and full-length passes coexist and neither re-downloads.
 
-**Windowed timestamps are clip-relative.** With `--from 12:30`, the manifest and `frames.json` restart at `00:00` — add the `--from` offset before quoting a time to a human or reusing it as a bound, and say which base you mean. Full-file runs need no offset.
+**`--to` costs a head clip, for now.** crv 0.10.0's `--to` silently destroys every frame timestamp: its `-t` is an output-side limit, so ffmpeg's `showinfo` logs the whole pass while only the windowed frames get written, the length guard in `extract_frames()` sees the mismatch and returns no times, and `frames.json` is never written — the MANIFEST just quietly drops its `frame timestamps:` line. `--from` alone is unaffected. So when `--to` is given the CLI bounds the analysis with a **head clip** instead — `0 → to`, origin unmoved, so the clip's clock *is* the source clock — and passes crv only `--from`. Cost: one stream-copy and a `<base>_head_<to>.<ext>` file next to the media (100MB for a 32-minute bound). The exported subtitle is hardlinked to the clip's stem, unmodified, so Whisper still never runs. All of this disappears when the upstream `--to` is fixed.
+
+**The sidecar is not windowed.** `existing_subtitles()` takes no start/end, so with a Grain transcript on disk `transcript.txt` covers the **whole call** even when the frames cover a minute of it. Only the Whisper path follows the window. The command says so when it applies.
 
 **Pick the window from Grain instead of guessing:** `grain recording get <id> -i highlights,ai_action_items -j` returns `timestamp` and `duration` in milliseconds for every clip and action item — convert to seconds and feed them to `--from`/`--to`.
 
@@ -288,17 +288,17 @@ A run doing that arithmetic itself needed 3–5 iterations per region, and one e
 
 ## Find the interesting stretch with `grid-map.tsv`
 
-`--full-res` writes `grid-map.tsv` beside the analysis: which source times each contact sheet covers. Read it before opening any image. On a real call it showed grids 01–16 were all lead-in at ~3s spacing while grids **17–19 held the entire 15-minute screen share** — five grids opened instead of twenty.
+Every `watch` writes `grid-map.tsv` beside the analysis: which source times each contact sheet covers. Read it before opening any image. On a real call it showed grids 01–16 were all lead-in at ~3s spacing while grids **17–19 held the entire 15-minute screen share** — five grids opened instead of twenty.
 
 ## When the frames aren't readable
 
 Two independent limits, and they need different fixes. Both were hit in real use.
 
-**`--full-res` is not a fix for small text on a small source.** On a 720p recording it produces 1280px frames in which spreadsheet cells stay unreadable — a run got *every* legible read from `frames --crop --upscale` instead, and used `frames-hires/` mainly as the home of `frame-map.tsv`. The CLI now warns when the source is ≤1280px. Use `--full-res` for genuinely high-resolution sources, or for timecoded copies of crv's selection; use `frames --crop --upscale` when you need to read text.
+**`--full-res` is not a fix for small text on a small source.** It asks for the source width, and on a 720p recording that is 1280px — in which spreadsheet cells stay unreadable. A run got *every* legible read from `frames --crop --upscale` instead. Use `--full-res` for genuinely high-resolution sources; use `frames --crop --upscale` when you need to read text off a small one.
 
-**crv downscales.** It extracts at a hardcoded `scale=640:-1`, so `frames/` are 640px wide and grid cells only 480px. Faces survive that; spreadsheet cells, code, and dense UI do not — and opening the individual `frames/*.jpg` does **not** rescue it, because the file itself is downscaled. Fix: `grain recording watch <id> --full-res`, which re-extracts crv's own chosen timestamps from the local media at source resolution into `frames-hires/` (same `frame_NNN.jpg` names, so manifest citations resolve in either directory). No Grain requests, one local ffmpeg seek per frame.
+**crv downscales by default.** It extracts at `scale=<--frame-width>:-1`, default 640, so `frames/` are 640px wide unless told otherwise. Faces survive that; spreadsheet cells, code, and dense UI do not — and opening the individual `frames/*.jpg` does **not** rescue it, because the file itself is downscaled. Fix: `--full-res`, which probes the source width with `ffprobe` and passes it as crv `--frame-width`, so crv extracts at full source resolution in its own single pass. `--frame-width <px>` sets it explicitly and wins over `--full-res`. **Grid cells stay 480px regardless** — `make_grids()` hardcodes `cell_width=480` — so contact sheets do not inflate, and `--crop-in-grid` geometry is unaffected.
 
-**crv's dedup drops the moments that matter on a static screen.** This is the harder one. Dedup exists to avoid re-sending near-identical shots, but on a spreadsheet being typed into, the incremental edits *are* the content — and they sit between the frames crv kept. Observed on a real call: an account value settling to `7700`, a program field changed to `program 2`, and a column reorder were all invisible in the kept set; crv's nearest frames were 20+ seconds away, one of them mid-keystroke showing a partial value. No `--full-res` recovers those, because the timestamps were never selected.
+**crv's dedup drops the moments that matter on a static screen.** This is the harder one. Dedup exists to avoid re-sending near-identical shots, but on a spreadsheet being typed into, the incremental edits *are* the content — and they sit between the frames crv kept. Observed on a real call: an account value settling to `7700`, a program field changed to `program 2`, and a column reorder were all invisible in the kept set; crv's nearest frames were 20+ seconds away, one of them mid-keystroke showing a partial value. No frame width recovers those, because the timestamps were never selected.
 
 So when the answer lives in on-screen state changes, go around crv:
 
@@ -363,7 +363,9 @@ Note that you may not be able to `ps` to check for a competing run — it is blo
 
 If the target folder is not writable (a subagent's sandbox often denies `~/Documents`), write to `$TMPDIR/grain-findings/`, name both paths, and say it needs copying — don't silently skip the report.
 
-`--full-res` names its output by **absolute source timecode** (`t00-38-08.jpg`), so citations need no offset arithmetic and cannot silently drift — the failure that produced a report citing 00:38:08 for a frame that was at 30:32. `frames-hires/frame-map.tsv` resolves crv's clip-relative `frame_NNN.jpg` to the same moments. Navigate with crv's names; quote the timecoded ones.
+Every `watch` mirrors crv's frames into `frames-by-time/` under **absolute source timecodes** (`t00-38-08.jpg`), so citations cannot silently drift — the failure that produced a report citing 00:38:08 for a frame that was at 30:32. The mirror is hardlinked, so it costs no extra disk. `frame-map.tsv` resolves crv's `frame_NNN.jpg` to the same moments, and `grid-map.tsv` says which times each contact sheet covers; both sit in the analysis directory. Navigate with crv's names; quote the timecoded ones.
+
+When two kept frames land in the same second, **both** get milliseconds (`t00-31-21-000.jpg`, `t00-31-21-400.jpg`), so a bare `tHH-MM-SS` name always means exactly one frame.
 
 **Check your citations before you send.** Every frame you cite must exist at the path you give, and its timestamp plus any window offset must equal the source time you quote. A report has already shipped with correct findings and unfollowable citations — wrong offset, missing directories — which is the failure mode that destroys trust in all of it.
 
