@@ -20,7 +20,9 @@ CLI scripts for Linear integration and KarmaSuite workflow management.
 
 ### Loading extra plugins with `claude-ks`
 
-The `claude-ks` / `claude-ks-serena` launchers always load the `ks` plugin. To
+The `claude-ks` launcher always loads the `ks` plugin (`claude-ks-serena` does
+too, but it is retired — Serena is a normally registered MCP server now; see
+CLAUDE.md). To
 also load other local plugins (under `plugins/<name>`) on every launch, set a
 space-separated list in `.env`:
 

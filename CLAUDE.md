@@ -47,9 +47,11 @@ This installs dependencies, builds CLI tools, and adds `plugins/ks/scripts/` to 
 
 Automated code review is **built in** — run `/code-review` after creating a PR (no plugin to enable). Pass `--comment` to post findings as inline PR comments, or `--fix` to apply them.
 
-### Optional: Serena MCP (Semantic Code Analysis)
+### Serena MCP (Semantic Code Analysis) — register it normally
 
-Serena is included automatically when launching via `claude-ks-serena`. It runs only for that session — no persistent MCP registration. Additional plugins can be loaded per-launch with `--plugin <name>`, e.g. `claude-ks-serena --plugin <plugin-name>`.
+Serena is a **normally registered MCP server** (your own MCP config), so every session has it — no special launcher. `claude-ks` is the launcher everywhere: `/ks:project-manager` phase boundaries, `ks-start-ticket`, and `ks-start-project`.
+
+`claude-ks-serena`, which injected Serena per-session with `--mcp-config`, is retired but still on disk. Don't wire it into anything: a `--mcp-config` server does not reach a subagent whose frontmatter declares a `tools:` list, so the research agents never actually got Serena that way. Additional plugins load per-launch with `--plugin <name>`, e.g. `claude-ks --plugin <plugin-name>`.
 
 To load a **local** plugin on *every* launch, list it in `KS_EXTRA_PLUGINS` (space-separated) in `plugins/ks/scripts/.env` — e.g. `KS_EXTRA_PLUGINS="ks-flow"`. Running `plugins/ks-flow/init` sets this automatically so `claude-ks` always loads ks-flow alongside ks. See `plugins/ks/scripts/README.md`.
 
@@ -90,6 +92,7 @@ plugins/ks/scripts/quality-typecheck.sh
 | `/ks:implement-plan` | Execute an approved implementation plan |
 | `/ks:create_pr` | Create PRs with Linear ticket references |
 | `/ks:gh-cli` | GitHub CLI — view PRs, comments, reviews, CI checks |
+| `/ks:slack` | All Slack operations — messages, thread reading, channels, users, user groups, files, search, reactions, pins, status |
 | `/ks:create-user-stories` | Generate user stories from a PRD |
 | `/ks:build-prototype` | Build React prototype from PRD |
 | `/ks:write-tad` | Write Technical Architecture Document |
@@ -152,11 +155,12 @@ Automated PR code review that checks for bugs, logic errors, and CLAUDE.md compl
 
 ### Serena MCP (Semantic Code Analysis)
 
-Provides LSP-powered semantic tools for symbol navigation, reference tracing, and file structure inspection. When Serena is available, agents must prefer Serena tools over text-based alternatives.
+Provides LSP-powered semantic tools for symbol navigation, reference tracing, and file structure inspection. Registered as a normal MCP server, so it is present in every session — agents must prefer Serena tools over text-based alternatives. Never re-introduce the `--mcp-config` injection (`claude-ks-serena`): servers passed that way do not reach a subagent that declares a `tools:` list, which is every research agent.
 
 ## Critical Rules
 
 - **Linear operations**: Always use `/ks:linear` command or the `linear` CLI in `$PATH`. Never call the Linear API directly or scrape linear.app.
+- **Slack operations**: Use `/ks:slack` or the `slack` CLI in `$PATH`. Two rules that cost sessions real time when broken: **`slack` must be the leading token** of the command line (the sandbox exclusion matches the first word, so `env … slack`, `cd … && slack`, and `for` loops all fall back inside and die on `listen EPERM` in the `tsx` wrapper — one call per Bash invocation, no batching); and **never supply `SLACK_TOKEN`** — the CLI loads it from `plugins/ks/scripts/.env` itself, so don't prefix, export, unset, or read it. On `token_revoked` / `invalid_auth`, stop and report to the user rather than working around it.
 - **PRs**: Use `/ks:create_pr`. Must reference a Linear ticket with "Closes KAR-XXX".
 - **Planning**: `/ks:create_plan` runs in PLAN MODE — no task creation, no code changes. Use `ExitPlanMode` when approved.
 - **Phase 9 boundary**: Planning only. Implementation happens in Phase 10.

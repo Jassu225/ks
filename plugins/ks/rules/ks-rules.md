@@ -42,7 +42,7 @@ Always show the user the full message and target channel, and get explicit confi
 
 ## Semantic Code Analysis (Serena)
 
-When Serena is running, **all agents must prefer Serena tools over text-based alternatives** (Grep, Glob) for symbol navigation, reference tracing, and file structure inspection. Serena produces more accurate results with fewer tokens. Fall back to text-based tools only when Serena does not cover the specific need (e.g., searching for string literals or config values). Agents fall back to text-based tools automatically when Serena is not available.
+Serena is a normally registered MCP server, so it is available in every session. **All agents must prefer Serena tools over text-based alternatives** (Grep, Glob) for symbol navigation, reference tracing, and file structure inspection. Serena produces more accurate results with fewer tokens. Fall back to text-based tools only when Serena does not cover the specific need (e.g., searching for string literals or config values), and automatically when Serena is missing from a session.
 
 ### Tools
 - `find_symbol` — Jump to symbol definitions by name (functions, classes, types, variables, components)

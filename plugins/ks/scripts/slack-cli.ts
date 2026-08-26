@@ -769,6 +769,89 @@ async function deleteMessage(channel: string, ts: string, options: { json?: bool
   }
 }
 
+async function getThread(channel: string, ts: string, options: { limit?: number; json?: boolean }): Promise<void> {
+  const client = getClient();
+
+  try {
+    const channelId = await resolveChannel(client, channel);
+
+    // conversations.replies returns the parent first, then the replies in order.
+    // Paginate: a long thread exceeds one page, and a half-read thread is worse
+    // than a slow one. Page size max is 1000 for this method (not 200 like
+    // conversations.history) — but a commercially distributed non-Marketplace
+    // app is capped at 15, so trust next_cursor rather than the count.
+    const messages: NonNullable<Awaited<ReturnType<typeof client.conversations.replies>>['messages']> = [];
+    let cursor: string | undefined;
+    const limit = options.limit || 1000;
+
+    do {
+      const result = await client.conversations.replies({
+        channel: channelId,
+        ts,
+        limit: Math.min(limit - messages.length, 1000),
+        ...(cursor ? { cursor } : {}),
+      });
+      messages.push(...(result.messages || []));
+      cursor = result.response_metadata?.next_cursor || undefined;
+    } while (cursor && messages.length < limit);
+
+    const data = messages.map((m, i) => ({
+      ts: m.ts,
+      user: m.user,
+      text: m.text,
+      type: m.type,
+      // Present at runtime (thread_broadcast, tombstone, …) but absent from
+      // this method's MessageElement type, unlike conversations.history's.
+      subtype: (m as { subtype?: string }).subtype,
+      threadTs: m.thread_ts,
+      // Derived from thread_ts, not from position: passing a reply's ts returns
+      // that reply alone, and a positional check would label it the parent.
+      isParent: !m.thread_ts || m.thread_ts === m.ts,
+      datetime: formatTimestamp(m.ts),
+    }));
+
+    if (options.json) {
+      output(data, true);
+    } else {
+      console.log(chalk.bold(`\nThread in ${channel} (${ts}):\n`));
+      if (data.length === 0) {
+        console.log(chalk.gray('No messages found.'));
+      } else {
+        data.forEach(m => {
+          const tag = m.isParent ? chalk.gray(' [parent]') : '';
+          console.log(`${chalk.gray(m.datetime)} ${chalk.cyan(m.user || 'system')}${tag}`);
+          console.log(`  ${m.text}`);
+          console.log();
+        });
+        // A reply's ts returns that reply alone — say so, and name the ts that
+        // would fetch the whole thread, rather than looking like an empty thread.
+        const lone = data.length === 1 && data[0].threadTs && data[0].threadTs !== data[0].ts;
+        if (lone) {
+          console.log(chalk.yellow(`That ts is a reply, so only it was returned.`));
+          console.log(chalk.yellow(`For the whole thread: slack message thread ${channel} ${data[0].threadTs}`));
+        } else {
+          console.log(chalk.gray(`${data.length - 1} ${data.length === 2 ? 'reply' : 'replies'}`));
+        }
+      }
+    }
+  } catch (error) {
+    const err = error as Error & { data?: { error?: string; response_metadata?: { messages?: string[] } } };
+    console.error(chalk.red(`Failed to get thread: ${err.data?.error || err.message}`));
+    if (err.data?.error === 'thread_not_found') {
+      // Per the API docs this means ts was missing or invalid — NOT that a
+      // reply's ts was passed. Either the parent's or any reply's ts works, and
+      // a message with no replies returns just itself.
+      console.error(chalk.yellow('No message with that ts in this channel — check the ts and the channel match.'));
+    }
+    if (err.data?.response_metadata?.messages) {
+      err.data.response_metadata.messages.forEach((msg: string) => {
+        console.error(chalk.red(`  ${msg}`));
+      });
+    }
+    process.exit(1);
+  }
+}
+
 async function replyToMessage(channel: string, ts: string, text: string, options: { resolveMentions?: boolean; json?: boolean }): Promise<void> {
   const client = getClient();
 
@@ -1936,6 +2019,13 @@ messageCmd
   .option('--no-resolve-mentions', 'Leave @handles as literal text (no notification)')
   .option('-j, --json', 'Output as JSON')
   .action(replyToMessage);
+
+messageCmd
+  .command('thread <channel> <ts>')
+  .description('Read a thread: the parent message and all its replies (pass the parent\'s ts — a reply\'s ts returns only that reply)')
+  .option('-l, --limit <number>', 'Max messages to fetch, parent included', '1000')
+  .option('-j, --json', 'Output as JSON')
+  .action((channel, ts, opts) => getThread(channel, ts, { ...opts, limit: parseInt(opts.limit) }));
 
 // User commands
 const userCmd = program.command('user').description('User operations');

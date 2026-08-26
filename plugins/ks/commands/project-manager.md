@@ -57,20 +57,20 @@ Show the update body to the user and ask for confirmation before posting. Use th
 - **Phase 7:** "Created draft TAD. Please review"
 
 #### Phase 1: Context Creation
-- **Post-completion:** Tell the user: "Phase 2 (Codebase Research) uses semantic code analysis. Please start a new session with: `cd {cwd} && claude-ks-serena \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
+- **Post-completion:** Tell the user: "Phase 2 (Codebase Research) starts a fresh session. Please start a new session with: `cd {cwd} && claude-ks \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
 
 #### Phase 2: Codebase Research
 - **Post-completion (project workflow):** Ask user: "Ready to proceed to Phase 3 (Initial PRD Draft)?"
-- **Post-completion (ticket workflow):** Tell the user: "Phase 9 (Implementation Plan Creation) uses semantic code analysis. Please start a new session with: `cd {cwd} && claude-ks-serena \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
+- **Post-completion (ticket workflow):** Tell the user: "Phase 9 (Implementation Plan Creation) starts a fresh session. Please start a new session with: `cd {cwd} && claude-ks \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
 
 #### Phase 8: Linear Tickets Creation
 - **This phase is optional** — offer to skip if user prefers manual ticket creation
-- **Post-completion:** Tell the user: "Phase 9 (Implementation Plan Creation) uses semantic code analysis. Please start a new session with: `cd {cwd} && claude-ks-serena \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
+- **Post-completion:** Tell the user: "Phase 9 (Implementation Plan Creation) starts a fresh session. Please start a new session with: `cd {cwd} && claude-ks \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
 
 #### Phase 9: Implementation Plan
 - Runs in **plan mode** — do NOT create tasks or start implementation. See `/ks:create_plan` for the full list of restrictions.
 - Supports **iteration** — see Phase 9-10 Iteration below
-- **Post-completion:** Tell the user: "Phase 10 (Implementation) uses semantic code analysis. Please start a new session with: `cd {cwd} && claude-ks-serena \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
+- **Post-completion:** Tell the user: "Phase 10 (Implementation) starts a fresh session. Please start a new session with: `cd {cwd} && claude-ks \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
 
 #### Phase 10: Implementation
 - Supports **iteration** — see Phase 9-10 Iteration below
