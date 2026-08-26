@@ -116,11 +116,12 @@ Start a new session for each phase. Use handoff documents to transfer context be
 
 | Phases | Launch Command |
 |--------|---------------|
-| 1, 3, 4, 5, 6, 7, 8 | `claude-ks` |
-| 2, 9 | `claude-ks-serena` |
-| 10 | `claude-ks-serena --plugin code-review@claude-plugins-official` |
+| all (1–10) | `claude-ks` |
 
-Phases 2, 9, and 10 require Serena for semantic code analysis. Phase 10 also includes the code review plugin for automated PR review at the end.
+Every phase launches the same way. Serena comes from your normal MCP
+registration, so the semantic phases (2, 9, 10) get it like any other — no
+`claude-ks-serena`, no per-phase launcher. Code review is built in
+(`/code-review`), so Phase 10 needs no extra plugin either.
 
 ## Key Boundaries
 
