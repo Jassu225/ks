@@ -8,6 +8,8 @@ allowed-tools: Bash(slack:*), Read
 
 Use the `slack` CLI (already in `$PATH`) to interact with Slack. All commands support `--json` / `-j` for machine-readable output. Channel and user arguments accept names or IDs.
 
+> **The token is automatic — never supply it.** The CLI loads `SLACK_TOKEN` itself from `plugins/ks/scripts/.env`, resolved relative to the script's own location, so it works from any working directory. Just run `slack ...`. Do **not** prefix commands with `SLACK_TOKEN=…`, do not `export` it, do not `source .env` first, and do not pass a token as a flag — there is no such flag. Do not read `.env` to fetch the token either; it is a secret and the CLI already has it. If you see `Error: SLACK_TOKEN environment variable is not set`, the cause is a missing or empty entry in that `.env` file (or the sandbox blocking the read) — tell the user, rather than trying to route a token in yourself.
+
 > **Run unsandboxed.** The `slack` CLI needs network access to `slack.com`, reads `SLACK_TOKEN` from `plugins/ks/scripts/.env`, and uses `tsx` which opens a Unix IPC pipe in `/tmp`. All three are blocked in the default Claude Code sandbox (you'll see `EPERM` on the pipe or an empty-token error). Invoke `slack ...` with `dangerouslyDisableSandbox: true`, or have the user whitelist `Bash(slack:*)` outside the sandbox.
 
 ## Quick Reference
@@ -54,6 +56,10 @@ slack message send general "see attached" --file ./a.pdf --file ./b.png --file .
 
 # Reply in a thread (use message timestamp)
 slack message reply general 1234567890.123456 "Thread reply"
+
+# READ a thread — parent plus every reply, paginated (pass the PARENT's ts)
+slack message thread general 1234567890.123456
+slack message thread general 1234567890.123456 --json
 
 # Update / delete a message
 slack message update general 1234567890.123456 "Updated text"
@@ -228,5 +234,9 @@ When the user asks to interact with Slack:
 - Search and status commands require a user token (`xoxp-`), not a bot token
 - Use `--json` when you need to parse output programmatically or extract IDs/timestamps
 - `--json` responses can be long (especially `message send` with attachments — includes file metadata and OAuth scopes). The `"ok"` / `"ts"` / `"channel"` fields are at the **top** of the response, so `head` works but `tail` will clip to noisy auth/scope blocks that can look like errors. Prefer redirecting to a temp file and inspecting it, or piping to `jq`. Re-running a `send` / `reply` / `update` / `delete` to "see more output" posts again — verify via `channel history` instead.
-- Token is read from `SLACK_TOKEN` in `scripts/.env`
+- Token is read from `SLACK_TOKEN` in `scripts/.env` by the CLI itself — never supply, export, or unset it (see the note at the top). If a call fails with `token_revoked` or `invalid_auth`, **stop and tell the user**; do not attempt to work around it
+- **Invoke `slack` as the leading token of the command line.** The sandbox exclusion is matched against the first word, so `slack …` runs unsandboxed but `env … slack …`, `cd /x && slack …`, and `for q in …; do slack …; done` all fall back into the sandbox, where the `npx tsx` wrapper dies on a blocked Unix socket: `Error: listen EPERM … /tmp/claude-501/tsx-501/<pid>.pipe`. One `slack` call per Bash invocation, no wrappers, no `cd &&`, no loops, no batching. Two dead ends not worth retrying: repointing `TMPDIR` (the `listen` syscall is blocked, not the path) and `node --import tsx/esm slack-cli.ts …` (clears the EPERM, then hangs — sandboxed egress to slack.com never connects)
+- **`--json` key style is not uniform — check before writing a `jq` path.** Subcommands that map the response use **camelCase** (`channel list` → `numMembers`, `isPrivate`; `channel history` → `replyCount`, `threadTs`; `message thread` → `threadTs`, `isParent`, `datetime`), while those that pass Slack's payload straight through keep **snake_case** (`user list` → `real_name`, `is_bot`, `is_app_user`, `display_name`; `usergroup list` → `user_count`, `auto_type`, `default_channels`). `search messages` has no multi-word keys at all (`channel`, `user`, `text`, `ts`, `permalink`). Carrying a `user list` habit over to `message thread` yields silent `null`s rather than an error, which reads like missing data
+- **Getting a parent `ts` for `message thread`**: `search messages` is the practical route — its `permalink` carries `?thread_ts=<parent>` when the hit is a reply, so the parent ts is right there in the URL
+- **Reading threads**: `channel history` returns top-level messages only — it gives `replyCount` but not the replies. Use `message thread <channel> <ts>` for the replies. Pass the **parent's** `ts`: a reply's `ts` returns only that one message (the command says so and prints the parent's ts to retry with). A message with no replies returns just itself
 - `--json` output is clean stdout — safe to pipe straight into `jq`

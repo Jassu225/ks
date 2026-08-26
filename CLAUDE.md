@@ -90,6 +90,7 @@ plugins/ks/scripts/quality-typecheck.sh
 | `/ks:implement-plan` | Execute an approved implementation plan |
 | `/ks:create_pr` | Create PRs with Linear ticket references |
 | `/ks:gh-cli` | GitHub CLI — view PRs, comments, reviews, CI checks |
+| `/ks:slack` | All Slack operations — messages, thread reading, channels, users, user groups, files, search, reactions, pins, status |
 | `/ks:create-user-stories` | Generate user stories from a PRD |
 | `/ks:build-prototype` | Build React prototype from PRD |
 | `/ks:write-tad` | Write Technical Architecture Document |
@@ -157,6 +158,7 @@ Provides LSP-powered semantic tools for symbol navigation, reference tracing, an
 ## Critical Rules
 
 - **Linear operations**: Always use `/ks:linear` command or the `linear` CLI in `$PATH`. Never call the Linear API directly or scrape linear.app.
+- **Slack operations**: Use `/ks:slack` or the `slack` CLI in `$PATH`. Two rules that cost sessions real time when broken: **`slack` must be the leading token** of the command line (the sandbox exclusion matches the first word, so `env … slack`, `cd … && slack`, and `for` loops all fall back inside and die on `listen EPERM` in the `tsx` wrapper — one call per Bash invocation, no batching); and **never supply `SLACK_TOKEN`** — the CLI loads it from `plugins/ks/scripts/.env` itself, so don't prefix, export, unset, or read it. On `token_revoked` / `invalid_auth`, stop and report to the user rather than working around it.
 - **PRs**: Use `/ks:create_pr`. Must reference a Linear ticket with "Closes KAR-XXX".
 - **Planning**: `/ks:create_plan` runs in PLAN MODE — no task creation, no code changes. Use `ExitPlanMode` when approved.
 - **Phase 9 boundary**: Planning only. Implementation happens in Phase 10.
