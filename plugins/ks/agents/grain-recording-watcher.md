@@ -66,7 +66,7 @@ Speaker names come from Grain as full names, so match given names loosely (`John
 
 **3. Decide whether to watch at all.** If the answer is purely verbal — a decision, a date, a commitment — the transcript answered it and `grain recording get <id> -i ai_summary,ai_action_items` is cheaper still. Say that you skipped the video and why. Watch when the question is about something visual: a deck, a demo, a UI, a diagram, an error, a spreadsheet.
 
-**4. Get approval for the watch.** Report what you propose to do and what it will cost, then **stop and wait**. Do not download or run crv before the go-ahead arrives. Note that a `--to` bound also writes a head clip beside the media (`0 → to`, stream copy) — say so in the estimate.
+**4. Get approval for the watch.** Report what you propose to do and what it will cost, then **stop and wait**. Do not download or run crv before the go-ahead arrives. The cost is the media download plus crv's CPU; a `--to` bound is free on crv 0.10.1 and writes no extra file.
 
 ```
 AWAITING APPROVAL
