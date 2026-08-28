@@ -114,8 +114,12 @@ export async function POST(req: Request): Promise<Response> {
   const { projectPath } = readJson(join(dataDir(), 'project.conf'), { projectPath: '' });
   const cwd = projectPath && existsSync(projectPath) ? projectPath : undefined;
 
-  // Compiled archive entrypoint (bootstrap copies src → $CLAUDE_PLUGIN_DATA/daemon).
-  const archiveScript = join(dataDir(), 'daemon', 'dist', 'archive.js');
+  // Compiled backup entrypoint (bootstrap copies src → $CLAUDE_PLUGIN_DATA/daemon).
+  // One uploader for everything: --worktree archives this single worktree in the
+  // same per-file layout the daily sweep and the manual buttons produce, so the
+  // board's Restore can read it back. (It replaced dist/archive.js, which wrote a
+  // whole-directory tarball nothing could restore from.)
+  const archiveScript = join(dataDir(), 'daemon', 'dist', 'transcript-backup.js');
 
   // `zsh -c` is non-interactive + non-login, so it loads only ~/.zshenv — not
   // ~/.zprofile/.zshrc, where the user's PATH, aliases, and shell functions
@@ -149,9 +153,9 @@ export async function POST(req: Request): Promise<Response> {
           const code = await runStreaming(
             send,
             process.execPath, // the board's own node
-            [archiveScript, worktree, identifier, title],
+            [archiveScript, '--worktree', worktree, '--identifier', identifier, '--force'],
             { cwd, env: process.env },
-            600_000, // zstd --ultra -22 on a long transcript can take minutes
+            600_000, // compressing a long transcript can take minutes
           );
           if (code !== 0) {
             send({

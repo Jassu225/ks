@@ -48,6 +48,12 @@ else
   fi
 fi
 [ -n "$DATA_DIR" ] || DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/ks-flow-karmasuite}"
+# Hand the resolved dir to every child. Without this, node entrypoints re-derive
+# it from the CWD (src/lib/datadir.mjs), so running `ks-flow backup` from another
+# repo silently read a data dir with no board-settings.json and reported "GCS
+# archive is disabled" — the resolution above, including the "exactly one
+# configured project" fallback, applied only to this shell script.
+export KS_FLOW_DATA="$DATA_DIR"
 DAEMON_DIR="$DATA_DIR/daemon"
 LABEL="com.ksflow.ingester"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
@@ -190,18 +196,44 @@ case "$cmd" in
 
   archive)
     # Archive ONE worktree's transcript + workflow to GCS (the same step the
-    # board runs before removing a completed worktree). No-op if archiving is
-    # disabled in Settings; errors if enabled-but-misconfigured.
+    # board runs before removing a completed worktree). Kept as a familiar verb;
+    # there is only ONE uploader now, so it forwards to `backup --worktree`.
     WT="${2:-}"
-    [ -n "$WT" ] || { echo "usage: ks-flow archive <worktree-path> [identifier] [title]" >&2; exit 1; }
-    exec node "$DAEMON_DIR/dist/archive.js" "$2" "${3:-}" "${4:-}"
+    [ -n "$WT" ] || { echo "usage: ks-flow archive <worktree-path> [identifier]" >&2; exit 1; }
+    exec node "$DAEMON_DIR/dist/transcript-backup.js" --worktree "$2" ${3:+--identifier "$3"} --force
     ;;
 
   backfill-archive)
-    # Archive all ALREADY-completed workflows (in the main checkout, no live
-    # worktree) to GCS. Flags: --dry-run (preview), --force (re-upload).
+    # Archive units whose worktree is GONE (completed work in the main checkout).
+    # Same one uploader, different target selection.
     shift
-    exec node "$DAEMON_DIR/dist/backfill-archive.js" "$@"
+    exec node "$DAEMON_DIR/dist/transcript-backup.js" --completed "$@"
+    ;;
+
+  backup)
+    # Back up session transcripts changed in the last 24h (per-file objects, so
+    # local 30-day pruning can never clobber an older session in the bucket).
+    # Flags: --unit <id> (one ticket), --since-hours <n>, --all, --force,
+    # --dry-run, --json. Same entrypoint the daemon's end-of-day sweep runs.
+    shift
+    exec node "$DAEMON_DIR/dist/transcript-backup.js" "$@"
+    ;;
+
+  restore)
+    # Pull a unit's backed-up transcripts back into ~/.claude/projects/<encoded>.
+    # Local files win unless --overwrite. Restores the conversation, NOT the
+    # git worktree.
+    shift
+    exec node "$DAEMON_DIR/dist/transcript-restore.js" "$@"
+    ;;
+
+  migrate-archives)
+    # Convert legacy whole-directory archives (<id>/transcript.tar.zst) into the
+    # per-file layout, after server-side copying every affected object to a
+    # safety prefix in the same bucket. Flags: --dry-run, --unit <id>,
+    # --backup-prefix <p>, --skip-backup, --delete-legacy, --force, --json.
+    shift
+    exec node "$DAEMON_DIR/dist/migrate-legacy-archives.js" "$@"
     ;;
 
   install-daemon)
@@ -229,7 +261,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backfill-archive [--dry-run] [--force]}" >&2
+    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]}" >&2
     exit 1
     ;;
 esac

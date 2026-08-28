@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useStreamPanel } from '@/components/StreamPanel';
 import type { WorkUnitDoc } from '@/lib/types';
 
 function relTime(iso: string | null): string {
@@ -20,14 +21,10 @@ interface BusyProc {
   isClaude: boolean;
 }
 
-// Bottom-right panel state. `running` while the command streams; resolves to
-// `ok`/`err` on exit, `warn` for a pre-flight prompt (no command configured),
-// or `confirm` when a live process still sits in the worktree and the user must
-// approve killing it before the remove proceeds.
-type Panel =
-  | { kind: 'running' | 'ok' | 'err'; title: string; output: string }
-  | { kind: 'warn'; title: string; msg: string; settingsLink: true }
-  | { kind: 'confirm'; title: string; msg: string; unit: WorkUnitDoc; processes: BusyProc[] };
+// The bottom-right log panel lives in components/StreamPanel.tsx now, shared
+// with the backup/restore actions — one panel, one NDJSON reader. Remove's two
+// special cases map onto it: `warn` for "no command configured", and `custom`
+// for the "a live process is still in this worktree" confirm prompt.
 
 /**
  * Worktrees whose work is finished (Linear status done/merged/closed) but whose
@@ -49,8 +46,7 @@ export function CompletedWorktrees({
   const [removeCommand, setRemoveCommand] = useState<string | null>(null);
   const [running, setRunning] = useState<string | null>(null); // unitId in flight
   const [removed, setRemoved] = useState<Set<string>>(new Set()); // optimistic hide
-  const [panel, setPanel] = useState<Panel | null>(null);
-  const outputEnd = useRef<HTMLDivElement | null>(null);
+  const { panel, setPanel, close: closePanel, runStream } = useStreamPanel();
 
   useEffect(() => {
     fetch('/api/settings')
@@ -58,11 +54,6 @@ export function CompletedWorktrees({
       .then((s: { removeCommand?: string }) => setRemoveCommand(s.removeCommand ?? ''))
       .catch(() => setRemoveCommand(''));
   }, []);
-
-  // keep the streaming output scrolled to the latest line
-  useEffect(() => {
-    if (panel && 'output' in panel) outputEnd.current?.scrollIntoView({ block: 'end' });
-  }, [panel]);
 
   const visible = useMemo(() => units.filter((u) => !removed.has(u.unitId)), [units, removed]);
 
@@ -73,7 +64,11 @@ export function CompletedWorktrees({
     setRunning(u.unitId);
     try {
       if (kill) {
-        setPanel({ kind: 'running', title: u.identifier, output: 'killing sessions in worktree…\n' });
+        setPanel({
+          kind: 'running',
+          title: u.identifier,
+          output: 'killing sessions in worktree…\n',
+        });
         const kRes = await fetch('/api/worktree-kill', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -90,68 +85,26 @@ export function CompletedWorktrees({
         }
       }
 
-      setPanel({ kind: 'running', title: u.identifier, output: '' });
-      const res = await fetch('/api/run-command', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: u.worktreeDir, identifier: u.identifier, title: u.title }),
-      });
-
-      if (!res.ok || !res.body) {
-        const data = await res.json().catch(() => ({}));
-        if (data.needsConfig) {
-          setPanel({ kind: 'warn', title: 'No remove command', msg: data.error, settingsLink: true });
-        } else {
-          setPanel({ kind: 'err', title: u.identifier, output: data.error ?? 'Command failed.' });
-        }
-        return;
-      }
-
-      // Stream NDJSON: {type:stdout|stderr|exit}. Append text live; capture exit.
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = '';
-      let output = '';
-      let exitCode: number | null = null;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() ?? '';
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let ev: { type?: string; data?: string; code?: number };
-          try {
-            ev = JSON.parse(line);
-          } catch {
-            continue;
-          }
-          if (ev.type === 'stdout' || ev.type === 'stderr') {
-            output += ev.data ?? '';
-            setPanel({ kind: 'running', title: u.identifier, output });
-          } else if (ev.type === 'exit') {
-            exitCode = ev.code ?? 0;
-          }
-        }
-      }
-
-      if (exitCode === 0) {
-        setPanel({ kind: 'ok', title: u.identifier, output: output + '\n✓ removed' });
-        setRemoved((prev) => new Set(prev).add(u.unitId)); // optimistic hide
-        await onRefresh?.(); // re-pull the board + this section
-      } else {
-        setPanel({
-          kind: 'err',
-          title: u.identifier,
-          output: output + `\n✗ exited with code ${exitCode ?? '?'}`,
-        });
-      }
-    } catch {
-      setPanel({
-        kind: 'err',
+      await runStream({
         title: u.identifier,
-        output: 'Request failed — is the board server still running?',
+        url: '/api/run-command',
+        body: { path: u.worktreeDir, identifier: u.identifier, title: u.title },
+        successNote: '✓ removed',
+        onSuccess: async () => {
+          setRemoved((prev) => new Set(prev).add(u.unitId)); // optimistic hide
+          await onRefresh?.(); // re-pull the board + this section
+        },
+        // The route answers with JSON (not NDJSON) when no removal command is
+        // configured; that deserves a link to Settings, not a raw error line.
+        mapEarlyError: (payload) =>
+          (payload as { needsConfig?: boolean; error?: string })?.needsConfig
+            ? {
+                kind: 'warn',
+                title: 'No remove command',
+                msg: (payload as { error?: string }).error ?? 'Set a removal command in Settings.',
+                settingsLink: true,
+              }
+            : undefined,
       });
     } finally {
       setRunning(null);
@@ -180,15 +133,48 @@ export function CompletedWorktrees({
       const busy = await busyRes.json().catch(() => ({ busy: false, processes: [] }));
       if (busyRes.ok && busy.busy) {
         // Don't remove blindly — ask the user to approve killing the sessions.
-        const claude = (busy.processes as BusyProc[]).some((p) => p.isClaude);
+        const procs: BusyProc[] = busy.processes ?? [];
+        const claude = procs.some((p) => p.isClaude);
         setPanel({
-          kind: 'confirm',
+          kind: 'custom',
           title: u.identifier,
-          unit: u,
-          msg: claude
-            ? 'A Claude Code session is still live in this worktree. Killing it will lose its current turn.'
-            : 'A process is still using this worktree.',
-          processes: busy.processes ?? [],
+          body: (
+            <>
+              <p className="mb-2">
+                {claude
+                  ? 'A Claude Code session is still live in this worktree. Killing it will lose its current turn.'
+                  : 'A process is still using this worktree.'}
+              </p>
+              <ul className="space-y-1 font-mono text-[11px] text-slate-400">
+                {procs.map((p) => (
+                  <li key={p.pid} className="truncate" title={p.command}>
+                    <span className={p.isClaude ? 'text-indigo-300' : 'text-slate-500'}>
+                      {p.isClaude ? 'claude' : 'proc'}
+                    </span>{' '}
+                    <span className="text-slate-600">pid {p.pid}</span> · {p.command}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ),
+          actions: (
+            <>
+              <button
+                type="button"
+                onClick={closePanel}
+                className="rounded bg-slate-800 px-3 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void doRemove(u, true)}
+                className="rounded bg-red-700 px-3 py-1 text-[11px] font-medium text-white hover:bg-red-600"
+              >
+                Kill sessions &amp; remove
+              </button>
+            </>
+          ),
         });
         setRunning(null);
         return;
@@ -290,7 +276,7 @@ export function CompletedWorktrees({
                     <button
                       type="button"
                       onClick={() => onRemove(u)}
-                      disabled={running !== null || panel?.kind === 'confirm'}
+                      disabled={running !== null || panel?.kind === 'custom'}
                       className="rounded bg-red-950/60 px-2 py-0.5 text-[11px] font-medium text-red-300 hover:bg-red-900/70 disabled:opacity-50"
                     >
                       {running === u.unitId ? 'removing…' : 'Remove'}
@@ -303,88 +289,6 @@ export function CompletedWorktrees({
         </div>
       )}
 
-      {panel && (
-        <div
-          className={`fixed bottom-4 right-4 z-50 flex max-h-[60vh] w-[28rem] max-w-[calc(100vw-2rem)] flex-col rounded-lg border shadow-xl ${
-            panel.kind === 'ok'
-              ? 'border-emerald-800 bg-slate-950'
-              : panel.kind === 'err'
-                ? 'border-red-800 bg-slate-950'
-                : panel.kind === 'warn' || panel.kind === 'confirm'
-                  ? 'border-amber-800 bg-slate-950'
-                  : 'border-slate-700 bg-slate-950'
-          }`}
-        >
-          <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2 text-xs">
-            <span className="flex items-center gap-2 font-medium text-slate-200">
-              {panel.kind === 'running' && (
-                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-indigo-400" />
-              )}
-              {panel.kind === 'ok' && <span className="text-emerald-400">✓</span>}
-              {panel.kind === 'err' && <span className="text-red-400">✗</span>}
-              {panel.kind === 'warn' && <span className="text-amber-400">⚠</span>}
-              {panel.kind === 'confirm' && <span className="text-amber-400">⚠</span>}
-              {panel.title}
-            </span>
-            <button
-              type="button"
-              onClick={() => setPanel(null)}
-              className="text-slate-500 hover:text-slate-300"
-              aria-label="Close"
-            >
-              ✕
-            </button>
-          </div>
-          {panel.kind === 'warn' ? (
-            <div className="px-3 py-3 text-xs text-amber-200">
-              <p>{panel.msg}</p>
-              <Link
-                href="/settings"
-                className="mt-2 inline-block font-medium text-indigo-400 hover:text-indigo-300"
-              >
-                Open Settings →
-              </Link>
-            </div>
-          ) : panel.kind === 'confirm' ? (
-            <div className="flex flex-col overflow-hidden">
-              <div className="overflow-auto px-3 py-3 text-xs text-amber-200">
-                <p className="mb-2">{panel.msg}</p>
-                <ul className="space-y-1 font-mono text-[11px] text-slate-400">
-                  {panel.processes.map((p) => (
-                    <li key={p.pid} className="truncate" title={p.command}>
-                      <span className={p.isClaude ? 'text-indigo-300' : 'text-slate-500'}>
-                        {p.isClaude ? 'claude' : 'proc'}
-                      </span>{' '}
-                      <span className="text-slate-600">pid {p.pid}</span> · {p.command}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div className="flex justify-end gap-2 border-t border-slate-800 px-3 py-2">
-                <button
-                  type="button"
-                  onClick={() => setPanel(null)}
-                  className="rounded bg-slate-800 px-3 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-700"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => doRemove(panel.unit, true)}
-                  className="rounded bg-red-700 px-3 py-1 text-[11px] font-medium text-white hover:bg-red-600"
-                >
-                  Kill sessions &amp; remove
-                </button>
-              </div>
-            </div>
-          ) : (
-            <pre className="overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-300">
-              {panel.output || '…'}
-              <div ref={outputEnd} />
-            </pre>
-          )}
-        </div>
-      )}
     </section>
   );
 }

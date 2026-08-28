@@ -1,10 +1,13 @@
-// lib/archive-core.ts — compress + upload a unit's conversation to GCS.
+// lib/archive-core.ts — GCS plumbing for the transcript/workflow backup.
 //
-// Shared by the `archive` CLI (live worktree-removal hook) and the
-// `backfill-archive` script. Builds TWO zstd-max tarballs — transcript.tar.zst
-// (the raw ~/.claude/projects session folder, incl. subagents) and
-// workflow.tar.zst (state.yaml + resources) — and uploads both under a
-// per-run object prefix. Pure I/O orchestration; callers resolve the dirs.
+// Settings + credential resolution, binary discovery, and the primitives the one
+// uploader (lib/transcript-archive.ts sweep()) builds on: compress/decompress a
+// file, tar a directory, upload, list, download.
+//
+// There used to be a second uploader here (`archiveUnit`, a whole-directory
+// transcript.tar.zst for the removal hook and backfill). It is gone: two
+// formats in one bucket meant the board could not restore anything archived at
+// removal time. Existing tarballs stay readable — restore falls back to them.
 import { execFileSync, spawn } from 'node:child_process';
 import { readFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -123,15 +126,16 @@ export function missingBinaries(): RequiredBinary[] {
  * (macOS bsdtar lacks GNU's -I). The `--` is load-bearing: encoded transcript
  * dir names start with "-" (e.g. "-Users-…"), which tar would otherwise parse as
  * option flags ("Invalid replacement flag"). `zstdPath` is an absolute path. */
-function buildTarZst(
+export function buildTarZst(
   parentDir: string,
   base: string,
   out: string,
   zstdPath: string,
+  zstdFlags: string[] = ['--ultra', '-22'],
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const tar = spawn('/usr/bin/tar', ['-cf', '-', '-C', parentDir, '--', base]);
-    const zstd = spawn(zstdPath, ['--ultra', '-22', '-T0', '-f', '-o', out]);
+    const zstd = spawn(zstdPath, [...zstdFlags, '-T0', '-f', '-o', out]);
     tar.stdout.pipe(zstd.stdin);
 
     let tarErr = '';
@@ -155,56 +159,161 @@ function buildTarZst(
   });
 }
 
-export interface ArchiveUnitOpts {
-  transcriptDir: string | null; // ~/.claude/projects/<enc> (null = skip)
-  workflowDir: string | null; // the unit's workflow dir (null = skip)
-  objectPrefix: string; // e.g. "<identifier>/" — trailing slash
-  dedupPrefix: string; // existence-check prefix, e.g. "<identifier>/"
-  gcs: GcsConfig;
-  zstdPath: string;
-  force: boolean; // skip the dedup existence check + upload regardless
-  log: (msg: string) => void;
+// ── per-file objects (the daily transcript sweep) ─────────────────────────────
+//
+// The removal path above tars a whole directory. The daily sweep can't: local
+// transcripts are pruned at 30 days, so re-tarring the directory would upload a
+// tree that has LOST files and overwrite a good cloud copy with a lesser one.
+// One object per session file removes that failure mode by construction —
+// pruning locally can never delete anything in the bucket — and makes the sweep
+// incremental instead of re-compressing every transcript nightly.
+//
+// Level 19 rather than --ultra -22: on JSONL the ratio difference is under a
+// percent, and this runs unattended every day over many files.
+const SWEEP_ZSTD_LEVEL = '-19';
+
+/** Compress one file to `out` with `zstd -19 -T0`. */
+export function compressFile(src: string, out: string, zstdPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const zstd = spawn(zstdPath, [SWEEP_ZSTD_LEVEL, '-T0', '-f', '-o', out, '--', src]);
+    let err = '';
+    zstd.stderr.on('data', (d: Buffer) => (err += d.toString()));
+    zstd.on('error', reject);
+    zstd.on('close', (code) =>
+      code === 0 ? resolve() : reject(new Error(`zstd(${code}): ${err.trim()}`)),
+    );
+  });
 }
 
-export interface ArchiveResult {
-  status: 'uploaded' | 'skipped-existing' | 'nothing';
-  objects: string[];
+/** Decompress one `.zst` file to `out`. */
+export function decompressFile(src: string, out: string, zstdPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const zstd = spawn(zstdPath, ['-d', '-f', '-o', out, '--', src]);
+    let err = '';
+    zstd.stderr.on('data', (d: Buffer) => (err += d.toString()));
+    zstd.on('error', reject);
+    zstd.on('close', (code) =>
+      code === 0 ? resolve() : reject(new Error(`zstd -d(${code}): ${err.trim()}`)),
+    );
+  });
 }
 
-/** Compress each present tree and upload both objects under objectPrefix.
- * When !force, skips entirely if any object already exists at dedupPrefix. */
-export async function archiveUnit(opts: ArchiveUnitOpts): Promise<ArchiveResult> {
-  const { transcriptDir, workflowDir, objectPrefix, dedupPrefix, gcs, zstdPath, force, log } = opts;
-  const trees = [
-    transcriptDir ? { dir: transcriptDir, out: 'transcript.tar.zst' } : null,
-    workflowDir ? { dir: workflowDir, out: 'workflow.tar.zst' } : null,
-  ].filter((t): t is { dir: string; out: string } => t !== null);
-  if (trees.length === 0) return { status: 'nothing', objects: [] };
+/** Custom object metadata describing the SOURCE file an object was made from.
+ *
+ * Without this the bucket cannot answer "is this copy current?": an object's
+ * `updated` is when we uploaded it, not when the session was written, and its
+ * `size` is the COMPRESSED size, so neither can be compared with a local file.
+ * Stamping the source's size and mtime makes the bucket self-describing, which
+ * is what lets the local index be treated as a pure cache and rebuilt from a
+ * single listing after it is lost (new machine, cleared data dir). */
+export interface SourceStamp {
+  srcSize: number;
+  srcMtimeMs: number;
+  /** Where this unit's transcripts live, and the worktree they belong to.
+   * Recorded because the bucket otherwise cannot answer "restore to where?" for
+   * a unit whose worktree has been removed — precisely the unit a restore is
+   * for. Without it, a lost index makes those unrestorable. */
+  srcWorktree?: string;
+  srcTranscriptDir?: string;
+}
 
+/** Upload one local file to `dest` (an object name, no gs:// prefix). */
+export async function uploadFile(
+  gcs: GcsConfig,
+  local: string,
+  dest: string,
+  stamp?: SourceStamp,
+): Promise<void> {
+  await makeStorage(gcs)
+    .bucket(gcs.bucket)
+    .upload(local, {
+      destination: dest,
+      ...(stamp
+        ? {
+            metadata: {
+              metadata: {
+                srcSize: String(stamp.srcSize),
+                srcMtimeMs: String(Math.floor(stamp.srcMtimeMs)),
+                ...(stamp.srcWorktree ? { srcWorktree: stamp.srcWorktree } : {}),
+                ...(stamp.srcTranscriptDir ? { srcTranscriptDir: stamp.srcTranscriptDir } : {}),
+              },
+            },
+          }
+        : {}),
+    });
+}
+
+/** Upload a small in-memory payload (the per-unit manifest). Kept uncompressed
+ * so it is readable straight from the GCS console. */
+export async function uploadJson(gcs: GcsConfig, dest: string, value: unknown): Promise<void> {
+  await makeStorage(gcs)
+    .bucket(gcs.bucket)
+    .file(dest)
+    .save(JSON.stringify(value, null, 2), {
+      contentType: 'application/json',
+      resumable: false,
+    });
+}
+
+/** Read a JSON object back, or null when it is absent/unparseable. */
+export async function downloadJson<T>(gcs: GcsConfig, object: string): Promise<T | null> {
+  try {
+    const [buf] = await makeStorage(gcs).bucket(gcs.bucket).file(object).download();
+    return JSON.parse(buf.toString('utf8')) as T;
+  } catch {
+    return null;
+  }
+}
+
+export interface RemoteObject {
+  name: string;
+  /** COMPRESSED size of the object — not the source file's size. */
+  size: number;
+  /** When the object was written, i.e. upload time — not the source's mtime. */
+  updated: string | null;
+  /** The source file's size/mtime, when the upload stamped them (see
+   * SourceStamp). Absent on objects written before stamping existed. */
+  srcSize?: number;
+  srcMtimeMs?: number;
+  srcWorktree?: string;
+  srcTranscriptDir?: string;
+}
+
+/** List every object under `prefix`. Used by restore and by the status route to
+ * answer "is there a cloud copy?" without trusting the local index. */
+export async function listObjects(gcs: GcsConfig, prefix: string): Promise<RemoteObject[]> {
+  const [files] = await makeStorage(gcs).bucket(gcs.bucket).getFiles({ prefix });
+  return files.map((f) => {
+    const custom = (f.metadata?.metadata ?? {}) as Record<string, string | undefined>;
+    const num = (v: string | undefined): number | undefined => {
+      const n = Number(v);
+      return v !== undefined && Number.isFinite(n) ? n : undefined;
+    };
+    return {
+      name: f.name,
+      size: Number(f.metadata?.size ?? 0),
+      updated: (f.metadata?.updated as string | undefined) ?? null,
+      srcSize: num(custom.srcSize),
+      srcMtimeMs: num(custom.srcMtimeMs),
+      srcWorktree: custom.srcWorktree,
+      srcTranscriptDir: custom.srcTranscriptDir,
+    };
+  });
+}
+
+/** Server-side copy — no download/upload round trip, so a whole-bucket safety
+ * copy costs no egress. */
+export async function copyObject(gcs: GcsConfig, src: string, dest: string): Promise<void> {
   const bucket = makeStorage(gcs).bucket(gcs.bucket);
+  await bucket.file(src).copy(bucket.file(dest));
+}
 
-  if (!force) {
-    const [existing] = await bucket.getFiles({ prefix: dedupPrefix, maxResults: 1 });
-    if (existing.length > 0) {
-      log(`skip — already archived under gs://${gcs.bucket}/${dedupPrefix}`);
-      return { status: 'skipped-existing', objects: [] };
-    }
-  }
+/** Delete one object. Used only after a verified copy exists. */
+export async function deleteObject(gcs: GcsConfig, object: string): Promise<void> {
+  await makeStorage(gcs).bucket(gcs.bucket).file(object).delete();
+}
 
-  const objects: string[] = [];
-  for (const t of trees) {
-    const tmp = join(tmpdir(), `ksflow-${t.out}-${process.pid}-${objects.length}.tmp`);
-    log(`compressing ${t.dir} → ${t.out} (zstd --ultra -22)…`);
-    await buildTarZst(dirname(t.dir), basename(t.dir), tmp, zstdPath);
-    const dest = objectPrefix + t.out;
-    log(`uploading gs://${gcs.bucket}/${dest}…`);
-    await bucket.upload(tmp, { destination: dest });
-    try {
-      unlinkSync(tmp);
-    } catch {
-      // best-effort temp cleanup
-    }
-    objects.push(`gs://${gcs.bucket}/${dest}`);
-  }
-  return { status: 'uploaded', objects };
+/** Download one object to a local path. */
+export async function downloadObject(gcs: GcsConfig, object: string, dest: string): Promise<void> {
+  await makeStorage(gcs).bucket(gcs.bucket).file(object).download({ destination: dest });
 }

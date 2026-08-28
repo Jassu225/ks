@@ -102,8 +102,11 @@ firebase emulators:start --only firestore
 | `ks-flow status` | Status of all services (daemon, PocketBase, board UI). |
 | `ks-flow daemon` | Run the ingester in the foreground (debug). |
 | `ks-flow set-project <path>` | Re-point the tracked project (rewrites `project.conf`, re-backfills). |
-| `ks-flow archive <worktree> [id] [title]` | Archive one worktree's transcript + workflow to GCS (same step the board runs before Remove). No-op if archiving is disabled. |
-| `ks-flow backfill-archive [--dry-run] [--force]` | Archive every already-completed workflow (in the main checkout with no live worktree) to GCS. |
+| `ks-flow backup [target] [options]` | **The one uploader.** Targets: nothing = every live worktree; `--unit <id>`; `--worktree <path> [--identifier <id>]` (one worktree, live or about to be deleted); `--completed` (units whose worktree is gone). Options: `--since-hours <n>`, `--force`, `--dry-run`, `--json`, `--reindex` (upload nothing; rebuild `archive-index.json` from the bucket). |
+| `ks-flow restore --unit <id> [--overwrite] [--dry-run] [--json]` | Restore a unit's backed-up transcripts into `~/.claude/projects/<encoded>`. Local files win unless `--overwrite`. Reads per-file objects, falling back to a legacy `transcript.tar.zst`. |
+| `ks-flow archive <worktree> [id]` | Familiar alias — forwards to `backup --worktree … --force`. |
+| `ks-flow backfill-archive [--dry-run] [--force]` | Familiar alias — forwards to `backup --completed`. |
+| `ks-flow migrate-archives [--dry-run] [--unit <id>] [--backup-prefix <p>] [--delete-legacy] [--force]` | Convert legacy `transcript.tar.zst` archives to the per-file layout, after server-side copying every affected object to a safety prefix. |
 
 ## Board UI
 
@@ -144,6 +147,13 @@ Each card carries quick links + live state:
   against a shared ticking clock, so it self-expires — not the daemon's snapshot).
 - **`⟳ active <when>`** — when the session was last active (`lastActivity`, the
   last timestamped JSONL line); absolute time on hover.
+- **`☁ backup`** — back up this unit now (transcript + workflow). Turns indigo
+  with a count (`☁ backup 3`) when session files on disk are new or have grown
+  since their last upload.
+- **`⤓ restore N`** — appears **automatically** whenever the bucket holds session
+  files this machine no longer has, which is the pruned-at-30-days case the
+  backup exists for. Restoring only fills in what is missing; a local transcript
+  is never overwritten. Both stream into the shared bottom-right log panel.
 
 The full parsed `state.yaml` is replicated onto each work-unit (a `state` field),
 so any field can be surfaced on the board without new daemon plumbing.
@@ -205,29 +215,191 @@ GCS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----\n"
 GCS_PROJECT_ID=my-gcp-project           # optional (falls back to the SA's)
 ```
 
-When enabled, removing a completed worktree first builds **two** maximally
-compressed archives and uploads both, then runs your remove command:
+When enabled, removing a completed worktree archives it first, then runs your
+remove command. It goes through the same uploader as everything else (see
+**Transcript backup** below), so it writes:
 
-- `transcript.tar.zst` ← `~/.claude/projects/<encoded-worktree>/` (all session
-  JSONL + `subagents/*.jsonl`).
-- `workflow.tar.zst` ← the worktree's `workflow/` folder (`state.yaml` +
-  `resources/`).
+- one object per session file ← `~/.claude/projects/<encoded-worktree>/` (all
+  session JSONL + `subagents/*.jsonl`), under `<identifier>/transcript/`.
+- `workflow.tar.zst` ← that unit's own `workflow/<user>/<slug|tickets/id>/`
+  folder (`state.yaml` + `resources/`).
 
-Compression is `tar -cf - … | zstd --ultra -22 -T0` (the contents are plain
-text, so they shrink dramatically). Objects land at
-`gs://<bucket>/<prefix>/<identifier>/{transcript,workflow}.tar.zst`.
-Unpack one with `zstd -dc X.tar.zst | tar -xf -`.
+Session files are compressed individually with `zstd -19` (~5x on JSONL);
+the workflow folder is `tar -cf - … | zstd -19 -T0`. Read one back with
+`zstd -dc <file>.jsonl.zst` or, for the workflow,
+`zstd -dc workflow.tar.zst | tar -xf -`.
 
 **Abort-on-failure:** if archiving is enabled but fails (missing `zstd`, bad
 creds/bucket, network), the removal is **aborted** — the worktree is never
 deleted un-archived. Fix the config (or disable archiving) and retry.
 
-**Backfill:** `ks-flow backfill-archive` archives workflows that were *already*
-completed before this feature existed — those in the main checkout's `workflow/`
-whose worktree has already been removed. It locates each unit's transcript dir
-(which persists under `~/.claude/projects/` after `git worktree remove`) and
-uploads both archives. Re-runnable: it skips units already in GCS unless
-`--force`; use `--dry-run` to preview candidates first.
+**Completed work:** `ks-flow backfill-archive` (alias for `backup --completed`)
+covers units whose worktree has already been removed — their state.yaml is in the
+main checkout's `workflow/` tree and their transcript dir survives under
+`~/.claude/projects/` after `git worktree remove`. Re-runnable and incremental:
+the local index means it uploads only what is missing, `--force` re-uploads
+everything, `--dry-run` previews.
+
+### Transcript backup · end of day
+
+Claude Code prunes `~/.claude/projects/**/*.jsonl` at **30 days**. A session you
+park and come back to a month later has therefore lost its transcript, and
+`--resume` finds nothing. The GCS archive above only fires on **Remove**, i.e.
+only for work you were already finished with — the opposite case. This sweep
+covers it.
+
+Once a day (default **23:45** local) the daemon backs up every session transcript
+that changed in the last 24h, for every unit reachable through a **live git
+worktree** of the tracked project. It runs as a child process, and catches up on
+wake or after a restart if a day was missed, so a Mac asleep through the window
+does not silently skip a day.
+
+**One object per session file, not a tarball:**
+
+```
+gs://<bucket>/<prefix>/<identifier>/transcript/<sessionId>.jsonl.zst
+gs://<bucket>/<prefix>/<identifier>/transcript/subagents/<id>.jsonl.zst
+gs://<bucket>/<prefix>/<identifier>/workflow.tar.zst
+```
+
+This layout is the whole point, not an implementation detail. Re-tarring the
+transcript *directory* would eventually destroy the thing being protected: once
+local pruning has removed an old session, the new tarball is built from a tree
+that has **lost** that file and overwrites a good cloud copy with a lesser one —
+silently, and precisely for the long-lived units worth keeping. Per-file objects
+make that impossible (pruning locally never deletes from the bucket) and make the
+sweep incremental: only the file that grew is compressed and uploaded, so nothing
+is downloaded or rewritten. Compression is `zstd -19` (~5x on JSONL; measured
+391,483 B → 76,921 B on a real session, restored byte-identical).
+
+A unit is keyed by the **identifier out of its own `state.yaml`** — the one whose
+`worktree_dir` points back at that worktree. `workflow/` is committed, so every
+worktree carries every unit's `state.yaml`; taking the first one found made five
+unrelated worktrees share one object prefix. Ticket units live at
+`workflow/<user>/tickets/<id>/`, project units at `workflow/<user>/<slug>/`, so
+the tree is walked rather than globbed at a fixed depth. Keying this way matches
+the removal path, so both write under the same per-unit prefix.
+
+**The trigger and the action are different, deliberately.** The trigger is a
+session file that differs from the local index — a lone `state.yaml` touch does
+nothing, since `workflow/` is committed to git and already recoverable. The
+action is to back up **the whole worktree**: every session file not already in
+the bucket, plus a refreshed `workflow.tar.zst`.
+
+Scoping the *action* to the change window loses data, and did during development:
+`KAR-12770` had 17 local sessions and exactly **one** in the bucket. The other 16
+were older than the window, so they were skipped — and a finished session never
+changes again, so they would never have been uploaded at all. They would simply
+have reached 30 days and been pruned. `--since-hours` therefore narrows only the
+trigger (a cheap "did anything happen lately" filter); it never limits which
+files go up. The default is no window: visit every unit, upload whatever is
+missing.
+
+Transcript and workflow always travel together, so a restore hands back a
+conversation and the workflow state that went with it.
+
+**One uploader, several ways to choose targets.** `sweep()` is the only thing
+that writes to the bucket; the daily run, both manual buttons, the worktree
+removal hook, and the completed-work backfill all differ only in which targets
+they hand it. The removal hook used to write a whole-directory
+`transcript.tar.zst` through a second code path — which the board's Restore could
+not read, leaving 35 archived units unrestorable — and the backfill wrote a third
+variant. Both are gone; `ks-flow archive` and `ks-flow backfill-archive` remain
+as aliases. Legacy tarballs already in the bucket stay usable: restore falls back
+to unpacking one when a unit has no per-file objects.
+
+**Restore.** The board shows local transcripts first. When the bucket holds
+sessions this machine no longer does, the card grows an amber `⤓ restore N`
+badge; clicking it fills in **only the missing** sessions — a transcript on disk
+may be the live one Claude Code is appending to, so local always wins unless you
+pass `--overwrite` on the CLI. Restore returns the **conversation, not the
+worktree**: if the worktree is gone, the encoded transcript path matches no live
+directory and `--resume` will not list the session until that worktree exists
+again.
+
+**Manual triggers.** The header `☁` backs up everything changed in the last 24h
+without waiting for the schedule (useful before shutting down, or before leaving
+a session for a month). Each card's `☁` backs up that one unit.
+
+Both stream their output into the same bottom-right log panel the worktree Remove
+action uses — a backup spends real time in zstd and in the upload, and a button
+with no feedback is indistinguishable from a broken one (a no-op click looked
+exactly like a failure during development). The panel, its state machine, and the
+NDJSON reader live in `web/components/StreamPanel.tsx`; Remove, backup, and
+restore all drive it, so only one panel can ever be on screen. Routes emit the
+`{ type: 'stdout' | 'stderr' | 'exit' }` line protocol via `web/lib/streamproc.ts`.
+
+**Settings** (`board-settings.json`, alongside `gcsArchive`):
+
+```json
+"transcriptBackup": { "enabled": true, "hour": 23, "minute": 45, "sinceHours": 0 }
+```
+
+Defaults to on — the feature is already gated behind the opt-in
+`gcsArchive.enabled`, so if archiving is configured, transcripts get kept.
+
+### What "changed" means, and losing the index
+
+Change detection is per file, never by counting: `size` and `floor(mtimeMs)` are
+compared against what was last uploaded. Appending to a JSONL moves both, so a
+live session is always caught. (A rewrite that preserved byte length *and* mtime
+would slip through; nothing in Claude Code does that, and hashing every session
+each sweep would cost far more than it buys.)
+
+Those numbers are the **local** file's. Nothing reads a modified time back from
+GCS — an object's `updated` is when it was uploaded and its `size` is the
+*compressed* size, so neither can be compared with a file on disk.
+
+Bookkeeping therefore lives in three places, most convenient first:
+
+1. **`archive-index.json`** in the plugin data dir, next to `checkpoints.json`.
+   Local churn about local files, so it never costs a DB write, and the board
+   reads it instead of listing the bucket per card.
+2. **`<identifier>/manifest.json`** in the bucket, written by the sweep that
+   uploaded the data: the same record, but travelling *with* the unit rather than
+   in one machine-wide file, and readable straight from the GCS console.
+3. **Custom object metadata** — `srcSize`, `srcMtimeMs`, `srcWorktree`,
+   `srcTranscriptDir` — stamped on each session object, so even a unit with no
+   manifest can be reconstructed from a listing.
+
+So no, losing the index is not fatal: `ks-flow backup --reindex` rebuilds it from
+the bucket. It prefers a manifest, falls back to object metadata, and resolves
+"where do these transcripts belong" from a live worktree, else the completed-unit
+record in the main checkout's `workflow/` tree, else the stamped location. On the
+first real bucket that recovered **40 of 40 units, 0 skipped** — including units
+whose worktree had already been removed. Objects predating the stamping carry no
+source size/mtime, so they re-upload once, which is the safe direction.
+
+### Migrating legacy archives
+
+Units archived by the old removal hook hold a single `<id>/transcript.tar.zst`.
+Restore can read those, so nothing is broken, but they cannot be updated
+incrementally and carry no manifest or source stamps.
+
+```bash
+ks-flow migrate-archives --dry-run          # the plan; inspects no contents
+ks-flow migrate-archives                    # safety-copy, then convert
+ks-flow migrate-archives --unit KAR-1234    # one unit
+ks-flow migrate-archives --delete-legacy    # also drop the old tarball
+```
+
+**Every object under a unit's prefix is server-side copied to
+`_legacy-backup/<timestamp>/…` before anything is written** — no download, no
+egress, and the original bytes stay addressable if a conversion goes wrong. Pass
+`--backup-prefix` to choose where, `--skip-backup` to opt out (don't).
+
+Conversion only ADDS objects; the tarball survives unless `--delete-legacy`, so a
+half-finished unit is simply finished by re-running. Units that already have
+per-file objects are skipped unless `--force`.
+
+`tar` preserves each file's mtime, so a converted object's source stamp matches
+what a local sweep would compute — the result is indistinguishable from a normal
+upload and will not re-upload on the next run. The unit's transcript dir comes
+from a live worktree, else the completed-unit record in the main checkout's
+`workflow/` tree; without either, the manifest is written without one and a
+restore will need the worktree recreated first.
+
+Delete the `_legacy-backup/` prefix once you are satisfied.
 
 ### Completed worktrees · not removed
 

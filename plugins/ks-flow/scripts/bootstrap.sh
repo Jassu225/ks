@@ -75,14 +75,42 @@ if [ ! -f "$DAEMON_DIR/dist/daemon.js" ]; then
   NEED_BUILD=1
 elif ! diff -q "$PLUGIN_ROOT/src/package.json" "$DAEMON_DIR/package.json" >/dev/null 2>&1; then
   NEED_BUILD=1
-elif ! diff -qr "$PLUGIN_ROOT/src/lib" "$DAEMON_DIR/lib" >/dev/null 2>&1 \
-     || ! diff -q "$PLUGIN_ROOT/src/daemon.ts" "$DAEMON_DIR/daemon.ts" >/dev/null 2>&1; then
-  NEED_BUILD=1
+else
+  # Compare lib/ AND every top-level entrypoint. Naming daemon.ts alone missed a
+  # changed, added, or deleted sibling (transcript-backup.ts, transcript-restore.ts
+  # …), so an edit to one of those shipped nothing. `diff -q` on the directory
+  # listing catches additions and deletions too; excluding dist/ and node_modules
+  # keeps it to source.
+  if ! diff -qr "$PLUGIN_ROOT/src/lib" "$DAEMON_DIR/lib" >/dev/null 2>&1; then
+    NEED_BUILD=1
+  else
+    for f in "$PLUGIN_ROOT"/src/*.ts; do
+      [ -e "$f" ] || continue
+      if ! diff -q "$f" "$DAEMON_DIR/$(basename "$f")" >/dev/null 2>&1; then
+        NEED_BUILD=1
+        break
+      fi
+    done
+    # …and a source deleted upstream must also force a rebuild, so the prune runs.
+    if [ "$NEED_BUILD" = "0" ]; then
+      for f in "$DAEMON_DIR"/*.ts; do
+        [ -e "$f" ] || continue
+        [ -e "$PLUGIN_ROOT/src/$(basename "$f")" ] || { NEED_BUILD=1; break; }
+      done
+    fi
+  fi
 fi
 
 if [ "$NEED_BUILD" = "1" ]; then
   echo "[ks-flow] installing/building daemon into $DAEMON_DIR" >&2
   mkdir -p "$DAEMON_DIR"
+  # Prune stale sources first: `cp -R` is purely ADDITIVE, so an entrypoint
+  # deleted upstream lingers here and breaks the build against the module it
+  # imported (exactly what archive.ts / backfill-archive.ts did after the
+  # uploader was consolidated). node_modules is deliberately kept — it is the
+  # expensive part; dist is rebuilt below anyway.
+  find "$DAEMON_DIR" -maxdepth 1 -name '*.ts' -delete 2>/dev/null || true
+  rm -rf "$DAEMON_DIR/lib" "$DAEMON_DIR/dist"
   cp -R "$PLUGIN_ROOT/src/." "$DAEMON_DIR/"
   # Use a data-dir-local npm cache to avoid the common ~/.npm root-owned EPERM.
   ( cd "$DAEMON_DIR" && npm install --no-audit --no-fund --cache "$DATA_DIR/.npm" && npm run build ) >&2

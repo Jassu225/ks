@@ -61,3 +61,58 @@ export function reminderSettings(): ReminderSettings {
   }
   return cached;
 }
+
+// ── transcript backup (end-of-day sweep) ─────────────────────────────────────
+export interface BackupSettings {
+  /** Master switch for the daily sweep. Still requires gcsArchive.enabled. */
+  enabled: boolean;
+  /** Local time of day to run, 24h. */
+  hour: number;
+  minute: number;
+  /** Narrows only the TRIGGER ("did anything happen lately"), never which files
+   * are uploaded. 0 = no window: visit every unit and upload whatever is missing
+   * from the bucket, which is what keeps old sessions from being lost. */
+  sinceHours: number;
+}
+
+const BACKUP_DEFAULTS: BackupSettings = {
+  enabled: true,
+  hour: 23,
+  minute: 45,
+  sinceHours: 0,
+};
+
+let cachedBackup: BackupSettings = BACKUP_DEFAULTS;
+let cachedBackupMtime = -1;
+
+/** Read the `transcriptBackup` block out of board-settings.json. Defaults ON:
+ * the feature is already gated by the opt-in `gcsArchive.enabled`, so a user who
+ * turned archiving on wants their transcripts kept. */
+export function backupSettings(): BackupSettings {
+  const path = join(dataDir(), 'board-settings.json');
+  let mtime: number;
+  try {
+    mtime = statSync(path).mtimeMs;
+  } catch {
+    cachedBackup = BACKUP_DEFAULTS;
+    cachedBackupMtime = -1;
+    return cachedBackup;
+  }
+  if (mtime === cachedBackupMtime) return cachedBackup;
+  cachedBackupMtime = mtime;
+  try {
+    const s = JSON.parse(readFileSync(path, 'utf8'));
+    const b = (s.transcriptBackup ?? {}) as Partial<BackupSettings>;
+    const int = (v: unknown, dflt: number, min: number, max: number): number =>
+      typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? Math.floor(v) : dflt;
+    cachedBackup = {
+      enabled: b.enabled !== false,
+      hour: int(b.hour, BACKUP_DEFAULTS.hour, 0, 23),
+      minute: int(b.minute, BACKUP_DEFAULTS.minute, 0, 59),
+      sinceHours: int(b.sinceHours, BACKUP_DEFAULTS.sinceHours, 0, 24 * 30),
+    };
+  } catch {
+    cachedBackup = BACKUP_DEFAULTS;
+  }
+  return cachedBackup;
+}

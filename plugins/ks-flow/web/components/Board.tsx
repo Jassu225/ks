@@ -1,6 +1,8 @@
 'use client';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { BackupStatusProvider, useBackupStatus } from '@/lib/backupStatus';
+import { StreamPanelProvider, useStreamPanel } from '@/components/StreamPanel';
 import { useBoard } from '@/lib/useBoard';
 import { useNow } from '@/lib/useNow';
 import type { BoardConfig, SessionDoc, WorkUnitDoc } from '@/lib/types';
@@ -24,6 +26,42 @@ const DONE_STATUSES = new Set([
   'closed',
   'archived',
 ]);
+
+
+/**
+ * Manual "back up now" for the whole project — transcript + workflow for every
+ * unit whose sessions changed in the last 24h, the same window and the same rule
+ * as the daemon's end-of-day sweep. Exists because the sweep runs on a clock: if
+ * you are about to shut the machine down, or want a checkpoint before leaving a
+ * session for a month, you should not have to wait for 23:45.
+ */
+function BackupNowButton() {
+  const { lastSweepAt, refresh } = useBackupStatus();
+  const { runStream, busy } = useStreamPanel();
+
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        void runStream({
+          title: 'Backing up all worktrees',
+          url: '/api/transcript-backup',
+          successNote: '✓ backup complete',
+          onSuccess: refresh,
+        })
+      }
+      disabled={busy}
+      title={
+        'Back up now: transcript + workflow for every unit whose sessions changed in the last 24h' +
+        (lastSweepAt ? ` — last sweep ${new Date(lastSweepAt).toLocaleString()}` : ' — no sweep yet')
+      }
+      className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-slate-400 hover:text-slate-200 disabled:opacity-50"
+    >
+      <span className={busy ? 'animate-pulse' : ''}>☁</span>
+      <span>{busy ? 'backing up…' : 'backup'}</span>
+    </button>
+  );
+}
 
 export function Board({ config }: { config: BoardConfig }) {
   const { project, workUnits, sessions, reminders, connected, refresh } = useBoard(config);
@@ -148,6 +186,10 @@ export function Board({ config }: { config: BoardConfig }) {
   const types = swimlanes ? (['ticket', 'project'] as const) : ([null] as const);
 
   return (
+    // Provider spans header + cards: the header's "back up now" and each card's
+    // restore badge read the same single status poll.
+    <StreamPanelProvider>
+    <BackupStatusProvider>
     <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
       <header className="flex items-center justify-between border-b border-slate-800 bg-slate-900 px-5 py-3">
         <div>
@@ -200,6 +242,7 @@ export function Board({ config }: { config: BoardConfig }) {
           >
             <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`}>↻</span>
           </button>
+          <BackupNowButton />
           {notesEnabled && (
             <Link
               href="/notes"
@@ -283,5 +326,7 @@ export function Board({ config }: { config: BoardConfig }) {
         {showCompleted && <CompletedNoWorktree units={completedNoWorktree} />}
       </main>
     </div>
+    </BackupStatusProvider>
+    </StreamPanelProvider>
   );
 }

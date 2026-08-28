@@ -15,11 +15,14 @@ import {
   realpathSync,
   statSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { loadConfig, readProjectConf } from './lib/config.js';
 import { createProvider } from './lib/db/index.js';
 import type { ReminderDoc, SessionDoc, SessionWriter, WorkUnitDoc } from './lib/db/types.js';
-import { reminderSettings } from './lib/boardsettings.js';
+import { backupSettings, reminderSettings } from './lib/boardsettings.js';
+import { readArchiveIndex } from './lib/archive-index.js';
 import { notify, terminalNotifierAvailable } from './lib/notify.js';
 import {
   addOverlay,
@@ -845,6 +848,11 @@ function startWatchers(): void {
     reminderTick().catch((e) => log('reminderTick failed', e?.message));
   }, REMINDER_TICK_MS);
 
+  // End-of-day transcript backup: a 60s poll that fires the sweep at most once
+  // per day (also catching up after sleep). The check itself is a settings read
+  // plus one small JSON read.
+  setInterval(backupTick, 60_000);
+
   // Daily log rotation: roll events.jsonl + daemon.log at the midnight boundary,
   // keeping the last 30 days of each. 60s granularity is plenty for a day flip.
   setInterval(rotateLogsIfNewDay, 60_000);
@@ -857,6 +865,71 @@ function onSession(path: string): void {
   checkpoints.flush();
   const sessionId = sessionIdFromPath(path);
   if (inProject === true) scheduleSessionUpsert(sessionId);
+}
+
+// ── transcript backup (end-of-day sweep) ────────────────────────────────────
+//
+// Claude Code prunes ~/.claude/projects/**/*.jsonl at 30 days, so a session
+// parked for a month loses its transcript. Until now the only thing that pushed
+// one to GCS was the board's Remove button — i.e. only work you were finished
+// with. This runs the sweep once a day so a session you intend to come back to
+// is recoverable.
+//
+// Runs as a CHILD PROCESS, not inline: it spends its time in zstd and in GCS
+// round-trips, and the daemon's event loop has JSONL ingestion to keep up with.
+// It is also the exact code path the board's manual buttons invoke, so there is
+// one implementation to reason about.
+let backupRunning = false;
+let backupLastAttemptDay: string | null = null;
+
+/** Where dist/transcript-backup.js sits relative to dist/daemon.js. */
+function backupScriptPath(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), 'transcript-backup.js');
+}
+
+function backupTick(): void {
+  const s = backupSettings();
+  if (!s.enabled || backupRunning) return;
+
+  const now = new Date();
+  const today = dayStr();
+  // Once per calendar day at most, regardless of how the trigger fired.
+  if (backupLastAttemptDay === today) return;
+
+  const index = readArchiveIndex();
+  const lastMs = index.lastSweepAt ? Date.parse(index.lastSweepAt) : NaN;
+  const dueByClock =
+    now.getHours() > s.hour || (now.getHours() === s.hour && now.getMinutes() >= s.minute);
+  // Catch-up: a Mac asleep through the window would otherwise skip the day
+  // entirely, which is exactly when transcripts age past the cutoff unwatched.
+  const overdue = !Number.isFinite(lastMs) || Date.now() - lastMs >= 86_400_000;
+  const lastSweptToday = Number.isFinite(lastMs) && dayStr(new Date(lastMs)) === today;
+  if (lastSweptToday) return;
+  if (!dueByClock && !overdue) return;
+
+  backupRunning = true;
+  backupLastAttemptDay = today;
+  const script = backupScriptPath();
+  log(`transcript backup sweep starting (window ${s.sinceHours}h)`);
+  const child = spawn(process.execPath, [script, '--since-hours', String(s.sinceHours)], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let tail = '';
+  const keep = (d: Buffer): void => {
+    tail = (tail + d.toString()).slice(-2000);
+  };
+  child.stdout.on('data', keep);
+  child.stderr.on('data', keep);
+  child.on('error', (e: Error) => {
+    backupRunning = false;
+    log('transcript backup failed to spawn:', e.message);
+  });
+  child.on('close', (code: number | null) => {
+    backupRunning = false;
+    const summary = tail.trim().split('\n').slice(-3).join(' | ');
+    if (code === 0) log('transcript backup done:', summary || '(no output)');
+    else log(`transcript backup exited ${code}:`, summary || '(no output)');
+  });
 }
 
 // ── lifecycle ───────────────────────────────────────────────────────────────

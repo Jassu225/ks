@@ -1,6 +1,8 @@
 'use client';
 import { useState } from 'react';
 import type { ReminderDoc, SessionDoc, WorkUnitDoc } from '@/lib/types';
+import { useBackupStatus } from '@/lib/backupStatus';
+import { useStreamPanel } from '@/components/StreamPanel';
 
 // A session counts as "active" (glowing border) if it wrote within this window.
 // Derived client-side off a ticking clock (passed down from the board) so the
@@ -146,6 +148,109 @@ function ReminderControls({ unitId, reminders }: { unitId: string; reminders: Re
         </form>
       )}
     </>
+  );
+}
+
+
+/**
+ * Per-card backup + restore.
+ *
+ * Local transcripts are pruned at 30 days, so the interesting state is "the
+ * bucket has sessions this machine no longer does" — that card gets an amber
+ * Restore. Otherwise the control is a quiet cloud glyph that backs this one unit
+ * up on demand, alongside the daemon's end-of-day sweep.
+ *
+ * "Back up" means transcript AND workflow: a session change uploads the changed
+ * session files plus a refreshed workflow.tar.zst. Nothing changed in the window
+ * means nothing to upload, so the tooltip says so rather than implying the click
+ * always ships something.
+ *
+ * Restore never overwrites a local transcript (the CLI enforces that); it only
+ * fills in what is missing, so clicking it while a session is live is safe.
+ */
+function TranscriptBackup({ unitId }: { unitId: string }) {
+  const { status, refresh } = useBackupStatus(unitId);
+  const { runStream, busy } = useStreamPanel();
+
+  // Output goes to the shared bottom-right log panel — the same one Remove uses
+  // — because a backup is not instant: a long transcript spends real time in
+  // zstd and in the upload, and a button with no feedback reads as broken (it
+  // did: a no-op click looked identical to a failure).
+  const backup = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    void runStream({
+      title: `Backing up ${unitId}`,
+      url: '/api/transcript-backup',
+      body: { unit: unitId },
+      successNote: '✓ backup complete',
+      onSuccess: refresh,
+    });
+  };
+
+  const restore = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    void runStream({
+      title: `Restoring ${unitId}`,
+      url: '/api/transcript-restore',
+      body: { unit: unitId },
+      successNote: '✓ restore complete',
+      onSuccess: refresh,
+    });
+  };
+
+  const backedUpAt = status?.lastArchivedAt
+    ? `Last backed up ${absTime(status.lastArchivedAt)}`
+    : 'Never backed up';
+  // Counts come from a per-file size+mtime comparison against the archive index
+  // (see /api/transcript-backup GET), not from comparing how many files each
+  // side has — equal counts can still be different files.
+  const pending = status?.pendingCount ?? 0;
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      <button
+        type="button"
+        onClick={backup}
+        disabled={busy}
+        title={
+          pending > 0
+            ? `${pending} session file(s) on disk are new or have grown since their last ` +
+              `upload — back up transcript + workflow now. ${backedUpAt}.`
+            : `Everything on disk is already in the bucket (${status?.cloudSessions ?? 0} ` +
+              `session file(s)). ${backedUpAt}.`
+        }
+        className={`rounded px-1.5 py-0.5 font-medium disabled:opacity-50 ${
+          pending > 0
+            ? 'bg-indigo-950 text-indigo-300 hover:bg-indigo-900'
+            : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+        }`}
+      >
+        ☁ backup{pending > 0 ? ` ${pending}` : ''}
+      </button>
+      {/* Restore appears on its own the moment the bucket holds sessions this
+          machine no longer has — that is the whole point of the backup, so it
+          should never need hunting for. `legacyOnly` units have a pre-migration
+          tarball and no per-file objects; restore can still read it, so offer it
+          without a count. */}
+      {status && (status.missingCount > 0 || (status.legacyOnly && status.localSessions === 0)) && (
+        <button
+          type="button"
+          onClick={restore}
+          disabled={busy}
+          title={
+            status.missingCount > 0
+              ? `${status.missingCount} backed-up session file(s) are no longer on disk ` +
+                `(pruned at 30 days, or the worktree was removed) — restore them. ` +
+                `Existing local transcripts are never overwritten.`
+              : 'A pre-migration archive exists for this unit and nothing is on disk — ' +
+                'restore unpacks it. Existing local transcripts are never overwritten.'
+          }
+          className="rounded bg-amber-950 px-1.5 py-0.5 font-medium text-amber-300 hover:bg-amber-900 disabled:opacity-50"
+        >
+          ⤓ restore{status.missingCount > 0 ? ` ${status.missingCount}` : ''}
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -299,6 +404,7 @@ export function WorkUnitCard({
             {pauseRec ? '⏸ paused' : '▶ active'}
           </button>
         )}
+        <TranscriptBackup unitId={unit.unitId} />
         <ReminderControls unitId={unit.unitId} reminders={reminders} />
       </div>
 
