@@ -1425,6 +1425,51 @@ interface WatchOptions extends ExportOptions {
   frameWidth?: string;
 }
 
+/**
+ * The installed claude-real-video version, or undefined when it cannot be read.
+ *
+ * crv exposes no `--version` and no `__version__`, so the only honest source is
+ * the installed distribution's metadata. Its launcher is a Python console script
+ * whose shebang names the interpreter of the environment it lives in — pipx venv,
+ * virtualenv, or system — so ask that interpreter, not whichever `python3` is on
+ * PATH, which in a pipx install knows nothing about the package.
+ */
+function crvVersion(binary: string): string | undefined {
+  const resolved = spawnSync('command', ['-v', binary], { encoding: 'utf8', shell: true });
+  const path = (resolved.stdout || '').trim();
+  if (!path) return undefined;
+
+  let shebang = '';
+  try {
+    shebang = readFileSync(path, 'utf8').split('\n', 1)[0] || '';
+  } catch {
+    return undefined; // a compiled or non-readable launcher
+  }
+  const interpreter = shebang.startsWith('#!') ? shebang.slice(2).trim().split(/\s+/).pop() : undefined;
+  if (!interpreter || !/python/.test(interpreter)) return undefined;
+
+  const probe = spawnSync(
+    interpreter,
+    ['-c', "import importlib.metadata as m; print(m.version('claude-real-video'))"],
+    { encoding: 'utf8' }
+  );
+  const version = (probe.stdout || '').trim();
+  return /^\d+\.\d+/.test(version) ? version : undefined;
+}
+
+/** True when `version` is at least `minimum`, comparing numerically per part. */
+function atLeastVersion(version: string, minimum: string): boolean {
+  const parts = (v: string) => v.split(/[.+-]/).map(n => Number(n) || 0);
+  const [a, b] = [parts(version), parts(minimum)];
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const [x, y] = [a[i] || 0, b[i] || 0];
+    if (x !== y) return x > y;
+  }
+  return true;
+}
+
+const MIN_CRV = '0.10.1';
+
 function requireCrv(binary: string): void {
   const probe = spawnSync(binary, ['--help'], { encoding: 'utf8' });
   if (probe.error) {
@@ -1442,6 +1487,32 @@ function requireCrv(binary: string): void {
     console.error(chalk.red(`\`${binary}\` is older than 0.10.0 — it has no --frame-width or --from`));
     console.error(chalk.yellow('Upgrade it with:  pipx upgrade claude-real-video   (or pip install -U claude-real-video)'));
     process.exit(1);
+  }
+
+  // 0.10.1 is a behaviour fix, not a new flag: `--to` keeps frame timestamps
+  // (upstream #19/#21) and a sidecar transcript is clipped to the window
+  // (#20/#23). `watch` now relies on both instead of working around them, and
+  // 0.10.0 would silently produce t=None frames and a whole-call transcript. No
+  // flag distinguishes the two, so read the version.
+  const version = crvVersion(binary);
+  if (version && !atLeastVersion(version, MIN_CRV)) {
+    console.error(chalk.red(`\`${binary}\` is ${version} — ${MIN_CRV} or newer is required`));
+    console.error(
+      chalk.yellow(
+        `In ${version}, --to destroys every frame timestamp and the transcript ignores the window.\n` +
+          'Upgrade it with:  pipx upgrade claude-real-video   (or pip install -U claude-real-video)'
+      )
+    );
+    process.exit(1);
+  }
+  if (!version) {
+    console.error(
+      chalk.yellow(
+        `Cannot read the \`${binary}\` version, so ${MIN_CRV} cannot be confirmed — continuing.\n` +
+          `If frames come back without timestamps, or a windowed transcript covers the whole call,\n` +
+          `the install is older than ${MIN_CRV}: pipx upgrade claude-real-video`
+      )
+    );
   }
 }
 
@@ -1500,72 +1571,14 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
 
     // Grain already produced a transcript, and crv prefers a same-stem .vtt/.srt
     // sidecar over running Whisper — so no flag is needed to avoid transcribing.
-    let sidecar = ['vtt', 'srt'].find(f => existsSync(join(entry.folder, `${entry.base}.${f}`)));
-    let mediaForCrv = entry.mediaFile;
+    const sidecar = ['vtt', 'srt'].find(f => existsSync(join(entry.folder, `${entry.base}.${f}`)));
 
-    // A window no longer cuts the media — crv 0.10.0 takes --from/--to itself and
-    // reports source timecodes through it. The suffix still separates one
-    // window's analysis directory from another's.
+    // A window never cuts the media — crv takes --from/--to itself and reports
+    // source timecodes through it. The suffix still separates one window's
+    // analysis directory from another's.
     const windowSuffix = window
       ? `_${timecodeSlug(window.from)}_${window.to === undefined ? 'end' : timecodeSlug(window.to)}`
       : '';
-
-    // crv 0.10.0 `--to` silently destroys every frame timestamp. Its `-t` is an
-    // output-side limit, so showinfo logs the whole pass while ffmpeg writes only
-    // the windowed frames; extract_frames() sees len(times) != count and returns
-    // [], so every record gets t=None, frames.json is never written, and MANIFEST
-    // quietly drops its `frame timestamps:` line. Measured on a 20s clip:
-    // --from alone → frames.json; --to in any combination → none.
-    //
-    // `--from` alone is correct, so give crv only that and impose the upper bound
-    // by handing it a head clip — 0 → to, origin unmoved. Because the clip starts
-    // at zero its clock IS the source clock, which is what makes this cheap: no
-    // offset arithmetic anywhere, and the exported subtitle stays valid as-is
-    // rather than needing to be trimmed and re-based.
-    if (window?.to !== undefined) {
-      const ext = entry.mediaFile.split('.').pop() || 'mp4';
-      const headBase = `${entry.base}_head_${timecodeSlug(window.to)}`;
-      const headFile = join(entry.folder, `${headBase}.${ext}`);
-
-      if (!existsSync(headFile) || options.force) {
-        if (!options.json) {
-          console.log(
-            chalk.gray(`  crv --to drops frame timestamps, so bounding with a head clip → ${basename(headFile)}`)
-          );
-        }
-        const cut = spawnSync(
-          'ffmpeg',
-          ['-loglevel', 'error', '-y', '-i', entry.mediaFile, '-t', String(window.to), '-c', 'copy', headFile],
-          { stdio: 'inherit' }
-        );
-        if (cut.error) {
-          console.error(chalk.red('Cannot run `ffmpeg` — required to bound a --to window'));
-          console.error(chalk.yellow('Install it with: brew install ffmpeg'));
-          process.exit(1);
-        }
-        if (cut.status !== 0) {
-          console.error(chalk.red(`ffmpeg exited with status ${cut.status ?? 'unknown'}`));
-          process.exit(cut.status || 1);
-        }
-      }
-      mediaForCrv = headFile;
-
-      // Same clock, so the subtitle needs no editing — it only needs the clip's
-      // stem for crv to find it and skip Whisper. Hardlink, don't copy.
-      if (sidecar) {
-        const headSubtitle = join(entry.folder, `${headBase}.${sidecar}`);
-        if (!existsSync(headSubtitle)) {
-          const source = join(entry.folder, `${entry.base}.${sidecar}`);
-          try {
-            linkSync(source, headSubtitle);
-          } catch {
-            copyFileSync(source, headSubtitle);
-          }
-        }
-      } else {
-        sidecar = undefined;
-      }
-    }
 
     // --frame-width (crv 0.10.0, issue #17) replaces the second ffmpeg pass this
     // used to run. --full-res means "whatever the source actually is", so probe
@@ -1601,10 +1614,8 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
           id: entry.recording.id,
           title: entry.recording.title,
           folder: entry.folder,
-          media: mediaForCrv,
-          transcript: sidecar
-            ? join(entry.folder, `${basename(mediaForCrv).replace(/\.[^.]+$/, '')}.${sidecar}`)
-            : undefined,
+          media: entry.mediaFile,
+          transcript: sidecar ? join(entry.folder, `${entry.base}.${sidecar}`) : undefined,
           analysis: analysisDir,
           byTimeFrames: hires?.dir,
           frameWidth,
@@ -1625,15 +1636,16 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
       analysisDir = `${analysisDir}-${suffix}`;
     }
 
-    const args = [mediaForCrv, '-o', analysisDir];
+    const args = [entry.mediaFile, '-o', analysisDir];
     if (options.grid !== false) args.push('--grid');
     if (options.why) args.push('--why', options.why);
     if (options.maxFrames) args.push('--max-frames', options.maxFrames);
     if (options.scene) args.push('--scene', options.scene);
     if (options.fpsFloor) args.push('--fps-floor', options.fpsFloor);
-    // Never `--to` — see the head-clip note above. The upper bound is already
-    // baked into mediaForCrv when one was asked for.
+    // Both bounds go to crv (0.10.1 — upstream #21): frame timestamps survive
+    // --to, and they stay on the source clock inside the window.
     if (window && window.from > 0) args.push('--from', String(window.from));
+    if (window?.to !== undefined) args.push('--to', String(window.to));
     if (frameWidth !== undefined) args.push('--frame-width', String(frameWidth));
     if (options.crvArgs) args.push(...options.crvArgs.split(' ').filter(Boolean));
 
@@ -1646,16 +1658,10 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
       console.log(
         chalk.gray(
           sidecar
-            ? `  transcript sidecar ${basename(mediaForCrv).replace(/\.[^.]+$/, '')}.${sidecar} present — crv uses it instead of running Whisper`
+            ? `  transcript sidecar ${entry.base}.${sidecar} present — crv uses it instead of running Whisper`
             : '  no transcript sidecar — crv will transcribe the audio with Whisper'
         )
       );
-      // crv windows Whisper but not a sidecar: existing_subtitles() takes no
-      // start/end, so with a Grain transcript on disk transcript.txt covers the
-      // whole call even when the frames cover a minute of it.
-      if (window && sidecar) {
-        console.log(chalk.gray('  note: the sidecar is not windowed — transcript.txt will cover the whole call'));
-      }
       console.log(chalk.bold(`\n${binary} ${args.join(' ')}\n`));
     }
 
@@ -1694,10 +1700,8 @@ async function watchRecordings(recordingIds: string[], options: WatchOptions): P
       id: entry.recording.id,
       title: entry.recording.title,
       folder: entry.folder,
-      media: mediaForCrv,
-      transcript: sidecar
-        ? join(entry.folder, `${basename(mediaForCrv).replace(/\.[^.]+$/, '')}.${sidecar}`)
-        : undefined,
+      media: entry.mediaFile,
+      transcript: sidecar ? join(entry.folder, `${entry.base}.${sidecar}`) : undefined,
       analysis: analysisDir,
       byTimeFrames: hires?.dir,
       frameWidth,

@@ -144,7 +144,7 @@ Runs `export` (media forced on), then invokes [claude-real-video](https://github
 | `--scene <n>` | crv's 0.30 | Scene sensitivity; lower = more frames |
 | `--fps-floor <n>` | crv's 1.0 | At least one frame every N seconds |
 | `--from <timecode>` | – | Analyze only from this point; passed to crv as `--from` |
-| `--to <timecode>` | – | Analyze only up to this point; either bound may be omitted. Bounded with a head clip, not crv `--to` — see Time windows |
+| `--to <timecode>` | – | Analyze only up to this point; passed to crv as `--to`. Either bound may be omitted |
 | `--no-grid` | grid on | Skip crv's 3×3 contact sheets (they are requested by default — fewer images to read) |
 | `--full-res` | off | Probe the source width with `ffprobe` and pass it as crv `--frame-width` |
 | `--frame-width <px>` | crv's 640 | crv `--frame-width`; wins over `--full-res` |
@@ -153,15 +153,17 @@ Runs `export` (media forced on), then invokes [claude-real-video](https://github
 | `--skip-export` | off | Reuse an already-exported folder; fails if no media is there |
 | `--force` | off | Re-download and overwrite export files |
 
-**Preconditions:** `crv` **0.10.0 or newer** (`--from`/`--frame-width` are required) and `ffmpeg`/`ffprobe` on `PATH`. Missing `crv` exits 1 with `pip install "claude-real-video[whisper]"`; a missing `ffmpeg` surfaces as a crv failure. crv's exit status is propagated.
+**Preconditions:** `crv` **0.10.1 or newer** and `ffmpeg`/`ffprobe` on `PATH`. Missing `crv` exits 1 with `pip install "claude-real-video[whisper]"`; a missing `ffmpeg` surfaces as a crv failure. crv's exit status is propagated.
+
+The version gate has two halves. `--frame-width`/`--from` (0.10.0) are sniffed out of `crv --help`. 0.10.1 added no flag — it fixed behaviour `watch` now depends on — so the version is read from the installed distribution: the resolved launcher's shebang names its interpreter, and that interpreter is asked for `importlib.metadata.version('claude-real-video')`. Below 0.10.1 exits 1 with an upgrade hint. A launcher that is not a Python console script prints a warning naming both symptoms and continues.
 
 **Transcript reuse:** the export step writes `<base>.vtt` next to `<base>.mp4` with an identical stem, which is the sidecar crv prefers over transcribing — so Whisper never runs and no flag is required. The human output states which path was taken. If you need crv's own `--no-transcribe` (visual-only, audio untouched), pass it through `--crv-args "--no-transcribe"`.
 
 **Time windows:** `--from`/`--to` accept seconds (`90`), `mm:ss` (`12:30`), or `hh:mm:ss(.ms)`. Omitting `--to` runs to the end of the file and slugs as `end`. The analysis goes to `crv-out_<from>_<to>/`, so windowed and full passes coexist. **Reported timestamps are source timecodes in every window** — crv shifts them back onto the source clock, so no offset arithmetic is ever needed.
 
-`--from` is passed straight to crv. `--to` is **not**: in crv 0.10.0 it silently discards every frame timestamp (`-t` is an output-side limit, so `showinfo` logs more frames than ffmpeg writes; `extract_frames()` returns no times, `frames.json` is never written, and MANIFEST drops its `frame timestamps:` line). Instead the CLI stream-copies a head clip `<base>_head_<to>.<ext>` (`0 → to`, origin unmoved, so clip clock == source clock) and gives crv only `--from`. The exported subtitle is hardlinked to the clip's stem unmodified, so Whisper still never runs. The clip is reused when present (unless `--force`) and costs no Grain requests.
+Both bounds go straight to crv, and the media is never cut. Through 0.10.0 `--to` silently discarded every frame timestamp (`-t` was an output-side limit, so `showinfo` logged more frames than ffmpeg wrote and `frames.json` was never written), which this CLI worked around with a stream-copied `<base>_head_<to>.<ext>` head clip — ~100MB per bounded run. crv 0.10.1 moved `-t` to the input side (upstream #19/#21) and the clip is gone.
 
-**The sidecar transcript is not windowed.** crv's `existing_subtitles()` takes no start/end, so `transcript.txt` covers the whole call even for a one-minute window; only the Whisper path follows the window.
+**The sidecar transcript is windowed too** (0.10.1, upstream #20/#23): the exported Grain transcript is clipped to `--from`/`--to`, and its cue times stay on the source clock — `--from 9 --to 21` over a 30s sidecar yields only the 9–21s cues, starting at `9.0`. Verified on 0.10.1.
 
 **Analysis output** (in the crv directory): `MANIFEST.txt` (frame index with timestamps + transcript — read first), `grids/*.jpg` (3×3 contact sheets), `transcript.txt`, `frames/*.jpg`, `frames.json`, plus `frame-map.tsv` and `grid-map.tsv` written by this CLI. With `--full-res`/`--frame-width`, `frames-by-time/` hardlinks the same frames under absolute source timecodes (`t00-38-08.jpg`; colliding seconds carry milliseconds). Human output ends with those paths; the transcript path falls back to the exported sidecar when crv wrote none.
 

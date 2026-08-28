@@ -234,7 +234,7 @@ Reading all of `frames/` re-spends exactly the tokens crv's dedup was built to s
 
 ## Watching only part of a call
 
-crv 0.10.0 takes a time range itself, so a window no longer means cutting the media:
+crv takes a time range itself, so a window never means cutting the media:
 
 ```bash
 grain recording watch <id> --from 12:30 --to 18:00 -w "what was on the shared screen?"
@@ -245,9 +245,9 @@ Timecodes accept seconds (`90`), `mm:ss` (`12:30`), or `hh:mm:ss(.ms)` (`0:12:30
 
 **Timestamps stay on the source clock.** crv reports every frame time as a real recording time, in every window — *a window shifts the analysis, not the clock*. There is no offset to add and no clip-relative base to track. Analyses still land in `crv-out_<from>_<to>/`, so windowed and full-length passes coexist and neither re-downloads.
 
-**`--to` costs a head clip, for now.** crv 0.10.0's `--to` silently destroys every frame timestamp: its `-t` is an output-side limit, so ffmpeg's `showinfo` logs the whole pass while only the windowed frames get written, the length guard in `extract_frames()` sees the mismatch and returns no times, and `frames.json` is never written — the MANIFEST just quietly drops its `frame timestamps:` line. `--from` alone is unaffected. So when `--to` is given the CLI bounds the analysis with a **head clip** instead — `0 → to`, origin unmoved, so the clip's clock *is* the source clock — and passes crv only `--from`. Cost: one stream-copy and a `<base>_head_<to>.<ext>` file next to the media (100MB for a 32-minute bound). The exported subtitle is hardlinked to the clip's stem, unmodified, so Whisper still never runs. All of this disappears when the upstream `--to` is fixed.
+**`--to` is free now — needs crv 0.10.1.** Through 0.10.0 `--to` silently destroyed every frame timestamp (`-t` was an output-side limit, so `showinfo` logged the whole pass while only the windowed frames were written, `extract_frames()` returned no times, and `frames.json` was never written), and this CLI bounded the window with a stream-copied head clip instead — ~100MB of duplicate media per bounded run, never cleaned up. 0.10.1 moved `-t` to the input side (upstream #19/#21); both bounds now go to crv and no clip is written. `watch` requires 0.10.1 and says so if the install is older.
 
-**The sidecar is not windowed.** `existing_subtitles()` takes no start/end, so with a Grain transcript on disk `transcript.txt` covers the **whole call** even when the frames cover a minute of it. Only the Whisper path follows the window. The command says so when it applies.
+**The sidecar is windowed too** (0.10.1, upstream #20/#23). A Grain transcript on disk is clipped to the window, with cue times still on the source clock — so `transcript.txt` covers the minute the frames cover, not the whole call.
 
 **Pick the window from Grain instead of guessing:** `grain recording get <id> -i highlights,ai_action_items -j` returns `timestamp` and `duration` in milliseconds for every clip and action item — convert to seconds and feed them to `--from`/`--to`.
 
