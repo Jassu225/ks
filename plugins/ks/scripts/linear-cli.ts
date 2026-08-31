@@ -1066,6 +1066,150 @@ async function deleteDocument(id: string, options: { json?: boolean }): Promise<
 }
 
 // ============================================================================
+// Document Comment Commands
+// ============================================================================
+//
+// Comments hang off the document's DocumentContent, not the Document row:
+// CommentCreateInput takes `documentContentId` (no `documentId`), and both
+// Comment and CommentFilter expose `documentContent`. Reads can go through
+// Document.comments(), which wraps that connection, so a document id/slug is
+// enough; writes need document.documentContentId.
+
+interface DocumentCommentNode {
+  id: string;
+  url: string;
+  body: string;
+  author: string;
+  user: { id: string; name: string } | null;
+  quotedText?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  editedAt?: Date;
+  resolvedAt?: Date;
+  replies: DocumentCommentNode[];
+}
+
+async function findDocument(client: LinearClient, idOrSlug: string): Promise<Document> {
+  try {
+    return await client.document(idOrSlug);
+  } catch {
+    console.error(chalk.red(`Document not found: ${idOrSlug}`));
+    process.exit(1);
+  }
+}
+
+async function toDocumentCommentNode(comment: Comment): Promise<DocumentCommentNode> {
+  const user = await comment.user;
+  const externalUser = user ? null : await comment.externalUser;
+
+  return {
+    id: comment.id,
+    url: comment.url,
+    body: comment.body,
+    author: user?.name || externalUser?.name || comment.botActor?.name || 'Unknown',
+    user: user ? { id: user.id, name: user.name } : null,
+    quotedText: comment.quotedText,
+    createdAt: comment.createdAt,
+    updatedAt: comment.updatedAt,
+    editedAt: comment.editedAt,
+    resolvedAt: comment.resolvedAt,
+    replies: []
+  };
+}
+
+function printDocumentComment(node: DocumentCommentNode, indent: string): void {
+  const resolved = node.resolvedAt ? chalk.green(' [resolved]') : '';
+  console.log(`${indent}${chalk.cyan(node.author)} - ${formatDate(node.createdAt)}${resolved}`);
+  if (node.quotedText) {
+    console.log(`${indent}  ${chalk.dim(`> ${node.quotedText}`)}`);
+  }
+  node.body.split('\n').forEach(line => console.log(`${indent}  ${line}`));
+  console.log();
+  node.replies.forEach(reply => printDocumentComment(reply, `${indent}    `));
+}
+
+async function listDocumentComments(idOrSlug: string, options: { json?: boolean }): Promise<void> {
+  const client = getClient();
+
+  const document = await findDocument(client, idOrSlug);
+
+  // Document.comments() returns the whole thread flat, and a comment's parent
+  // is only reachable through a fetch. Ask each comment for its children
+  // instead, then treat everything that is nobody's child as a thread root.
+  // (Filtering server-side on `parent: { null: true }` is rejected by the API
+  // with "Entity not found: Comment: could not find by hash".)
+  const comments = await document.comments();
+
+  const childIds = new Map<string, string[]>();
+  const isReply = new Set<string>();
+  for (const comment of comments.nodes) {
+    // Comment.children() does not inject its own id into the query - pass it.
+    const children = await comment.children({ id: comment.id });
+    childIds.set(comment.id, children.nodes.map(c => c.id));
+    children.nodes.forEach(c => isReply.add(c.id));
+  }
+
+  const nodes = new Map<string, DocumentCommentNode>();
+  for (const comment of comments.nodes) {
+    nodes.set(comment.id, await toDocumentCommentNode(comment));
+  }
+
+  const build = (id: string, seen: Set<string>): DocumentCommentNode | undefined => {
+    const node = nodes.get(id);
+    if (!node || seen.has(id)) return undefined;
+    seen.add(id);
+    node.replies = (childIds.get(id) || [])
+      .map(childId => build(childId, seen))
+      .filter((n): n is DocumentCommentNode => n !== undefined);
+    return node;
+  };
+
+  const seen = new Set<string>();
+  const data = comments.nodes
+    .filter(c => !isReply.has(c.id))
+    .map(c => build(c.id, seen))
+    .filter((n): n is DocumentCommentNode => n !== undefined);
+
+  if (options.json) {
+    output(data, true);
+  } else {
+    console.log(chalk.bold(`\nComments on ${document.title}:\n`));
+    if (data.length === 0) {
+      console.log(chalk.dim('  No comments.\n'));
+    }
+    data.forEach(node => printDocumentComment(node, ''));
+  }
+}
+
+async function createDocumentComment(idOrSlug: string, body: string, options: { parent?: string; json?: boolean }): Promise<void> {
+  const client = getClient();
+
+  const document = await findDocument(client, idOrSlug);
+
+  if (!document.documentContentId) {
+    console.error(chalk.red(`Document has no content to comment on: ${idOrSlug}`));
+    process.exit(1);
+  }
+
+  const result = await client.createComment({
+    documentContentId: document.documentContentId,
+    parentId: options.parent,
+    body
+  });
+
+  const comment = await result.comment;
+
+  if (options.json) {
+    output({ success: true, id: comment?.id, url: comment?.url }, true);
+  } else {
+    const what = options.parent ? 'Reply added to comment' : 'Comment added to';
+    const target = options.parent || document.title;
+    console.log(chalk.green(`${what} ${target}`));
+    if (comment?.url) console.log(`  ${comment.url}`);
+  }
+}
+
+// ============================================================================
 // Label Commands
 // ============================================================================
 
@@ -1612,6 +1756,22 @@ docCmd
   .description('Delete (trash) a document')
   .option('-j, --json', 'Output as JSON')
   .action(deleteDocument);
+
+// Document comment commands (comments live on the document's DocumentContent)
+const docCommentCmd = docCmd.command('comment').description('Document comment operations');
+
+docCommentCmd
+  .command('list <id>')
+  .description('List comments on a document (threads with replies)')
+  .option('-j, --json', 'Output as JSON')
+  .action(listDocumentComments);
+
+docCommentCmd
+  .command('create <id> <body>')
+  .description('Create a comment on a document')
+  .option('--parent <commentId>', 'Reply under an existing comment')
+  .option('-j, --json', 'Output as JSON')
+  .action(createDocumentComment);
 
 // Label commands
 const labelCmd = program.command('label').description('Label operations');

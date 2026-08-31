@@ -120,7 +120,20 @@ linear document update <document-id> --title "New Title" --content "Updated cont
 
 # Delete (trash) a document
 linear document delete <document-id>
+
+# List comments on a document (threads, with replies nested)
+linear document comment list <document-id-or-slug>
+
+# Comment on a document
+linear document comment create <document-id-or-slug> "Comment body here"
+
+# Reply under an existing document comment
+linear document comment create <document-id-or-slug> "Reply body" --parent <comment-id>
 ```
+
+Document comments are separate from issue comments (`linear comment ...`): they hang
+off the document's DocumentContent, so `linear comment list <document-id>` will not
+find them.
 
 ### Teams, Users, Labels, Cycles, Initiatives
 

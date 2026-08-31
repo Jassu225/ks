@@ -81,7 +81,19 @@ npx tsx linear-cli.ts issue attachments KAR-123 --json
 npx tsx linear-cli.ts team list
 npx tsx linear-cli.ts user me
 npx tsx linear-cli.ts document list --project <id>
+
+# Document comments (separate from issue comments — see note below)
+npx tsx linear-cli.ts document comment list <document-id-or-slug>
+npx tsx linear-cli.ts document comment create <document-id-or-slug> "Body"
+npx tsx linear-cli.ts document comment create <document-id-or-slug> "Reply" --parent <comment-id>
 ```
+
+**Document comments vs issue comments.** `comment list|create` take an *issue*; a
+document id there fails with `Issue not found`. Document comments live under
+`document comment ...` because the API hangs them off the document's
+`DocumentContent` (`CommentCreateInput.documentContentId`), not the document row.
+Replies nest under `replies[]` in `--json`, and inline comments carry the
+`quotedText` they are anchored to.
 
 ### Grain CLI
 
