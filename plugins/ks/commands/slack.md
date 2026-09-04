@@ -25,8 +25,9 @@ slack channel list --include-private
 slack channel info general
 slack channel info C01ABCDEF
 
-# Get message history
+# Get message history (reactions included; --names resolves user IDs)
 slack channel history general --limit 20
+slack channel history general --limit 20 --names
 
 # Create, archive
 slack channel create my-channel --private
@@ -60,6 +61,8 @@ slack message reply general 1234567890.123456 "Thread reply"
 # READ a thread — parent plus every reply, paginated (pass the PARENT's ts)
 slack message thread general 1234567890.123456
 slack message thread general 1234567890.123456 --json
+# ...with user IDs (authors and reactors) resolved to display names
+slack message thread general 1234567890.123456 --names
 
 # Update / delete a message
 slack message update general 1234567890.123456 "Updated text"
@@ -153,6 +156,10 @@ slack reaction remove general 1234567890.123456 :thumbsup:
 slack reaction list @username --limit 20
 ```
 
+To read the reactions **on** a message rather than by a user, use `channel history` or
+`message thread` — both carry `reactions[]` and print them under the message text. See
+"Reactions are answers" in Notes.
+
 ### Search (requires user token xoxp-)
 
 ```bash
@@ -236,7 +243,8 @@ When the user asks to interact with Slack:
 - `--json` responses can be long (especially `message send` with attachments — includes file metadata and OAuth scopes). The `"ok"` / `"ts"` / `"channel"` fields are at the **top** of the response, so `head` works but `tail` will clip to noisy auth/scope blocks that can look like errors. Prefer redirecting to a temp file and inspecting it, or piping to `jq`. Re-running a `send` / `reply` / `update` / `delete` to "see more output" posts again — verify via `channel history` instead.
 - Token is read from `SLACK_TOKEN` in `scripts/.env` by the CLI itself — never supply, export, or unset it (see the note at the top). If a call fails with `token_revoked` or `invalid_auth`, **stop and tell the user**; do not attempt to work around it
 - **Invoke `slack` as the leading token of the command line.** The sandbox exclusion is matched against the first word, so `slack …` runs unsandboxed but `env … slack …`, `cd /x && slack …`, and `for q in …; do slack …; done` all fall back into the sandbox, where the `npx tsx` wrapper dies on a blocked Unix socket: `Error: listen EPERM … /tmp/claude-501/tsx-501/<pid>.pipe`. One `slack` call per Bash invocation, no wrappers, no `cd &&`, no loops, no batching. Two dead ends not worth retrying: repointing `TMPDIR` (the `listen` syscall is blocked, not the path) and `node --import tsx/esm slack-cli.ts …` (clears the EPERM, then hangs — sandboxed egress to slack.com never connects)
-- **`--json` key style is not uniform — check before writing a `jq` path.** Subcommands that map the response use **camelCase** (`channel list` → `numMembers`, `isPrivate`; `channel history` → `replyCount`, `threadTs`; `message thread` → `threadTs`, `isParent`, `datetime`), while those that pass Slack's payload straight through keep **snake_case** (`user list` → `real_name`, `is_bot`, `is_app_user`, `display_name`; `usergroup list` → `user_count`, `auto_type`, `default_channels`). `search messages` has no multi-word keys at all (`channel`, `user`, `text`, `ts`, `permalink`). Carrying a `user list` habit over to `message thread` yields silent `null`s rather than an error, which reads like missing data
+- **`--json` key style is not uniform — check before writing a `jq` path.** Subcommands that map the response use **camelCase** (`channel list` → `numMembers`, `isPrivate`; `channel history` → `replyCount`, `threadTs`; `message thread` → `threadTs`, `isParent`, `datetime`; both carry `reactions[]` whose own keys are Slack's `name`/`count`/`users`, and the key is **absent** when a message has none), while those that pass Slack's payload straight through keep **snake_case** (`user list` → `real_name`, `is_bot`, `is_app_user`, `display_name`; `usergroup list` → `user_count`, `auto_type`, `default_channels`). `search messages` has no multi-word keys at all (`channel`, `user`, `text`, `ts`, `permalink`). Carrying a `user list` habit over to `message thread` yields silent `null`s rather than an error, which reads like missing data
 - **Getting a parent `ts` for `message thread`**: `search messages` is the practical route — its `permalink` carries `?thread_ts=<parent>` when the hit is a reply, so the parent ts is right there in the URL
+- **Reactions are answers.** `channel history` and `message thread` carry a message's `reactions` (`name`, `count`, `users[]`), and print them under the text in the human-readable output. A 👍 is a normal way to approve in this workspace, so a message that looks unanswered may have been answered with emoji — check `reactions` before reporting anyone as unresponsive. Pass `--names` to both commands to resolve the user IDs (message authors and reactors) to display names; it costs a full `users.list` walk, so it is opt-in. `search messages` does **not** appear to return reactions on its matches — absence there proves nothing, so re-read the message with `message thread` before concluding
 - **Reading threads**: `channel history` returns top-level messages only — it gives `replyCount` but not the replies. Use `message thread <channel> <ts>` for the replies. Pass the **parent's** `ts`: a reply's `ts` returns only that one message (the command says so and prints the parent's ts to retry with). A message with no replies returns just itself
 - `--json` output is clean stdout — safe to pipe straight into `jq`

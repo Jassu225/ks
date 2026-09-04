@@ -166,6 +166,41 @@ function matchUser(members: SlackMember[], handle: string): SlackMember | undefi
   );
 }
 
+/**
+ * Resolve user IDs to names, or leave them as raw IDs when `enabled` is false —
+ * naming costs a full `users.list` walk, so callers opt in with `--names`.
+ */
+async function userNamer(client: WebClient, enabled: boolean): Promise<(id: string) => string> {
+  if (!enabled) return (id: string) => id;
+  const byId = new Map((await allUsers(client)).map(u => [u.id ?? '', u]));
+  return (id: string) => {
+    const u = byId.get(id);
+    return u?.profile?.display_name || u?.real_name || u?.name || id;
+  };
+}
+
+/** The subset of a message's `reactions` this CLI carries through. */
+type SlackReaction = { name?: string; count?: number; users?: string[] };
+
+/**
+ * Carry a message's reactions through a projection. An emoji-only reply is a
+ * real answer in most workspaces, so dropping these makes a message look
+ * unanswered. Absent (not `[]`) when there are none, to keep `--json` clean.
+ */
+function projectReactions(m: { reactions?: SlackReaction[] }): SlackReaction[] | undefined {
+  return m.reactions?.length ? m.reactions.map(r => ({ name: r.name, count: r.count, users: r.users })) : undefined;
+}
+
+/** One line of reactions under a message; names the reactors when `nameFor` is given. */
+function formatReactionLine(reactions: SlackReaction[], nameFor?: (id: string) => string): string {
+  return reactions
+    .map(r => {
+      const who = nameFor && r.users?.length ? chalk.gray(` (${r.users.map(nameFor).join(', ')})`) : '';
+      return `${chalk.yellow(`:${r.name}:`)} ${r.count ?? r.users?.length ?? 0}${who}`;
+    })
+    .join('  ');
+}
+
 /** Every user group (disabled ones included), fetched at most once per invocation. */
 let cachedUserGroups: SlackUserGroup[] | undefined;
 
@@ -466,7 +501,7 @@ async function archiveChannel(channel: string, options: { json?: boolean }): Pro
   }
 }
 
-async function getChannelHistory(channel: string, options: { limit?: number; oldest?: string; latest?: string; json?: boolean }): Promise<void> {
+async function getChannelHistory(channel: string, options: { limit?: number; oldest?: string; latest?: string; names?: boolean; json?: boolean }): Promise<void> {
   const client = getClient();
 
   try {
@@ -496,6 +531,7 @@ async function getChannelHistory(channel: string, options: { limit?: number; old
       subtype: m.subtype,
       threadTs: m.thread_ts,
       replyCount: m.reply_count,
+      reactions: projectReactions(m),
       datetime: formatTimestamp(m.ts),
     }));
 
@@ -506,10 +542,12 @@ async function getChannelHistory(channel: string, options: { limit?: number; old
       if (data.length === 0) {
         console.log(chalk.gray('No messages found.'));
       } else {
+        const nameFor = await userNamer(client, !!options.names);
         data.forEach(m => {
           const thread = m.replyCount ? chalk.gray(` [${m.replyCount} replies]`) : '';
-          console.log(`${chalk.gray(m.datetime)} ${chalk.cyan(m.user || 'system')}${thread}`);
+          console.log(`${chalk.gray(m.datetime)} ${chalk.cyan(nameFor(m.user || '') || 'system')}${thread}`);
           console.log(`  ${m.text}`);
+          if (m.reactions) console.log(`  ${formatReactionLine(m.reactions, options.names ? nameFor : undefined)}`);
           console.log();
         });
       }
@@ -769,7 +807,7 @@ async function deleteMessage(channel: string, ts: string, options: { json?: bool
   }
 }
 
-async function getThread(channel: string, ts: string, options: { limit?: number; json?: boolean }): Promise<void> {
+async function getThread(channel: string, ts: string, options: { limit?: number; names?: boolean; json?: boolean }): Promise<void> {
   const client = getClient();
 
   try {
@@ -807,6 +845,7 @@ async function getThread(channel: string, ts: string, options: { limit?: number;
       // Derived from thread_ts, not from position: passing a reply's ts returns
       // that reply alone, and a positional check would label it the parent.
       isParent: !m.thread_ts || m.thread_ts === m.ts,
+      reactions: projectReactions(m),
       datetime: formatTimestamp(m.ts),
     }));
 
@@ -817,10 +856,12 @@ async function getThread(channel: string, ts: string, options: { limit?: number;
       if (data.length === 0) {
         console.log(chalk.gray('No messages found.'));
       } else {
+        const nameFor = await userNamer(client, !!options.names);
         data.forEach(m => {
           const tag = m.isParent ? chalk.gray(' [parent]') : '';
-          console.log(`${chalk.gray(m.datetime)} ${chalk.cyan(m.user || 'system')}${tag}`);
+          console.log(`${chalk.gray(m.datetime)} ${chalk.cyan(nameFor(m.user || '') || 'system')}${tag}`);
           console.log(`  ${m.text}`);
+          if (m.reactions) console.log(`  ${formatReactionLine(m.reactions, options.names ? nameFor : undefined)}`);
           console.log();
         });
         // A reply's ts returns that reply alone — say so, and name the ts that
@@ -1519,6 +1560,10 @@ async function searchMessages(query: string, options: { sort?: string; sortDir?:
       user: m.user || m.username || 'N/A',
       text: m.text || '',
       ts: m.ts,
+      // search.messages does not appear to return reactions on its matches;
+      // carried through in case it does, but absence here proves nothing —
+      // re-read the message with `message thread` to know if it was reacted to.
+      reactions: projectReactions(m as { reactions?: SlackReaction[] }),
       permalink: m.permalink,
     }));
 
@@ -1533,6 +1578,7 @@ async function searchMessages(query: string, options: { sort?: string; sortDir?:
           const time = formatTimestamp(m.ts);
           console.log(`${chalk.gray(time)} ${chalk.cyan(`#${m.channel}`)} ${chalk.yellow(m.user)}`);
           console.log(`  ${m.text}`);
+          if (m.reactions) console.log(`  ${formatReactionLine(m.reactions)}`);
           if (m.permalink) console.log(`  ${chalk.gray(m.permalink)}`);
           console.log();
         });
@@ -1960,6 +2006,7 @@ channelCmd
   .option('-l, --limit <number>', 'Number of messages', '20')
   .option('--oldest <date>', 'Start date (ISO format, e.g., 2024-01-01)')
   .option('--latest <date>', 'End date (ISO format, e.g., 2024-12-31)')
+  .option('--names', 'Resolve user IDs to names (costs a full users.list walk)')
   .option('-j, --json', 'Output as JSON')
   .action((channel, opts) => getChannelHistory(channel, { ...opts, limit: parseInt(opts.limit) }));
 
@@ -2024,6 +2071,7 @@ messageCmd
   .command('thread <channel> <ts>')
   .description('Read a thread: the parent message and all its replies (pass the parent\'s ts — a reply\'s ts returns only that reply)')
   .option('-l, --limit <number>', 'Max messages to fetch, parent included', '1000')
+  .option('--names', 'Resolve user IDs to names (costs a full users.list walk)')
   .option('-j, --json', 'Output as JSON')
   .action((channel, ts, opts) => getThread(channel, ts, { ...opts, limit: parseInt(opts.limit) }));
 
