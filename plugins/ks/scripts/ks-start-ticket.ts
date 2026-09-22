@@ -7,6 +7,11 @@
  * 2. Fetches issue information
  * 3. Generates a workflow state YAML file for a single ticket task
  *
+ * Re-running it on a ticket that already has a state.yaml (a reopened ticket)
+ * refreshes the `ticket:` block from Linear and preserves everything the
+ * workflow accumulated: `phases[]`, `prs[]`, the Slack threads, and
+ * `worktree_dir`.
+ *
  * Usage: npx tsx ks-start-ticket.ts <issue-url> [output-path]
  *
  * Environment: LINEAR_API_KEY must be set (loaded from .env file)
@@ -235,6 +240,60 @@ async function generateTicketWorkflowState(
 }
 
 // ============================================================================
+// Existing State (reopened tickets)
+// ============================================================================
+
+/**
+ * Read the state.yaml already sitting at `outputPath`, if any.
+ *
+ * Returns null when there is no file, or when the file cannot be parsed into
+ * something that looks like ticket state -- in which case the caller
+ * regenerates from scratch rather than merging onto garbage.
+ */
+function loadExistingState(outputPath: string): TicketWorkflowState | null {
+  if (!fs.existsSync(outputPath)) return null;
+
+  try {
+    const parsed = yaml.parse(fs.readFileSync(outputPath, 'utf-8')) as TicketWorkflowState | null;
+    if (!parsed || typeof parsed !== 'object' || !parsed.ticket) {
+      console.log(chalk.yellow('  ⚠ Existing state.yaml is not ticket state — regenerating from Linear.'));
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(chalk.yellow(`  ⚠ Could not parse existing state.yaml (${message}) — regenerating from Linear.`));
+    return null;
+  }
+}
+
+/**
+ * Carry the accumulated workflow forward onto freshly fetched ticket data.
+ *
+ * Linear owns the `ticket:` block -- a reopened ticket has a new status, and
+ * may have picked up labels, an estimate or a different assignee since the
+ * last run, so that half is always taken from `fresh`. Everything else is
+ * history this script cannot re-derive, so it comes from `existing`.
+ */
+function mergeWithExistingState(
+  fresh: TicketWorkflowState,
+  existing: TicketWorkflowState
+): TicketWorkflowState {
+  return {
+    ...fresh,
+    worktree_dir: existing.worktree_dir ?? fresh.worktree_dir,
+    slack: {
+      // `fresh.slack.project_thread` is already the existing thread when there
+      // was one; it is only newly resolved when the old state had none.
+      project_thread: fresh.slack.project_thread ?? existing.slack?.project_thread ?? null,
+      release_thread: existing.slack?.release_thread ?? null
+    },
+    prs: existing.prs ?? [],
+    phases: existing.phases?.length ? existing.phases : fresh.phases
+  };
+}
+
+// ============================================================================
 // YAML Formatting
 // ============================================================================
 
@@ -344,6 +403,11 @@ ${chalk.cyan('What it does:')}
   3. Creates a git worktree for the ticket
   4. Launches Claude-KS in the worktree
 
+${chalk.cyan('Reopened tickets:')}
+  If a state.yaml already exists at the output path, the ticket block is
+  refreshed from Linear while phases, PRs, Slack threads and worktree_dir
+  are preserved.
+
 ${chalk.cyan('Example:')}
   LINEAR_API_KEY=lin_api_xxx npx tsx ks-start-ticket.ts https://linear.app/karmasuite/issue/KAR-123/fix-bug
 `);
@@ -379,12 +443,26 @@ ${chalk.cyan('Example:')}
     const branchName = issue.branchName || identifier.toLowerCase();
     console.log(chalk.gray(`Branch name: ${branchName}`));
 
-    // Try to get Slack thread from ticket attachments, then prompt if not found
-    const projectThread = await getProjectThread(issue);
+    // A state.yaml already here means this ticket was worked before and has
+    // been reopened -- its phases, PRs and Slack threads must survive.
+    const existingState = loadExistingState(outputPath);
+    if (existingState) {
+      console.log(chalk.green('✓ Existing workflow state found — refreshing ticket data, keeping phases, PRs and Slack threads'));
+    }
+
+    // Try to get Slack thread from ticket attachments, then prompt if not found.
+    // A thread already recorded is reused as-is, so a reopen does not re-prompt.
+    let projectThread = existingState?.slack?.project_thread ?? null;
+    if (projectThread) {
+      console.log(chalk.gray(`  Reusing recorded Slack thread: ${projectThread.url ?? projectThread.channel_name}`));
+    } else {
+      projectThread = await getProjectThread(issue);
+    }
 
     // Generate workflow state
     console.log(chalk.blue('\nGenerating workflow state...'));
-    const workflowState = await generateTicketWorkflowState(issue, viewer, projectThread);
+    const freshState = await generateTicketWorkflowState(issue, viewer, projectThread);
+    const workflowState = existingState ? mergeWithExistingState(freshState, existingState) : freshState;
 
     // Format and write YAML
     const yamlContent = formatYaml(workflowState);
@@ -397,7 +475,7 @@ ${chalk.cyan('Example:')}
 
     fs.writeFileSync(outputPath, yamlContent, 'utf-8');
 
-    console.log(chalk.green(`\n✓ Workflow state saved to: ${outputPath}`));
+    console.log(chalk.green(`\n✓ Workflow state ${existingState ? 'updated' : 'saved'}: ${outputPath}`));
 
     // Display summary
     console.log(chalk.bold('\n📋 Summary:\n'));
@@ -407,6 +485,9 @@ ${chalk.cyan('Example:')}
     console.log(`  Assignee: ${workflowState.ticket.assignee?.name || 'Unassigned'}`);
     console.log(`  Project: ${workflowState.ticket.parent_project?.name || 'No project'}`);
     console.log(`  Estimate: ${workflowState.ticket.estimate ?? 'Not estimated'} points`);
+    if (existingState) {
+      console.log(`  Carried over: ${workflowState.phases.length} phase(s), ${workflowState.prs.length} PR(s)`);
+    }
 
     // Show workflow folder relative path before launching
     const workflowRelPath = path.relative(baseDir, path.dirname(outputPath));

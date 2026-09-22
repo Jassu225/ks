@@ -35,6 +35,12 @@ This will:
 3. Create a git worktree for the ticket
 4. Launch Claude with the KS plugin
 
+**Reopened tickets**: if a `state.yaml` is already there, it is not recreated.
+The `ticket:` block is refreshed from Linear (the status, title, labels,
+assignee and estimate all move while a ticket is closed), and everything the
+workflow built up — `phases[]`, `prs[]`, the Slack threads and `worktree_dir` —
+is carried forward. A recorded project thread is reused instead of re-prompting.
+
 ## Running the Project Manager
 
 Once inside the worktree, start the workflow with:
