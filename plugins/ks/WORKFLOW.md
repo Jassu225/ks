@@ -40,6 +40,16 @@ The `ticket:` block is refreshed from Linear (the status, title, labels,
 assignee and estimate all move while a ticket is closed), and everything the
 workflow built up — `phases[]`, `prs[]`, the Slack threads and `worktree_dir` —
 is carried forward. A recorded project thread is reused instead of re-prompting.
+Where the worktree is still on disk, its `state.yaml` is the one carried
+forward: phases advance in the worktree session, so the copy in the main repo
+is the stale one.
+
+**Existing worktrees**: a worktree already at
+`../karmasuite-worktree/{branch}` is worked in as it stands — branch and
+uncommitted work untouched, nothing created. The refreshed `state.yaml` is
+copied in, the reuse is announced, and Claude launches after 10 seconds (press
+ENTER to go immediately). Only when there is no worktree does `create-worktree`
+run, which is what refuses an existing worktree or branch.
 
 ## Running the Project Manager
 

@@ -28,7 +28,7 @@ import { loadEnv } from './lib/env.js';
 import { getLinearClient, getPriorityName } from './lib/linear-client.js';
 import type { SlackThread, Phase, PrEntry } from './lib/workflow-types.js';
 import { parseSlackMessageUrl } from './lib/slack.js';
-import { createWorktreeAndLaunchClaude } from './lib/worktree.js';
+import { createWorktreeAndLaunchClaude, findExistingWorktree } from './lib/worktree.js';
 
 loadEnv();
 
@@ -433,6 +433,7 @@ ${chalk.cyan('Example:')}
     // Default output path: ./workflow/{username}/tickets/{identifier}/state.yaml
     const baseDir = process.env.KS_ORIGINAL_DIR || process.cwd();
     const outputPath = args[1] || path.join(baseDir, 'workflow', username, 'tickets', identifier.toLowerCase(), 'state.yaml');
+    const workflowRelPath = path.relative(baseDir, path.dirname(outputPath));
     console.log(chalk.gray(`Output: ${outputPath}\n`));
 
     // Fetch issue
@@ -445,9 +446,19 @@ ${chalk.cyan('Example:')}
 
     // A state.yaml already here means this ticket was worked before and has
     // been reopened -- its phases, PRs and Slack threads must survive.
-    const existingState = loadExistingState(outputPath);
+    //
+    // Phases advance inside the worktree session, so when the worktree is still
+    // on disk its copy is the live one and the copy in the main repo is stale.
+    const existingWorktree = findExistingWorktree(branchName);
+    const worktreeStatePath = existingWorktree
+      ? path.join(existingWorktree, workflowRelPath, 'state.yaml')
+      : null;
+
+    const worktreeState = worktreeStatePath ? loadExistingState(worktreeStatePath) : null;
+    const existingState = worktreeState ?? loadExistingState(outputPath);
     if (existingState) {
-      console.log(chalk.green('✓ Existing workflow state found — refreshing ticket data, keeping phases, PRs and Slack threads'));
+      const source = worktreeState ? 'worktree' : 'repo';
+      console.log(chalk.green(`✓ Existing workflow state found (${source}) — refreshing ticket data, keeping phases, PRs and Slack threads`));
     }
 
     // Try to get Slack thread from ticket attachments, then prompt if not found.
@@ -490,11 +501,10 @@ ${chalk.cyan('Example:')}
     }
 
     // Show workflow folder relative path before launching
-    const workflowRelPath = path.relative(baseDir, path.dirname(outputPath));
     console.log(chalk.cyan(`\n  Workflow: ./${workflowRelPath}/`));
 
     // Create worktree and launch Claude-KS
-    createWorktreeAndLaunchClaude(branchName, workflowRelPath, outputPath);
+    await createWorktreeAndLaunchClaude(branchName, workflowRelPath, outputPath);
 
   } catch (error) {
     console.error(chalk.red(`\n✗ Error: ${error instanceof Error ? error.message : String(error)}`));

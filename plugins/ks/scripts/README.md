@@ -41,6 +41,13 @@ non-destructive). One-off alternative: `claude-ks --local-plugin <name>`.
 — ks + every `KS_EXTRA_PLUGINS` entry (e.g. ks-flow, wiring its session-tracking
 and notification hooks) + `ks-rules`. A single source of truth for what loads.
 
+Both also **reuse a worktree that is already there** (`../karmasuite-worktree/{name}`)
+rather than calling `create-worktree`, which errors on an existing worktree or
+branch. The session is announced and launches after 10s, or on ENTER. For
+`ks-start-ticket` this is the reopened-ticket path: the existing `state.yaml`
+(the worktree's copy when there is one — that is where phases advance) is kept
+and only the `ticket:` block is refreshed from Linear.
+
 ## Scripts
 
 ### Linear CLI
