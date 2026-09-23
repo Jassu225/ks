@@ -130,6 +130,8 @@ Skills live in `plugins/ks/skills/<name>/SKILL.md` and load automatically when t
 
 **Ticket Workflow** (phases 1, 2, 9, 10 only): Quick turnaround for specific Linear tickets. Started via `ks-start-ticket.ts` with a `ticket` key in state.yaml. Skips phases 3-8 since requirements are already defined.
 
+**Restarting is not a reset.** Re-running `ks-start-ticket` on a ticket that already has a `state.yaml` (a reopened ticket) refreshes only the `ticket:` block from Linear and keeps `phases[]`, `prs[]`, the Slack threads and `worktree_dir`. When the worktree is still on disk, that worktree's `state.yaml` is the one carried forward — phases advance in the worktree session, so the main-repo copy is the stale one — and the existing worktree is worked in as it stands (branch and uncommitted work untouched, `create-worktree` never runs).
+
 ### Workflow Directory Layout
 
 ```
