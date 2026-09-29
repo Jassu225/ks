@@ -93,6 +93,10 @@ npx tsx linear-cli.ts document list --project <id>
 npx tsx linear-cli.ts document comment list <document-id-or-slug>
 npx tsx linear-cli.ts document comment create <document-id-or-slug> "Body"
 npx tsx linear-cli.ts document comment create <document-id-or-slug> "Reply" --parent <comment-id>
+
+# Edit / delete a comment (issue or document — comment ids are global)
+npx tsx linear-cli.ts comment update <comment-id> "Full new body"
+npx tsx linear-cli.ts comment delete <comment-id>
 ```
 
 **Document comments vs issue comments.** `comment list|create` take an *issue*; a
@@ -100,7 +104,10 @@ document id there fails with `Issue not found`. Document comments live under
 `document comment ...` because the API hangs them off the document's
 `DocumentContent` (`CommentCreateInput.documentContentId`), not the document row.
 Replies nest under `replies[]` in `--json`, and inline comments carry the
-`quotedText` they are anchored to.
+`quotedText` they are anchored to. `update|delete` are the exception: they take
+a comment id, which Linear keeps global, so `comment update` and
+`document comment update` hit the same `commentUpdate` mutation and either works
+on any comment.
 
 ### Grain CLI
 

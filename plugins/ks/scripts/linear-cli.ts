@@ -1119,7 +1119,7 @@ async function toDocumentCommentNode(comment: Comment): Promise<DocumentCommentN
 
 function printDocumentComment(node: DocumentCommentNode, indent: string): void {
   const resolved = node.resolvedAt ? chalk.green(' [resolved]') : '';
-  console.log(`${indent}${chalk.cyan(node.author)} - ${formatDate(node.createdAt)}${resolved}`);
+  console.log(`${indent}${chalk.cyan(node.author)} - ${formatDate(node.createdAt)}${resolved} ${chalk.dim(node.id)}`);
   if (node.quotedText) {
     console.log(`${indent}  ${chalk.dim(`> ${node.quotedText}`)}`);
   }
@@ -1454,7 +1454,7 @@ async function listComments(issueIdentifier: string, options: { json?: boolean }
   } else {
     console.log(chalk.bold(`\nComments on ${issueIdentifier}:\n`));
     data.forEach(c => {
-      console.log(`${chalk.cyan(c.user?.name || 'Unknown')} - ${formatDate(c.createdAt)}`);
+      console.log(`${chalk.cyan(c.user?.name || 'Unknown')} - ${formatDate(c.createdAt)} ${chalk.dim(c.id)}`);
       console.log(`  ${c.body}`);
       console.log();
     });
@@ -1482,6 +1482,45 @@ async function createComment(issueIdentifier: string, body: string, options: { j
     output({ success: true, id: comment?.id }, true);
   } else {
     console.log(chalk.green(`Comment added to ${issueIdentifier}`));
+  }
+}
+
+// A comment id is global across issues and documents, so these two back both
+// `comment update|delete` and `document comment update|delete`.
+async function updateComment(commentId: string, body: string, options: { json?: boolean }): Promise<void> {
+  const client = getClient();
+
+  let comment: Comment | undefined;
+  try {
+    const result = await client.updateComment(commentId, { body });
+    comment = await result.comment;
+  } catch (e: unknown) {
+    console.error(chalk.red(`Failed to update comment ${commentId}: ${(e as Error).message}`));
+    process.exit(1);
+  }
+
+  if (options.json) {
+    output({ success: true, id: commentId, url: comment?.url, editedAt: comment?.editedAt }, true);
+  } else {
+    console.log(chalk.green(`✓ Updated comment ${commentId}`));
+    if (comment?.url) console.log(`  ${comment.url}`);
+  }
+}
+
+async function deleteComment(commentId: string, options: { json?: boolean }): Promise<void> {
+  const client = getClient();
+
+  try {
+    await client.deleteComment(commentId);
+  } catch (e: unknown) {
+    console.error(chalk.red(`Failed to delete comment ${commentId}: ${(e as Error).message}`));
+    process.exit(1);
+  }
+
+  if (options.json) {
+    output({ success: true, id: commentId }, true);
+  } else {
+    console.log(chalk.green(`✓ Deleted comment ${commentId}`));
   }
 }
 
@@ -1773,6 +1812,18 @@ docCommentCmd
   .option('-j, --json', 'Output as JSON')
   .action(createDocumentComment);
 
+docCommentCmd
+  .command('update <commentId> <body>')
+  .description('Replace the body of a document comment')
+  .option('-j, --json', 'Output as JSON')
+  .action(updateComment);
+
+docCommentCmd
+  .command('delete <commentId>')
+  .description('Delete a document comment')
+  .option('-j, --json', 'Output as JSON')
+  .action(deleteComment);
+
 // Label commands
 const labelCmd = program.command('label').description('Label operations');
 
@@ -1833,6 +1884,18 @@ commentCmd
   .description('Create a comment on an issue')
   .option('-j, --json', 'Output as JSON')
   .action(createComment);
+
+commentCmd
+  .command('update <commentId> <body>')
+  .description('Replace the body of a comment (id from `comment list`)')
+  .option('-j, --json', 'Output as JSON')
+  .action(updateComment);
+
+commentCmd
+  .command('delete <commentId>')
+  .description('Delete a comment')
+  .option('-j, --json', 'Output as JSON')
+  .action(deleteComment);
 
 // Cycle commands
 const cycleCmd = program.command('cycle').description('Cycle operations');
