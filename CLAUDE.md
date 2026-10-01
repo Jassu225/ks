@@ -91,7 +91,7 @@ plugins/ks/scripts/quality-typecheck.sh
 | `/ks:create_plan` | Implementation planning (PLAN MODE — no code changes) |
 | `/ks:implement-plan` | Execute an approved implementation plan |
 | `/ks:create_pr` | Create PRs with Linear ticket references |
-| `/ks:gh-cli` | GitHub CLI — view PRs, comments, reviews, CI checks |
+| `/ks:gh-cli` | GitHub CLI — view PRs, comments, reviews, CI checks, stacked PRs (`gh stack`) |
 | `/ks:slack` | All Slack operations — messages, thread reading, channels, users, user groups, files, search, reactions, pins, status |
 | `/ks:create-user-stories` | Generate user stories from a PRD |
 | `/ks:build-prototype` | Build React prototype from PRD |
