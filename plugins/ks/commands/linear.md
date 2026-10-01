@@ -15,7 +15,7 @@ Use the `linear` CLI (already in `$PATH`) to interact with Linear. All commands 
 ### Issues
 
 ```bash
-# Get a single issue (full details with comments)
+# Get a single issue (full details with comments; relations are always shown)
 linear issue get KAR-123 --full
 
 # List issues with filters
@@ -25,15 +25,39 @@ linear issue list --assignee me
 linear issue list --state "In Progress"
 linear issue list --limit 20
 
+# Issues in a cycle, in the user's manual (drag-and-drop) order
+linear issue list --assignee me --cycle current --sort manual
+linear issue list --team KAR --cycle 175        # also: next, previous, or a cycle ID
+linear issue list --sort updated                # also: created (both newest first)
+
 # Create an issue
 linear issue create --title "Fix bug" --team KAR --description "Details..." \
   --project <project-id> --assignee me --priority 2 --estimate 3
+
+# Long or markdown descriptions (backticks, code blocks): write a file, pass the path
+linear issue create --title "Fix bug" --team KAR --description-file /path/to/desc.md
+
+# Create and link to existing issues as "related"
+linear issue create --title "Follow-up" --team KAR --related KAR-123 KAR-124
 
 # Update an issue
 linear issue update KAR-123 --state "In Progress"
 linear issue update KAR-123 --assignee me --priority 1
 linear issue update KAR-123 --title "New title" --description "New desc"
 linear issue update KAR-123 --estimate 5
+linear issue update KAR-123 --description-file /path/to/desc.md
+
+# Cycle and manual order (manual order = Linear's drag-and-drop `sortOrder`)
+linear issue update KAR-123 --cycle next --position last   # also: current, previous, <number>, <id>, none
+linear issue update KAR-123 --after KAR-124                 # or --before KAR-124
+linear issue create --title "Follow-up" --team KAR --cycle current --position last
+
+# Relations (KAR-123 <type> each listed issue)
+linear issue relate KAR-123 KAR-124 KAR-125              # related (default)
+linear issue relate KAR-123 KAR-124 --type blocks        # KAR-123 blocks KAR-124
+linear issue relate KAR-123 KAR-124 --type blocked-by    # KAR-124 blocks KAR-123
+linear issue relate KAR-123 KAR-124 --type duplicate     # KAR-123 is a duplicate of KAR-124
+linear issue unrelate KAR-123 KAR-124                    # remove any relation, either direction
 ```
 
 ### Projects
@@ -177,13 +201,15 @@ When the user asks to interact with Linear:
 
 1. **Reading a ticket/issue**: Use `linear issue get KAR-XXX --full` to get complete details including comments
 2. **Reading a project**: Use `linear project from-url <url>` or `linear project get <id>`, then `linear issue list --project <id>` for its issues
-3. **Finding issues**: Use appropriate filters — `--assignee me`, `--state`, `--team`, `--project`
+3. **Finding issues**: Use appropriate filters — `--assignee me`, `--state`, `--team`, `--project`, `--cycle current`. Add `--sort manual` when the user wants the order they arranged issues in
 4. **Creating issues**: Always require `--title` and `--team`. Ask the user for missing details before creating
-5. **Updating issues**: Use `linear issue update KAR-XXX` with the fields to change
-6. **Editing projects**: Use `linear project edit <id>` with `--description` (summary) or `--content` (full description)
-7. **Commenting**: Use `linear comment create KAR-XXX "body"` — supports markdown. To change a comment already posted, `linear comment update <comment-id> "full body"` rather than posting a correction or a duplicate
-8. **Managing documents**: Create with `linear document create`, update with `linear document update`, delete with `linear document delete`
-9. **Attachments**: Use `linear attachment create KAR-XXX --title "..." --url "..."` to link resources to issues. Use `--attachments` on `linear project update` to embed links in project status updates
+5. **Updating issues**: Use `linear issue update KAR-XXX` with the fields to change. For a description that holds markdown with backticks, write it to a file and pass `--description-file`: backticks in an inline `--description` make the command miss the sandbox exclusion and fail with `listen EPERM`
+6. **Cycles and ordering**: `--cycle` on `issue create`/`update` moves an issue into a cycle. `--position first|last` (relative to the issues in its cycle, else project, else team), `--after KAR-Y` or `--before KAR-Y` set its manual order. Apply them in the order the user wants the issues to end up
+7. **Linking issues**: Use `linear issue relate KAR-A KAR-B --type related|blocks|blocked-by|duplicate`, or `--related` on `issue create`, rather than only mentioning the other ticket in the description
+8. **Editing projects**: Use `linear project edit <id>` with `--description` (summary) or `--content` (full description)
+9. **Commenting**: Use `linear comment create KAR-XXX "body"` — supports markdown. To change a comment already posted, `linear comment update <comment-id> "full body"` rather than posting a correction or a duplicate
+10. **Managing documents**: Create with `linear document create`, update with `linear document update`, delete with `linear document delete`
+11. **Attachments**: Use `linear attachment create KAR-XXX --title "..." --url "..."` to link resources to issues. Use `--attachments` on `linear project update` to embed links in project status updates
 
 ## Notes
 

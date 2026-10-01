@@ -1,5 +1,25 @@
 # Releases
 
+## 2026-10-01
+
+- **Linear CLI — cycles and manual order**:
+  - `issue list --cycle current|next|previous|<number>|<id>` filters by cycle.
+  - `issue list --sort manual|created|updated`. `manual` is the user's drag-and-drop order (`Issue.sortOrder`).
+  - `issue create|update --cycle` moves an issue into a cycle. `update` also accepts `none`.
+  - `issue create|update --position first|last`, `--after <id>` and `--before <id>` set the issue's manual order.
+  - `issue get` shows the issue's cycle.
+- **Linear CLI — relations**:
+  - `issue relate <id> <others...> --type related|blocks|blocked-by|duplicate` links issues.
+  - `issue unrelate <id> <others...>` removes the links.
+  - `issue create --related <ids...>` links the new issue when it is created.
+  - `issue get` always lists relations.
+- **Linear CLI — `--description-file <path|->`** on `issue create|update` keeps markdown with backticks off the command line. Inline backticks make the command miss the sandbox exclusion.
+- **gh-cli — stacked pull requests**:
+  - New `gh stack` reference covering setup, create, view, rebase/sync, restructure, merge, exit codes and CI metadata.
+  - GraphQL `stackEntry` query for a PR's stack membership.
+  - Warning that `gh pr merge` cannot merge stacked PRs.
+- **prd-to-linear-tickets**: creates tickets with `--description-file` and `--estimate`, and links dependent Features with `issue relate --type blocks`.
+
 ## 2026-04-01
 
 - **Statusline script**: Custom statusline showing context window usage, git branch, and rate limit info (5h/7d windows with color-coded usage and reset countdowns). Wraps to two lines when branch name exceeds 32 characters.

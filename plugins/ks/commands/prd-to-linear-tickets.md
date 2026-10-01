@@ -165,7 +165,8 @@ For each Feature, use this format:
       - Technical Context: Relevant TAD details for this feature (data model, RPC, component changes)
       - Context: Reference the project name and list of user story IDs
     - Assign story points based on feature estimate
-    - Create the ticket using `linear issue create --title "<title>" --team KAR --description "<description>" --project <project-id> --priority 3`
+    - Write the description to a file in the session scratchpad (or `$TMPDIR`), then create the ticket with the file's literal absolute path, not a `$VAR` path: `linear issue create --title "<title>" --team KAR --description-file /abs/path/<slug>.md --project <project-id> --priority 3 --estimate <points>`. Use the file form, not an inline `--description`: these descriptions hold markdown with backticks, which make the command miss the sandbox exclusion and fail with `listen EPERM`
+    - When one Feature depends on another, link them after both exist: `linear issue relate <blocking-id> <dependent-id> --type blocks`
 14. Report back to the user with a summary of created tickets (Feature names, IDs, and points)
 
 ## Important Notes

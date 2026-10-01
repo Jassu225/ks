@@ -8,9 +8,10 @@
  * Environment: LINEAR_API_KEY must be set (loaded from .env file)
  */
 
-import { LinearClient, Issue, Project, Team, User, Document, Comment, IssueLabel, Cycle } from '@linear/sdk';
+import { LinearClient, Issue, Project, Team, User, Document, Comment, IssueLabel, Cycle, LinearDocument } from '@linear/sdk';
 import { Command, Option } from 'commander';
 import chalk from 'chalk';
+import { readFileSync } from 'node:fs';
 
 import { loadEnv } from './lib/env.js';
 import { getLinearClient } from './lib/linear-client.js';
@@ -422,10 +423,17 @@ async function listIssues(options: {
   team?: string;
   assignee?: string;
   state?: string;
+  cycle?: string;
+  sort?: string;
   limit?: number;
   json?: boolean
 }): Promise<void> {
   const client = getClient();
+
+  if (options.sort && !['manual', 'created', 'updated'].includes(options.sort)) {
+    console.error(chalk.red(`Invalid --sort: ${options.sort} (use manual, created, or updated)`));
+    process.exit(1);
+  }
 
   const filter: Record<string, unknown> = {};
   if (options.project) {
@@ -445,6 +453,16 @@ async function listIssues(options: {
   if (options.state) {
     filter.state = { name: { eq: options.state } };
   }
+  if (options.cycle) {
+    const relative: Record<string, string> = { current: 'isActive', next: 'isNext', previous: 'isPrevious' };
+    if (relative[options.cycle]) {
+      filter.cycle = { [relative[options.cycle]]: { eq: true } };
+    } else if (/^\d+$/.test(options.cycle)) {
+      filter.cycle = { number: { eq: parseInt(options.cycle) } };
+    } else {
+      filter.cycle = { id: { eq: options.cycle } };
+    }
+  }
 
   const issues = await client.issues({
     first: options.limit || 50,
@@ -456,6 +474,7 @@ async function listIssues(options: {
     const state = await i.state;
     const project = await i.project;
     const labels = await i.labels();
+    const cycle = await i.cycle;
 
     return {
       id: i.id,
@@ -465,12 +484,24 @@ async function listIssues(options: {
       state: state?.name || 'Unknown',
       assignee: assignee?.name || 'Unassigned',
       project: project?.name || null,
+      cycle: cycle ? { number: cycle.number, name: cycle.name || null } : null,
       priority: i.priority,
+      sortOrder: i.sortOrder,
       labels: labels.nodes.map(l => l.name),
       createdAt: i.createdAt,
       updatedAt: i.updatedAt
     };
   }));
+
+  // Sorting is client-side, so it orders only the fetched page — raise --limit if it truncates.
+  // "manual" is Linear's drag-and-drop order (Issue.sortOrder, ascending = top of the list).
+  if (options.sort === 'manual') {
+    data.sort((a, b) => a.sortOrder - b.sortOrder);
+  } else if (options.sort === 'created') {
+    data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } else if (options.sort === 'updated') {
+    data.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  }
 
   if (options.json) {
     output(data, true);
@@ -486,6 +517,134 @@ async function listIssues(options: {
       console.log();
     });
   }
+}
+
+/**
+ * Resolve a text option that may come inline or from a file (`-` = stdin).
+ * The file form keeps markdown with backticks off the command line.
+ */
+function readTextOption(inline: string | undefined, file: string | undefined, flag: string): string | undefined {
+  if (inline !== undefined && file !== undefined) {
+    console.error(chalk.red(`Use either --${flag} or --${flag}-file, not both`));
+    process.exit(1);
+  }
+  if (file === undefined) return inline;
+  try {
+    return readFileSync(file === '-' ? 0 : file, 'utf8');
+  } catch (e) {
+    console.error(chalk.red(`Cannot read --${flag}-file ${file}: ${(e as Error).message}`));
+    process.exit(1);
+  }
+}
+
+const RELATION_TYPES = ['related', 'blocks', 'blocked-by', 'duplicate'] as const;
+type RelationType = typeof RELATION_TYPES[number];
+
+/**
+ * Create one relation. `blocked-by` is stored as the inverse `blocks`;
+ * `duplicate` marks `issue` as a duplicate of `other`.
+ */
+async function createRelation(client: LinearClient, issue: Issue, other: Issue, type: RelationType): Promise<void> {
+  const [from, to] = type === 'blocked-by' ? [other, issue] : [issue, other];
+  await client.createIssueRelation({
+    issueId: from.id,
+    relatedIssueId: to.id,
+    type: (type === 'blocked-by' ? 'blocks' : type) as LinearDocument.IssueRelationType
+  });
+}
+
+/** Relations on an issue, from its own point of view (inverse `blocks` reads as `blocked-by`). */
+async function describeRelations(issue: Issue): Promise<Array<{ id: string; type: string; identifier: string; title: string }>> {
+  const [outgoing, incoming] = await Promise.all([issue.relations(), issue.inverseRelations()]);
+  const out = await Promise.all(outgoing.nodes.map(async r => {
+    const other = await r.relatedIssue;
+    return { id: r.id, type: r.type, identifier: other?.identifier || '?', title: other?.title || '' };
+  }));
+  const inc = await Promise.all(incoming.nodes.map(async r => {
+    const other = await r.issue;
+    const type = r.type === 'blocks' ? 'blocked-by' : r.type === 'duplicate' ? 'duplicated-by' : r.type;
+    return { id: r.id, type, identifier: other?.identifier || '?', title: other?.title || '' };
+  }));
+  return [...out, ...inc];
+}
+
+/**
+ * Resolve a cycle spec against a team: current | next | previous | none | <number> | <id>.
+ * Returns null for "none" (remove from cycle).
+ */
+async function resolveCycle(team: Team, spec: string): Promise<Cycle | null> {
+  if (spec === 'none') return null;
+  const relative: Record<string, string> = { current: 'isActive', next: 'isNext', previous: 'isPrevious' };
+  const filter = relative[spec]
+    ? { [relative[spec]]: { eq: true } }
+    : /^\d+$/.test(spec) ? { number: { eq: parseInt(spec) } } : { id: { eq: spec } };
+  const cycles = await team.cycles({ filter });
+  const cycle = cycles.nodes[0];
+  if (!cycle) {
+    console.error(chalk.red(`Cycle not found for team ${team.key}: ${spec}`));
+    process.exit(1);
+  }
+  return cycle;
+}
+
+const SORT_STEP = 1000;
+
+/**
+ * Compute a manual-order `sortOrder` for `issue`. Linear's manual order in cycle,
+ * project and team views is the single global `Issue.sortOrder` (ascending = top);
+ * `prioritySortOrder` and `subIssueSortOrder` belong to priority-ordered views and
+ * sub-issue lists. first/last are relative to the issues sharing its cycle (else
+ * project, else team); after/before place it next to another issue.
+ */
+async function computeSortOrder(
+  client: LinearClient,
+  issue: Issue,
+  scope: { cycleId?: string | null; projectId?: string | null; teamId: string },
+  position: { position?: string; after?: string; before?: string }
+): Promise<number | undefined> {
+  const { position: edge, after, before } = position;
+  if ([edge, after, before].filter(v => v !== undefined).length > 1) {
+    console.error(chalk.red('Use only one of --position, --after, --before'));
+    process.exit(1);
+  }
+  if (edge === undefined && after === undefined && before === undefined) return undefined;
+
+  const filter = scope.cycleId
+    ? { cycle: { id: { eq: scope.cycleId } } }
+    : scope.projectId
+      ? { project: { id: { eq: scope.projectId } } }
+      : { team: { id: { eq: scope.teamId } } };
+  let page = await client.issues({ first: 250, filter });
+  const orders: Array<{ id: string; sortOrder: number }> = page.nodes.map(i => ({ id: i.id, sortOrder: i.sortOrder }));
+  while (page.pageInfo.hasNextPage) {
+    page = await page.fetchNext();
+    orders.push(...page.nodes.map(i => ({ id: i.id, sortOrder: i.sortOrder })));
+  }
+  const others = orders.filter(o => o.id !== issue.id).sort((a, b) => a.sortOrder - b.sortOrder);
+
+  if (edge !== undefined) {
+    if (edge !== 'first' && edge !== 'last') {
+      console.error(chalk.red(`Invalid --position: ${edge} (use first or last)`));
+      process.exit(1);
+    }
+    if (others.length === 0) return undefined;
+    return edge === 'last' ? others[others.length - 1].sortOrder + SORT_STEP : others[0].sortOrder - SORT_STEP;
+  }
+
+  const anchorId = (after ?? before) as string;
+  const anchor = await findIssueByIdentifier(client, anchorId);
+  if (!anchor) {
+    console.error(chalk.red(`Issue not found: ${anchorId}`));
+    process.exit(1);
+  }
+  const idx = others.findIndex(o => o.id === anchor.id);
+  if (idx === -1) {
+    console.error(chalk.red(`${anchor.identifier} is not in the same cycle/project/team as ${issue.identifier}`));
+    process.exit(1);
+  }
+  const neighbour = after !== undefined ? others[idx + 1] : others[idx - 1];
+  const step = after !== undefined ? SORT_STEP : -SORT_STEP;
+  return neighbour ? (others[idx].sortOrder + neighbour.sortOrder) / 2 : others[idx].sortOrder + step;
 }
 
 async function getIssue(identifier: string, options: { json?: boolean; full?: boolean }): Promise<void> {
@@ -529,8 +688,10 @@ async function getIssue(identifier: string, options: { json?: boolean; full?: bo
   const labels = await issue.labels();
   const parent = await issue.parent;
   const children = await issue.children();
+  const cycle = await issue.cycle;
   const comments = options.full ? await issue.comments() : null;
   const attachments = options.full ? await issue.attachments() : null;
+  const relations = await describeRelations(issue);
 
   const data = {
     id: issue.id,
@@ -541,11 +702,14 @@ async function getIssue(identifier: string, options: { json?: boolean; full?: bo
     state: state ? { id: state.id, name: state.name, type: state.type } : null,
     assignee: assignee ? { id: assignee.id, name: assignee.name, email: assignee.email } : null,
     project: project ? { id: project.id, name: project.name } : null,
+    cycle: cycle ? { id: cycle.id, number: cycle.number, name: cycle.name || null, startsAt: cycle.startsAt, endsAt: cycle.endsAt } : null,
     labels: labels.nodes.map(l => ({ id: l.id, name: l.name })),
     priority: issue.priority,
     estimate: issue.estimate,
+    sortOrder: issue.sortOrder,
     parent: parent ? { id: parent.id, identifier: parent.identifier, title: parent.title } : null,
     children: children.nodes.map(c => ({ id: c.id, identifier: c.identifier, title: c.title })),
+    relations,
     comments: comments ? comments.nodes.map(c => ({ id: c.id, body: c.body, createdAt: c.createdAt })) : undefined,
     attachments: attachments ? attachments.nodes.map(a => ({ id: a.id, title: a.title, subtitle: a.subtitle, url: a.url, sourceType: a.sourceType, metadata: a.metadata, createdAt: a.createdAt })) : undefined,
     createdAt: issue.createdAt,
@@ -562,9 +726,16 @@ async function getIssue(identifier: string, options: { json?: boolean; full?: bo
     console.log(`Status: ${data.state?.name || 'Unknown'}`);
     console.log(`Assignee: ${data.assignee?.name || 'Unassigned'}`);
     console.log(`Project: ${data.project?.name || 'None'}`);
+    console.log(`Cycle: ${data.cycle ? `${data.cycle.number}${data.cycle.name ? ` (${data.cycle.name})` : ''} ${formatDate(data.cycle.startsAt)} - ${formatDate(data.cycle.endsAt)}` : 'None'}`);
     console.log(`Priority: ${data.priority || 'None'}`);
     if (data.labels.length > 0) {
       console.log(`Labels: ${data.labels.map(l => l.name).join(', ')}`);
+    }
+    if (data.relations.length > 0) {
+      console.log(chalk.bold(`\nRelations (${data.relations.length}):`));
+      for (const r of data.relations) {
+        console.log(`  ${r.type.padEnd(13)} ${chalk.cyan(r.identifier)} ${r.title}`);
+      }
     }
     if (data.description) {
       console.log(`\nDescription:\n${data.description}`);
@@ -584,6 +755,7 @@ async function createIssue(options: {
   title: string;
   team: string;
   description?: string;
+  descriptionFile?: string;
   project?: string;
   assignee?: string;
   state?: string;
@@ -591,9 +763,26 @@ async function createIssue(options: {
   estimate?: number;
   labels?: string[];
   parent?: string;
+  related?: string[];
+  cycle?: string;
+  position?: string;
+  after?: string;
+  before?: string;
   json?: boolean;
 }): Promise<void> {
   const client = getClient();
+  const description = readTextOption(options.description, options.descriptionFile, 'description');
+
+  // Resolve related issues before creating, so a typo doesn't leave a half-linked issue
+  const related: Issue[] = [];
+  for (const id of options.related || []) {
+    const other = await findIssueByIdentifier(client, id);
+    if (!other) {
+      console.error(chalk.red(`Related issue not found: ${id}`));
+      process.exit(1);
+    }
+    related.push(other);
+  }
 
   // Resolve team
   const teams = await client.teams({ filter: { key: { eq: options.team } } });
@@ -602,6 +791,8 @@ async function createIssue(options: {
     console.error(chalk.red(`Team not found: ${options.team}`));
     process.exit(1);
   }
+
+  const cycle = options.cycle ? await resolveCycle(team, options.cycle) : null;
 
   // Build create input with proper typing
   let assigneeId: string | undefined;
@@ -617,13 +808,14 @@ async function createIssue(options: {
   const result = await client.createIssue({
     title: options.title,
     teamId: team.id,
-    description: options.description,
+    description,
     projectId: options.project,
     priority: options.priority,
     estimate: options.estimate,
     parentId: options.parent,
     assigneeId,
-    labelIds: options.labels
+    labelIds: options.labels,
+    cycleId: cycle?.id
   });
   const issue = await result.issue;
 
@@ -632,11 +824,21 @@ async function createIssue(options: {
     process.exit(1);
   }
 
+  const sortOrder = await computeSortOrder(client, issue,
+    { cycleId: cycle?.id, projectId: options.project, teamId: team.id }, options);
+  if (sortOrder !== undefined) await client.updateIssue(issue.id, { sortOrder });
+
+  for (const other of related) {
+    await createRelation(client, issue, other, 'related');
+  }
+
   const data = {
     id: issue.id,
     identifier: issue.identifier,
     title: issue.title,
-    url: issue.url
+    url: issue.url,
+    cycle: cycle ? cycle.number : null,
+    related: related.map(r => r.identifier)
   };
 
   if (options.json) {
@@ -644,17 +846,23 @@ async function createIssue(options: {
   } else {
     console.log(chalk.green(`\nCreated issue: ${data.identifier}`));
     console.log(`URL: ${data.url}`);
+    if (data.related.length > 0) console.log(`Related: ${data.related.join(', ')}`);
   }
 }
 
 async function updateIssue(identifier: string, options: {
   title?: string;
   description?: string;
+  descriptionFile?: string;
   state?: string;
   assignee?: string;
   priority?: number;
   estimate?: number;
   project?: string;
+  cycle?: string;
+  position?: string;
+  after?: string;
+  before?: string;
   json?: boolean;
 }): Promise<void> {
   const client = getClient();
@@ -681,7 +889,8 @@ async function updateIssue(identifier: string, options: {
 
   const updateInput: Record<string, unknown> = {};
   if (options.title) updateInput.title = options.title;
-  if (options.description) updateInput.description = options.description;
+  const description = readTextOption(options.description, options.descriptionFile, 'description');
+  if (description) updateInput.description = description;
   if (options.priority !== undefined) updateInput.priority = options.priority;
   if (options.estimate !== undefined) updateInput.estimate = options.estimate;
   if (options.project) updateInput.projectId = options.project;
@@ -708,12 +917,91 @@ async function updateIssue(identifier: string, options: {
     }
   }
 
+  const team = await issue.team;
+  if (options.cycle && team) {
+    const cycle = await resolveCycle(team, options.cycle);
+    updateInput.cycleId = cycle ? cycle.id : null;
+  }
+
+  // Position against the cycle/project the issue ends up in after this update
+  if (team) {
+    const currentCycle = await issue.cycle;
+    const currentProject = await issue.project;
+    const sortOrder = await computeSortOrder(client, issue, {
+      cycleId: 'cycleId' in updateInput ? updateInput.cycleId as string | null : currentCycle?.id,
+      projectId: (updateInput.projectId as string | undefined) ?? currentProject?.id,
+      teamId: team.id
+    }, options);
+    if (sortOrder !== undefined) updateInput.sortOrder = sortOrder;
+  }
+
   await client.updateIssue(issue.id, updateInput);
 
   if (options.json) {
-    output({ success: true, identifier: issue.identifier }, true);
+    output({ success: true, identifier: issue.identifier, sortOrder: updateInput.sortOrder }, true);
   } else {
     console.log(chalk.green(`Updated issue: ${issue.identifier}`));
+  }
+}
+
+async function relateIssues(identifier: string, others: string[], options: { type: string; json?: boolean }): Promise<void> {
+  const client = getClient();
+  const type = options.type as RelationType;
+  if (!RELATION_TYPES.includes(type)) {
+    console.error(chalk.red(`Invalid --type: ${options.type} (use ${RELATION_TYPES.join(', ')})`));
+    process.exit(1);
+  }
+
+  const issue = await findIssueByIdentifier(client, identifier);
+  if (!issue) {
+    console.error(chalk.red(`Issue not found: ${identifier}`));
+    process.exit(1);
+  }
+  const targets: Issue[] = [];
+  for (const id of others) {
+    const other = await findIssueByIdentifier(client, id);
+    if (!other) {
+      console.error(chalk.red(`Issue not found: ${id}`));
+      process.exit(1);
+    }
+    targets.push(other);
+  }
+
+  for (const other of targets) {
+    await createRelation(client, issue, other, type);
+  }
+
+  if (options.json) {
+    output({ success: true, identifier: issue.identifier, type, related: targets.map(t => t.identifier) }, true);
+  } else {
+    for (const t of targets) {
+      console.log(chalk.green(`✓ ${issue.identifier} ${type} ${t.identifier}`));
+    }
+  }
+}
+
+async function unrelateIssues(identifier: string, others: string[], options: { json?: boolean }): Promise<void> {
+  const client = getClient();
+  const issue = await findIssueByIdentifier(client, identifier);
+  if (!issue) {
+    console.error(chalk.red(`Issue not found: ${identifier}`));
+    process.exit(1);
+  }
+
+  const wanted = new Set(others.map(o => o.toUpperCase()));
+  const relations = (await describeRelations(issue)).filter(r => wanted.has(r.identifier.toUpperCase()));
+  for (const r of relations) {
+    await client.deleteIssueRelation(r.id);
+  }
+
+  if (options.json) {
+    output({ success: true, identifier: issue.identifier, removed: relations.map(r => ({ type: r.type, identifier: r.identifier })) }, true);
+  } else if (relations.length === 0) {
+    console.log(chalk.yellow(`No relations between ${issue.identifier} and ${others.join(', ')}`));
+  } else {
+    for (const r of relations) {
+      console.log(chalk.green(`✓ Removed ${issue.identifier} ${r.type} ${r.identifier}`));
+    }
   }
 }
 
@@ -1672,6 +1960,8 @@ issueCmd
   .option('-a, --assignee <id>', 'Filter by assignee (use "me" for yourself)')
   .option('-s, --state <name>', 'Filter by state name')
   .option('--status <name>', 'Alias for --state')
+  .option('-c, --cycle <cycle>', 'Filter by cycle: current, next, previous, a cycle number, or a cycle ID')
+  .option('--sort <order>', 'Sort: manual (your drag-and-drop order), created, or updated (newest first)')
   .option('-l, --limit <number>', 'Limit results', '50')
   .option('-j, --json', 'Output as JSON')
   .action((opts) => listIssues({ ...opts, state: opts.state || opts.status, limit: parseInt(opts.limit) }));
@@ -1689,12 +1979,18 @@ issueCmd
   .requiredOption('--title <title>', 'Issue title')
   .requiredOption('--team <key>', 'Team key')
   .option('--description <desc>', 'Issue description')
+  .option('--description-file <path>', 'Read the description from a file ("-" for stdin)')
   .option('--project <id>', 'Project ID')
   .option('--assignee <id>', 'Assignee ID (use "me" for yourself)')
   .option('--priority <number>', 'Priority (1=urgent, 4=low)', (v: string) => parseInt(v, 10))
   .option('--estimate <number>', 'Estimate (story points)', (v: string) => parseInt(v, 10))
   .option('--labels <ids...>', 'Label IDs')
   .option('--parent <id>', 'Parent issue ID')
+  .option('--related <identifiers...>', 'Mark the new issue as related to these issues (e.g., KAR-123)')
+  .option('--cycle <cycle>', 'Cycle: current, next, previous, a cycle number, or a cycle ID')
+  .option('--position <edge>', 'Manual order: first or last among issues in its cycle (else project, else team)')
+  .option('--after <identifier>', 'Manual order: place directly after this issue')
+  .option('--before <identifier>', 'Manual order: place directly before this issue')
   .option('-j, --json', 'Output as JSON')
   .action(createIssue);
 
@@ -1703,16 +1999,34 @@ issueCmd
   .description('Update an issue')
   .option('--title <title>', 'New title')
   .option('--description <desc>', 'New description')
+  .option('--description-file <path>', 'Read the new description from a file ("-" for stdin)')
   .option('--state <name>', 'New state name')
   .option('--status <name>', 'Alias for --state')
   .option('--assignee <id>', 'New assignee (use "me" or "none")')
   .option('--priority <number>', 'New priority', (v: string) => parseInt(v, 10))
   .option('--estimate <number>', 'New estimate (story points)', (v: string) => parseInt(v, 10))
   .option('--project <id>', 'Project ID')
+  .option('--cycle <cycle>', 'Cycle: current, next, previous, a cycle number, a cycle ID, or none')
+  .option('--position <edge>', 'Manual order: first or last among issues in its cycle (else project, else team)')
+  .option('--after <identifier>', 'Manual order: place directly after this issue')
+  .option('--before <identifier>', 'Manual order: place directly before this issue')
   .option('-j, --json', 'Output as JSON')
   .action((identifier: string, opts: Record<string, unknown>) =>
     updateIssue(identifier, { ...opts, state: opts.state || opts.status } as Parameters<typeof updateIssue>[1])
   );
+
+issueCmd
+  .command('relate <identifier> <others...>')
+  .description('Link issues: <identifier> related|blocks|blocked-by|duplicate (of) each of <others>')
+  .addOption(new Option('--type <type>', 'Relation type').choices([...RELATION_TYPES]).default('related'))
+  .option('-j, --json', 'Output as JSON')
+  .action(relateIssues);
+
+issueCmd
+  .command('unrelate <identifier> <others...>')
+  .description('Remove every relation between <identifier> and each of <others>, in either direction')
+  .option('-j, --json', 'Output as JSON')
+  .action(unrelateIssues);
 
 issueCmd
   .command('attachments <identifier>')

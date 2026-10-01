@@ -78,7 +78,18 @@ npx tsx linear-cli.ts project update "https://linear.app/team/project/my-project
 # List/get issues
 npx tsx linear-cli.ts issue list --project <project-id>
 npx tsx linear-cli.ts issue get KAR-123 --json
-npx tsx linear-cli.ts issue get KAR-123 --full  # includes comments and attachments
+npx tsx linear-cli.ts issue get KAR-123 --full  # includes comments and attachments (relations always shown)
+npx tsx linear-cli.ts issue list --assignee me --cycle current --sort manual  # cycle in drag-and-drop order
+
+# Link issues (related | blocks | blocked-by | duplicate) and unlink them
+npx tsx linear-cli.ts issue relate KAR-123 KAR-124 --type blocks
+npx tsx linear-cli.ts issue unrelate KAR-123 KAR-124
+
+# Move into a cycle and set manual (drag-and-drop) order
+npx tsx linear-cli.ts issue update KAR-123 --cycle next --position last
+npx tsx linear-cli.ts issue update KAR-123 --after KAR-124
+npx tsx linear-cli.ts issue create --title "Follow-up" --team KAR --related KAR-123 \
+  --description-file desc.md   # file form keeps backticks off the command line ("-" = stdin)
 
 # List attachments/resources for an issue
 npx tsx linear-cli.ts issue attachments KAR-123
