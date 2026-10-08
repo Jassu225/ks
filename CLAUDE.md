@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A monorepo for Claude Code plugins:
 
-- **`ks`** — KarmaSuite development workflows, which orchestrate a 10-phase software project lifecycle using slash commands, specialized agents, and Linear integration.
+- **`ks`** — KarmaSuite development workflows, which orchestrate a 10-phase software project lifecycle using slash commands, specialized agents, and Linear integration. In `claude-ks` sessions it also draws the workflow in the UI through a function-hook module (`hooks/register.tsx`): ticket and phase pills under the prompt (the shell statusline keeps session, context and branch) and a `/ks-project` pane.
 - **`ks-flow`** — a per-project Kanban board over your Claude Code sessions (an always-on launchd daemon ingests session JSONL + workflow `state.yaml` into PocketBase/Firestore; a Next.js board renders it live), plus macOS notifications when a session blocks. Also has a per-card/per-session **reminder** system (daily re-nag, overdue red glow), an opt-in **Notes** page (free-form + Slack-permalink notes with reminders, split Professional/Personal), and **transcript backup** — Claude Code prunes `~/.claude/projects/**/*.jsonl` at 30 days, so a daily sweep (plus per-card and toolbar buttons) archives each session file and the unit's workflow to GCS, and cards offer a Restore when the bucket holds sessions this machine no longer has. Self-bootstrapping. See `plugins/ks-flow/README.md`.
 
 ## Repository Structure
@@ -18,7 +18,11 @@ A monorepo for Claude Code plugins:
 │       ├── .claude-plugin/plugin.json
 │       ├── commands/                  # Slash commands (/ks:command-name)
 │       ├── agents/                    # Specialized subagents
-│       ├── hooks/hooks.json           # Quality hooks (format, lint, typecheck)
+│       ├── hooks/hooks.json           # Quality hooks (format, lint, typecheck) + function-hook modules
+│       ├── hooks/register.tsx         # The plugin's one function-hook module (a plugin gets one): statusline + project pane
+│       ├── hooks/statusline/          # Statusline logic: workflow parse, usage figures (drawn in the prompt's hint line)
+│       ├── hooks/project/             # Project pane logic (/ks-project): ticket, phases, Slack threads, PRs, docs
+│       ├── types/index.d.ts           # The mod's $.state contract (named in plugin.json "types")
 │       ├── skills/                    # Skills (add-page-ai-chat, create-report-agent, grain-cli)
 │       ├── stash/skills/              # Coding standards reference (stashed)
 │       ├── scripts/                   # CLI tools and scripts
@@ -97,6 +101,7 @@ plugins/ks/scripts/quality-typecheck.sh
 | `/ks:build-prototype` | Build React prototype from PRD |
 | `/ks:write-tad` | Write Technical Architecture Document |
 | `/ks:prd-to-linear-tickets` | Convert PRD into Linear tickets |
+| `/ks-project` | Pane with the checkout's workflow: ticket, phases, Slack threads, PRs, worktree (also the statusline's `≡ more`) |
 | `/code-review` | Automated PR code review (built-in) |
 
 ## Agents
@@ -184,7 +189,7 @@ GRAIN_API_TOKEN=your_grain_token_here   # Grain CLI
 - **Commands**: Add `.md` files to `plugins/ks/commands/` → available as `/ks:filename`
 - **Agents**: Add `.md` files to `plugins/ks/agents/` → reference with `subagent_type: "ks:agent-name"`
 - **Skills**: Add `plugins/ks/skills/<name>/SKILL.md` (`name` + `description` frontmatter, optional `references/`) → auto-discovered, loaded when the description matches the task
-- **Hooks**: Edit `plugins/ks/hooks/hooks.json` for event-driven automation
+- **Hooks**: Edit `plugins/ks/hooks/hooks.json` for event-driven automation. Shell (`command`) hooks go under `hooks`; in-process function-hook modules (UI bands, panes, tool-call rewrites) go under `modules`. Only use a module for what a shell script can't do. Check with `claude plugin validate plugins/ks` and `claude plugin test plugins/ks`
 
 ## Adding a New Plugin
 

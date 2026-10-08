@@ -2,6 +2,7 @@
   "name": "ks",
   "version": "1.0.0",
   "description": "KarmaSuite development tools and workflows",
+  "types": "./types/index.d.ts",
   "author": {
     "name": "Jaswanth Sai Sattenapalli"
   }

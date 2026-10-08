@@ -3,6 +3,7 @@
 # Read JSON from stdin
 input=$(cat)
 
+
 # Calculate context usage
 context_size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
 usage=$(echo "$input" | jq '.context_window.current_usage // null')
@@ -34,6 +35,21 @@ fi
 git_branch=""
 if git rev-parse --git-dir > /dev/null 2>&1; then
     git_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+fi
+
+# Linear ticket (or project) of the ks workflow this checkout belongs to. In
+# claude-ks sessions (KS_MOD_STATUSLINE) the ks plugin draws it, so skip the lookup.
+linear_label=""
+linear_url=""
+if [ -z "$KS_MOD_STATUSLINE" ]; then
+    IFS=$'\t' read -r _ linear_kind linear_id linear_url _ < <("$(dirname "$0")/workflow-unit" 2>/dev/null)
+fi
+if [ -n "$linear_url" ]; then
+    if [ "$linear_kind" = "ticket" ] && [ "$linear_id" != "-" ]; then
+        linear_label="$linear_id"
+    else
+        linear_label="project"
+    fi
 fi
 
 # Extract rate limit info (only available for Pro/Max after first API response)
@@ -147,9 +163,21 @@ if [ -n "$git_branch" ]; then
     printf ' | \033[38;5;36m\356\234\245 %s\033[0m' "$git_branch"
 fi
 
+# claude-ks sessions split the statusline: this script draws the static half
+# (above), and the ks plugin (hooks/register.tsx) draws the interactive half,
+# the ticket and phase pills and the rate limits, under the prompt.
+if [ -n "$KS_MOD_STATUSLINE" ]; then
+    exit 0
+fi
+
+if [ -n "$linear_label" ]; then
+    # OSC 8 hyperlink: clickable in terminals that support it, plain text elsewhere.
+    printf ' | \033]8;;%s\033\\\033[38;5;141m%s\033[0m\033]8;;\033\\' "$linear_url" "$linear_label"
+fi
+
 if [ -n "$rate_limits" ]; then
-    # The session name eats into the same line budget the branch was measured against.
-    if [ -n "$git_branch" ] && [ $(( ${#git_branch} + ${#peer_name} )) -gt 32 ]; then
+    # The session name and ticket eat into the same line budget the branch was measured against.
+    if [ -n "$git_branch" ] && [ $(( ${#git_branch} + ${#peer_name} + ${#linear_label} )) -gt 32 ]; then
         # Line 2: rate limits on a new line when branch name is long
         printf '\n%s' "$rate_limits"
     else

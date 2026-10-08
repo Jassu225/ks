@@ -24,6 +24,10 @@ The `ks` plugin includes a custom statusline script (`plugins/ks/scripts/statusl
 
 The session name is shown as `@<name>` — the peer-addressable name that `ListAgents` prints and `SendMessage` takes, read live from the session registry (`~/.claude/sessions/<pid>.json`), so it can be quoted directly when telling one session to message another. It is not the payload's `session_name`, which is the auto-generated conversation title.
 
+When the checkout belongs to a ks workflow, the line also shows the Linear ticket (`KAR-123`) or `project` as a clickable OSC 8 link to Linear. The owning `state.yaml` is the one under `workflow/` whose `worktree_dir` is this checkout's git root. Older ticket states that predate `worktree_dir` are found by the ticket id in the branch name (`workflow/*/tickets/<id>/state.yaml`). Terminals without OSC 8 support show plain text.
+
+In `claude-ks` sessions (`KS_MOD_STATUSLINE=1`) the statusline is split: this script prints only the static half (session name, context, branch), and the ks plugin draws the interactive half, the ticket and current phase as pills, `≡ more` and the rate limits, in the prompt's hint line (see `plugins/ks/README.md`, "Statusline"). Plain `claude` sessions keep this script's full output.
+
 ## Adding a New Plugin
 
 ```bash

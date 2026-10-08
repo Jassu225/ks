@@ -21,6 +21,12 @@ fi
 # Default: load ks plugin
 PLUGIN_DIRS=("--plugin-dir" "$PLUGIN_DIR")
 
+# The statusline is split: scripts/statusline draws the static half (session,
+# context, branch) and the ks plugin (hooks/register.tsx) the interactive half
+# (ticket and phase pills, rate limits) under the prompt; this tells the script
+# to stop after its half.
+export KS_MOD_STATUSLINE=1
+
 # Extra local plugins to load alongside ks, enabled via .env (sourced above):
 #   KS_EXTRA_PLUGINS="ks-flow"      # space-separated plugins/<name> dirs
 # Modular — list any plugin here and it's added to the same `claude` launch.

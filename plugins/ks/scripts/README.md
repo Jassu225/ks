@@ -213,6 +213,12 @@ apps/www/src/legacy/report-builder.tsx
 
 Use it only for files that are *already* failing on the main branch — otherwise a one-line comment edit pulls them into the changed set and fails the hook for whoever touched them. It suppresses real errors rather than fixing them, so keep the list short and justify every entry.
 
+### Statusline, workflow lookup and session name
+
+- **`statusline`**: the settings `statusLine` command. It prints session name (`@<name>`), context, branch, the checkout's Linear ticket as an OSC 8 link, and the rate-limit windows. Under `claude-ks` (`KS_MOD_STATUSLINE=1`, exported by `claude-ks`) it stops after session, context and branch: the ks plugin draws the ticket and phase pills and the rate limits under the prompt (`hooks/register.tsx`; see the plugin README, "Statusline").
+- **`workflow-unit`**: prints the ks workflow unit that owns the current checkout, tab-separated: `<state.yaml path>  <ticket|project>  <identifier or ->  <linear url>  <name>`. It matches the `state.yaml` under `workflow/` whose `worktree_dir` is the git root, else (older states) the ticket id in the branch name. Exits 1 outside a workflow checkout. The statusline and `session-title.sh` use it; the plugin's hooks do the same lookup in-process.
+- **`session-title.sh`**: a `SessionStart` hook (startup, resume, clear) that sets `sessionTitle` to the ticket id (`KAR-123`), or a project's workflow folder name. That is the session's name, the one `ListAgents` prints and `SendMessage` takes, so it stays short and space-free.
+
 ## Output Format
 
 The generated `state.yaml` follows this structure:

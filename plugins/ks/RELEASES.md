@@ -1,5 +1,12 @@
 # Releases
 
+## 2026-10-08
+
+- **statusline — Linear link**: in a ks workflow checkout the statusline shows the ticket id (or `project`) as a clickable link to Linear, read from the `state.yaml` whose `worktree_dir` is the checkout.
+- **Session name**: a `SessionStart` hook names the session after the checkout's ticket (`KAR-123`), or the project's workflow folder, so it can be messaged by that name (`SendMessage`). The workflow lookup moved to `scripts/workflow-unit`, shared with the statusline.
+- **Project pane**: `/ks-project` (or the statusline's `≡ more`) opens a pane with the checkout's whole workflow state: ticket and Linear details, phases with times, every Slack thread, PRs with their review threads, and the worktree and workflow folder.
+- **Split statusline**: in `claude-ks` sessions `scripts/statusline` draws the static half (session name, context, branch) and the ks plugin draws the interactive half in the prompt's hint line (`hooks/register.tsx`): the checkout's ticket as a clickable pill, its current phase and a status pill, `≡ more`, and the rate limits. `scripts/statusline` stops after its half when `KS_MOD_STATUSLINE` is set and keeps its full output in plain `claude` sessions.
+
 ## 2026-10-01
 
 - **Linear CLI — cycles and manual order**:
@@ -18,6 +25,8 @@
   - New `gh stack` reference covering setup, create, view, rebase/sync, restructure, merge, exit codes and CI metadata.
   - GraphQL `stackEntry` query for a PR's stack membership.
   - Warning that `gh pr merge` cannot merge stacked PRs.
+  - Notes that `--base <branch>` alone is not a native stack, and how to split a PR into a code PR and a stacked tests PR.
+- **create_pr — native stacks**: when the target branch has an open PR, the new PR is linked onto it with `gh stack link`. If the extension is missing, the user is asked before it is installed.
 - **prd-to-linear-tickets**: creates tickets with `--description-file` and `--estimate`, and links dependent Features with `issue relate --type blocks`.
 
 ## 2026-04-01

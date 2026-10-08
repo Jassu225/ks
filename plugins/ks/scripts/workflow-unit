@@ -1,0 +1,50 @@
+#!/bin/bash
+
+# Print the ks workflow unit (ticket or project) that owns the current checkout,
+# as one tab-separated line:
+#
+#   <state.yaml path>  <ticket|project>  <identifier or ->  <linear url>  <name>
+#
+# Prints nothing (exit 1) outside a workflow checkout. Used by the statusline and
+# the SessionStart title hook; hooks/workflow-band/ does the same lookup in-process.
+#
+# workflow/ is committed, so every checkout carries every unit's state.yaml; the
+# one that owns this checkout is the one whose worktree_dir points back at it.
+# Units sit at workflow/<user>/<slug>/ and workflow/<user>/tickets/<id>/.
+
+git_root=$(git rev-parse --show-toplevel 2>/dev/null)
+[ -n "$git_root" ] && [ -d "$git_root/workflow" ] || exit 1
+
+tilde_root="~${git_root#"$HOME"}"
+state_file=$(grep -rlxF --include=state.yaml \
+    -e "worktree_dir: \"$tilde_root\"" -e "worktree_dir: $tilde_root" \
+    -e "worktree_dir: \"$git_root\"" -e "worktree_dir: $git_root" \
+    "$git_root/workflow" 2>/dev/null | head -1)
+
+# Older ticket states predate worktree_dir: fall back to the ticket id in the
+# branch name (Linear branch names carry it, e.g. jaswanth/kar-123-...).
+if [ -z "$state_file" ]; then
+    branch_ticket=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | grep -oiE '[a-z]+-[0-9]+' | head -1 | tr '[:upper:]' '[:lower:]')
+    if [ -n "$branch_ticket" ]; then
+        state_file=$(ls "$git_root"/workflow/*/tickets/"$branch_ticket"/state.yaml 2>/dev/null | head -1)
+    fi
+fi
+[ -n "$state_file" ] || exit 1
+
+# Top-level `ticket:` or `project:` block; its own keys sit at two spaces.
+awk -v path="$state_file" '
+    function value(line, key) {
+        sub("^  " key ":[ ]*", "", line)
+        if (line ~ /^".*"$/) { line = substr(line, 2, length(line) - 2); gsub(/\\"/, "\"", line) }
+        return line == "null" ? "" : line
+    }
+    /^(ticket|project):/ { kind = substr($1, 1, length($1) - 1); next }
+    /^[^ #]/ { if (kind) exit }
+    kind && /^  identifier:/ { id = value($0, "identifier") }
+    kind && /^  url:/ { url = value($0, "url") }
+    kind && /^  name:/ { name = value($0, "name") }
+    END {
+        if (!kind || !url) exit 1
+        printf "%s\t%s\t%s\t%s\t%s\n", path, kind, (id ? id : "-"), url, name
+    }
+' "$state_file"
