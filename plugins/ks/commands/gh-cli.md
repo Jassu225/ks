@@ -243,6 +243,10 @@ If a `gh stack` command fails with `unknown command "stack"`, the extension is m
 > **Important:** Creating PRs in this repo still goes through `/ks:create_pr`, so titles, the `Closes KAR-XXX` reference and the body template stay consistent. Two ways to combine that with stacks:
 > - Run `/ks:create_pr` for each layer, with `--base` set to the branch below, then link the PRs with `gh stack link`.
 > - Run `gh stack submit`, then bring each new PR's title and body in line with `/ks:create_pr` (`gh pr edit <n> --title ... --body-file ...`).
+>
+> `gh pr create --base <branch>` alone is **not** a native stack. GitHub sees two unrelated PRs and keeps offering "create a stack" on the lower one. `gh stack link` turns them into a stack without pushing, rebasing or opening duplicate PRs. `/ks:create_pr` does this itself when its target branch has an open PR.
+
+**Splitting a PR into a code PR and a stacked tests PR.** Commit the tests' removal on the code branch first, then cut the tests branch from that commit and re-add the tests there (`git revert <removal-commit>`). A tests branch cut before the removal commit has the same content as its merge base with the code branch, so GitHub shows an empty diff. Then open the PR with `/ks:create_pr <tests-branch> <code-branch>`, which links the two PRs.
 
 ```bash
 # Start a stack (creates and checks out the first branch on top of the trunk)

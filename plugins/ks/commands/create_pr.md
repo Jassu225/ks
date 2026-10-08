@@ -121,14 +121,34 @@ KAR-{ticket_number}
 {auto_generated_changelog}
 ```
 
-### 9. Output Result
+### 9. Link Into a Stack (target branch is not `main`)
+
+`--base <branch>` on its own is only a manual stack. GitHub treats the two PRs as unrelated and keeps offering "create a stack" on the lower PR. When `$2` is set and is not `main`, link the PRs natively:
+
+1. Find the open PR whose head is the target branch:
+   ```bash
+   gh pr list --head $2 --state open --json number,url --jq '.[0]'
+   ```
+   If there is none, `$2` is not a PR branch (e.g. a release branch). Skip this step.
+2. Check that the extension is installed: `gh extension list` should list `github/gh-stack`. If it is missing, ask the user before running `gh extension install github/gh-stack`. If they decline, skip this step and say the PRs are only manually stacked.
+3. Link bottom → top by PR number:
+   ```bash
+   gh stack link <base-PR#> <new-PR#>
+   ```
+   `link` creates or updates the stack on GitHub only. It does not push, rebase, open PRs or touch local `gh stack` tracking state. If the base PR is already in a stack, pass every PR in that stack from the bottom up, then the new one, or pass the stack number first (`gh stack link <stack#> <new-PR#>`) to append.
+4. If `link` fails (exit code `9` means stacked PRs are not enabled for the repo), report the error and leave the PR as a manual stack. Do not retry with other commands.
+
+See the Stacked Pull Requests section of `/ks:gh-cli` for the rest of the `gh stack` workflow.
+
+### 10. Output Result
 
 After creating the PR:
 - Display the PR URL
 - Show the generated title
 - Summarize what was included in the changelog
+- If step 9 ran, show the stack (bottom → top) or why it was not linked
 
-### 10. Record PR in Workflow State
+### 11. Record PR in Workflow State
 
 If this PR belongs to a ks workflow (a `{project-directory-path}/state.yaml` is known from the conversation context — e.g., invoked from `/ks:project-manager` or `/ks:implement-plan`), immediately append an entry to the top-level `prs` array in that `state.yaml`:
 
@@ -144,7 +164,7 @@ prs:
 - Create the `prs` array if it doesn't exist yet.
 - If no workflow state.yaml is known from context, skip this step silently.
 
-### 11. Automated Code Review
+### 12. Automated Code Review
 
 After the PR is created, suggest running `/code-review` to get automated review feedback before requesting human review. The code review checks for bugs, logic errors, and CLAUDE.md compliance.
 
