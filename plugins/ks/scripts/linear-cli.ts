@@ -699,7 +699,7 @@ async function getIssue(identifier: string, options: { json?: boolean; full?: bo
     title: issue.title,
     url: issue.url,
     description: issue.description,
-    state: state ? { id: state.id, name: state.name, type: state.type } : null,
+    state: state ? { id: state.id, name: state.name, type: state.type, color: state.color } : null,
     assignee: assignee ? { id: assignee.id, name: assignee.name, email: assignee.email } : null,
     project: project ? { id: project.id, name: project.name } : null,
     cycle: cycle ? { id: cycle.id, number: cycle.number, name: cycle.name || null, startsAt: cycle.startsAt, endsAt: cycle.endsAt } : null,

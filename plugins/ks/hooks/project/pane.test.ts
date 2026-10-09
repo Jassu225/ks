@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { formatSpan, formatWhen, projectInfo, workflowLabel } from './info'
+import { formatClock, formatWhen, projectInfo, workflowLabel } from './info'
 import { PULSE_FRAMES, pulseCell, pulseColor } from './pulse'
 
 const ROOT = '/home/u/wt/kar-13147-map-employee'
@@ -134,12 +134,13 @@ test('the pulse breathes from bright to dim and back over one cycle', () => {
   expect(atob(pulseCell('●', 3)).length).toBe(12)
 })
 
-test('times read in the host offset, spans in the largest units', () => {
+test('times read in the host offset; the clock with its meridian', () => {
   expect(formatWhen('2026-10-07T06:22:18Z', 330)).toBe('Oct 7 11:52')
   expect(formatWhen('2026-10-07T06:22:18Z', 0)).toBe('Oct 7 06:22')
-  expect(formatSpan('2026-10-07T06:22:18Z', '2026-10-07T06:46:58Z')).toBe('24m')
-  expect(formatSpan('2026-10-07T13:34:39Z', '2026-10-08T07:45:50Z')).toBe('18h 11m')
-  expect(formatSpan('2026-10-01T00:00:00Z', '2026-10-03T03:00:00Z')).toBe('2d 3h')
+  expect(formatClock(Date.parse('2026-10-07T06:01:00Z'), 330)).toBe('11:31 AM')
+  expect(formatClock(Date.parse('2026-10-07T06:31:00Z'), 330)).toBe('12:01 PM')
+  expect(formatClock(Date.parse('2026-10-07T18:45:00Z'), 330)).toBe('12:15 AM')
+  expect(formatClock(Date.parse('2026-10-07T13:15:00Z'), 0)).toBe('1:15 PM')
 })
 
 /** A ks workflow checkout, answered beneath the plugin. */
@@ -201,7 +202,8 @@ test('the pane shows the ticket, phases, Slack, PRs and workspace', async ($, on
     expect(await ui.find({ type: 'Text', text: 'In Progress' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '● IN PROGRESS' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'Urgent · 1 pt · Assignee Jaswanth · Due 2026-10-10' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'Oct 7 11:52 → Oct 7 12:16  (24m)' })).toBeDefined()
+    // Calendar span only; the time spent comes from the time log (none here).
+    expect(await ui.find({ type: 'Text', text: 'Oct 7 11:52 → Oct 7 12:16' })).toBeDefined()
     expect(await ui.find({ type: 'Link', text: '#engineering ↗' })).toBeDefined()
     expect(await ui.find({ type: 'Link', text: 'GitHub ↗' })).toBeDefined()
     expect(await ui.find({ type: 'Link', text: 'review #engineering ↗' })).toBeDefined()

@@ -166,14 +166,9 @@ export function formatWhen(iso: string, offsetMinutes: number): string {
   return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
 }
 
-/** `24m`, `6h 19m`, `2d 3h`. */
-export function formatSpan(fromIso: string, toIso: string): string | null {
-  const ms = Date.parse(toIso) - Date.parse(fromIso)
-  if (Number.isNaN(ms) || ms < 0) return null
-  const mins = Math.floor(ms / 60000)
-  const days = Math.floor(mins / 1440)
-  const hours = Math.floor((mins % 1440) / 60)
-  if (days > 0) return `${days}d ${hours}h`
-  if (hours > 0) return `${hours}h ${mins % 60}m`
-  return `${mins}m`
+/** `11:31 AM`: the clock time of `ms` in UTC offset `offsetMinutes`, 12-hour with its meridian. */
+export function formatClock(ms: number, offsetMinutes: number): string {
+  const d = new Date(ms + offsetMinutes * 60000)
+  const hours = d.getUTCHours()
+  return `${hours % 12 || 12}:${String(d.getUTCMinutes()).padStart(2, '0')} ${hours < 12 ? 'AM' : 'PM'}`
 }

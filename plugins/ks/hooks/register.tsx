@@ -2,7 +2,12 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register, RenderChildren, RenderSurface, TextProps } from 'claude-code'
 
 import type { ProjectInfo, StatusFacts, WorkflowUnit } from '../types'
-import { formatSpan, formatWhen, projectInfo, workflowLabel } from './project/info'
+import { linearStatus, textOn } from './live/linear'
+import { scheduler } from './live/schedule'
+import type { Scheduler } from './live/schedule'
+import { ACTIVE_STATES, branchAlias, deployPill, githubRepo, latestPreview, previewBranch } from './live/vercel'
+import { formatDuration, parseLog, summarize } from '../scripts/lib/time-tracking'
+import { formatClock, formatWhen, projectInfo, workflowLabel } from './project/info'
 import { PULSE_FRAMES, PULSE_MS, pulseCell } from './project/pulse'
 import { COLORS, limitViews } from './statusline/usage'
 import { newlyCompleted, parseState, progress } from './statusline/workflow'
@@ -15,12 +20,22 @@ import type { Progress } from './statusline/workflow'
 // line (kept, so its live pills stay): the checkout's ks workflow ticket and
 // phase as pills, `≡ more`, and the rate-limit windows at the right.
 //
-// The project pane (/ks-project, or the statusline's `≡ more`) shows the
-// whole state.yaml: the ticket, phases, Slack threads, PRs and the workspace.
+// The project pane (/ks-project, or the statusline's `≡ more` / `≡ less`
+// toggle) shows the whole state.yaml: the ticket, phases, Slack threads, PRs
+// and the workspace, plus two live figures: the ticket's Linear state (fetched
+// while the pane is open) and the branch's Vercel preview deploy (also a pill
+// in the statusline row).
+//
+// Every refresh runs off one clock (live/schedule): a tick every TICK_MS runs
+// the jobs whose interval has passed.
 
 const unitAtom = atom({ plugin: 'ks', key: 'workflowUnit' } as const, null)
 const factsAtom = atom({ plugin: 'ks', key: 'statusFacts' } as const, null)
 const infoAtom = atom({ plugin: 'ks', key: 'projectInfo' } as const, null)
+const linearAtom = atom({ plugin: 'ks', key: 'linearStatus' } as const, null)
+const deployAtom = atom({ plugin: 'ks', key: 'previewDeploy' } as const, null)
+const paneOpenAtom = atom({ plugin: 'ks', key: 'paneOpen' } as const, false)
+const phaseTimeAtom = atom({ plugin: 'ks', key: 'phaseTime' } as const, null)
 
 const PANE = 'ks-project'
 const PANE_COMMAND = 'ks-project'
@@ -30,7 +45,18 @@ const LABEL_COLUMNS = 16
 const YAML_TO_JSON =
   "const Y=require(process.argv[1]);process.stdout.write(JSON.stringify(Y.parse(require('fs').readFileSync(process.argv[2],'utf8'))))"
 
-const POLL_MS = 5000
+/** The one clock's period; every job interval is a multiple of it. */
+const TICK_MS = 5000
+const LINEAR_MS = 60_000
+/** The time log grows every turn; re-read it this often while the pane shows it. */
+const PHASE_TIME_MS = 60_000
+const DEPLOY_ACTIVE_MS = 10_000
+const DEPLOY_IDLE_MS = 120_000
+/** After a `git push`, poll as if deploying: Vercel takes a few seconds to list the new build. */
+const PUSH_WINDOW_MS = 90_000
+
+/** The Vercel MCP server, as the vercel plugin registers it. */
+const VERCEL_SERVER = 'plugin:vercel:vercel'
 
 // Nerd Font glyphs: the rounded ends of a pill.
 const CAP_LEFT = ''
@@ -127,8 +153,9 @@ async function run($: EngineInterface, argv: string[]): Promise<string | null> {
 
 /**
  * The state.yaml that owns this checkout, the lookup scripts/workflow-unit does.
- * workflow/ is committed, so every checkout carries every unit's state.yaml;
- * the owner is the one whose worktree_dir points back at the git root. Older
+ * workflow/ is gitignored, but create-worktree copies the main checkout's into
+ * each new worktree, so every checkout carries every unit's state.yaml; the
+ * owner is the one whose worktree_dir points back at the git root. Older
  * ticket states predate worktree_dir, so fall back to the ticket id in the
  * branch name (workflow/<user>/tickets/<id>/state.yaml).
  */
@@ -238,13 +265,153 @@ async function openPane($: EngineInterface): Promise<void> {
   await loadInfo($)
   const info = await read($, infoAtom)
   await $.ui.open({ id: PANE, title: info?.identifier ?? 'Project' })
+  paneIsOpen = true
+  await update($, paneOpenAtom, () => true)
+  // The Linear state and the time log are read only while the pane shows them: read now, not at the next interval.
+  const now = await $.clock.now()
+  jobs?.kick('linearStatus', now)
+  jobs?.kick('phaseTime', now)
+}
+
+/**
+ * `≡ less`: closes the pane and flips the toggle back. The ui.close hook does
+ * the same for every other close (Esc, the close mark); a plugin's own call
+ * need not pass through its own hook.
+ */
+async function closePane($: EngineInterface): Promise<void> {
+  await $.ui.close({ id: PANE })
+  paneIsOpen = false
+  await update($, paneOpenAtom, () => false)
 }
 
 async function discoverUnit($: EngineInterface): Promise<void> {
   const found = await findStateFile($)
-  if (found !== statePath) mtimeMs = 0
+  if (found !== statePath) {
+    mtimeMs = 0
+    // Another unit's live figures are not this one's.
+    await update($, linearAtom, () => null)
+    await update($, deployAtom, () => null)
+    await update($, phaseTimeAtom, () => null)
+    deployActive = false
+  }
   statePath = found
   await loadUnit($)
+}
+
+// What the scheduler's intervals read; the atoms hold the same for drawing.
+let jobs: Scheduler | null = null
+let paneIsOpen = false
+let deployActive = false
+let pushedAt = -Infinity
+/** Each branch's stable preview alias, once Vercel has one: it never changes, so it is asked for once. */
+const branchUrls = new Map<string, string>()
+/** Set once `$.mcp.call` cannot reach the Vercel server: the deploy job stops and its section hides. */
+let vercelMissing = false
+
+/** The ticket's Linear state, through the ks linear CLI (its source, run by tsx). */
+async function loadLinear($: EngineInterface): Promise<void> {
+  const info = await read($, infoAtom)
+  if (!info?.identifier) {
+    await update($, linearAtom, () => null)
+    return
+  }
+  const scripts = `${$.plugin.root}/scripts`
+  const json = await run($, [`${scripts}/node_modules/.bin/tsx`, `${scripts}/linear-cli.ts`, 'issue', 'get', info.identifier, '--json'])
+  const status = linearStatus(json, Math.floor((await $.clock.now()) / 60000))
+  // A failed fetch keeps the last good state; the pane falls back to state.yaml's when there is none.
+  if (!status) return
+  const was = await read($, linearAtom)
+  if (JSON.stringify(was) !== JSON.stringify(status)) await update($, linearAtom, () => status)
+}
+
+/** The newest Vercel preview of the unit's branch, through the vercel plugin's MCP server. */
+async function loadPreview($: EngineInterface): Promise<void> {
+  const info = await read($, infoAtom)
+  const branch = info ? previewBranch(info.prs.map(p => p.branch), await run($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])) : null
+  const repo = githubRepo(await run($, ['git', 'remote', 'get-url', 'origin']))
+  if (!branch || !repo) {
+    deployActive = false
+    await update($, deployAtom, () => null)
+    return
+  }
+
+  let text: string
+  try {
+    const result = await $.mcp.call(VERCEL_SERVER, 'list_deployments', { slug: repo.org, branch, limit: 1 })
+    // The server answered but refused (auth, scope): hide the section, try again next interval.
+    if (result.isError) throw new Error('refused')
+    text = result.content.map(c => ('text' in c ? String(c.text) : '')).join('')
+  } catch (error) {
+    // No such server or tool (the vercel plugin is not installed): stop asking.
+    if (!(error instanceof Error && error.message === 'refused')) vercelMissing = true
+    deployActive = false
+    await update($, deployAtom, () => null)
+    return
+  }
+
+  const found = latestPreview(text, branch, repo.repo, Math.floor((await $.clock.now()) / 60000))
+  const deploy = found && { ...found, branchUrl: await previewAlias($, found.id, branch, repo.org) }
+  deployActive = deploy !== null && ACTIVE_STATES.has(deploy.state)
+  const was = await read($, deployAtom)
+  if (JSON.stringify(was) !== JSON.stringify(deploy)) await update($, deployAtom, () => deploy)
+}
+
+/**
+ * Engaged minutes per phase, from the unit's time log (scripts/time-log.sh
+ * writes it; scripts/ks-time reads it the same way).
+ */
+async function loadPhaseTime($: EngineInterface): Promise<void> {
+  const info = await read($, infoAtom)
+  if (!info) {
+    await update($, phaseTimeAtom, () => null)
+    return
+  }
+  // The name time-log.sh gives the file: the identifier, else the workflow folder, object-name safe.
+  const id = (info.identifier ?? info.workflowDir.split('/').pop() ?? '').replace(/[^A-Za-z0-9._-]/g, '_')
+  const dir = (await $.env.get('KS_TIME_DIR')) ?? `${(await $.env.get('HOME')) ?? ''}/.claude/ks-time`
+  const text = id ? await $.fs.read(`${dir}/${id}.jsonl`).catch(() => null) : null
+  // Up to now, so the phase being worked grows while a session is on it.
+  const byPhase = text ? summarize(parseLog(text), undefined, await $.clock.now()).byPhase : null
+  // Whole minutes: the pane shows no finer, and a write only when one ticks over.
+  const minutes = byPhase
+    ? Object.fromEntries(Object.entries(byPhase).map(([phase, f]) => [phase, Math.round(f.engagedMs / 60_000)]))
+    : null
+  const was = await read($, phaseTimeAtom)
+  if (JSON.stringify(was) !== JSON.stringify(minutes)) await update($, phaseTimeAtom, () => minutes)
+}
+
+/**
+ * The branch's stable preview URL (`<project>-git-<branch>.…`), asked of Vercel
+ * once per branch: its name is Vercel's to shorten and hash, so it is not built
+ * here. Null until the branch has one, or when the call fails.
+ */
+async function previewAlias($: EngineInterface, deploymentId: string, branch: string, org: string): Promise<string | null> {
+  const known = branchUrls.get(branch)
+  if (known) return known
+  const result = await $.mcp.call(VERCEL_SERVER, 'list_deployment_aliases', { id: deploymentId, slug: org }).catch(() => null)
+  if (!result || result.isError) return null
+  const alias = branchAlias(result.content.map(c => ('text' in c ? String(c.text) : '')).join(''))
+  if (alias) branchUrls.set(branch, alias)
+  return alias
+}
+
+/** Every refresh the mod makes, on the one clock. */
+function makeJobs($: EngineInterface): Scheduler {
+  return scheduler({
+    workflowUnit: { every: () => TICK_MS, run: () => loadUnit($) },
+    usage: { every: () => TICK_MS, run: () => loadFacts($) },
+    linearStatus: { every: () => (paneIsOpen ? LINEAR_MS : null), run: () => loadLinear($) },
+    phaseTime: { every: () => (paneIsOpen ? PHASE_TIME_MS : null), run: () => loadPhaseTime($) },
+    previewDeploy: {
+      every: now => {
+        if (vercelMissing || !statePath) return null
+        // A push moments ago polls as if deploying.
+        const isRecentPush = now - pushedAt < PUSH_WINDOW_MS
+        return deployActive || isRecentPush ? DEPLOY_ACTIVE_MS : DEPLOY_IDLE_MS
+      },
+      run: () => loadPreview($),
+    },
+  })
 }
 
 async function loadFacts($: EngineInterface): Promise<void> {
@@ -267,10 +434,16 @@ export const register: Register = on => {
     })
     await hostOffset($)
     await Promise.all([discoverUnit($), loadFacts($)])
-    $.clock.every(POLL_MS, () => {
-      void loadUnit($)
-      void loadFacts($)
+    // The pane outlives a reload (and a resume reopens it): start from where it stands.
+    paneIsOpen = (await $.ui.panes().catch(() => [])).some(p => p.id === PANE)
+    await update($, paneOpenAtom, () => paneIsOpen)
+    jobs = makeJobs($)
+    const tick = jobs.tick
+    tick(await $.clock.now())
+    $.clock.every(TICK_MS, () => {
+      void $.clock.now().then(tick)
     })
+    // The pulse repaints one cell every 80ms: an animation, not a refresh, so not on the one clock.
     $.clock.every(PULSE_MS, () => {
       void pulseTick($)
     })
@@ -284,6 +457,26 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A push starts a Vercel build: watch closely now rather than at the next idle interval.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const ran = await next(e)
+    if (/\bgit\b[^;&|]*\bpush\b/.test(e.command)) {
+      pushedAt = await $.clock.now()
+      jobs?.kick('previewDeploy', pushedAt)
+    }
+    return ran
+  }).catch(($, e, next) => next(e))
+
+  // However the pane closes (Esc, its close mark, `≡ less`), the toggle reads `≡ more` again.
+  on('ui.close', async ($, e, next) => {
+    const closed = await next(e)
+    if (e.id === PANE) {
+      paneIsOpen = false
+      await update($, paneOpenAtom, () => false)
+    }
+    return closed
+  }).catch(($, e, next) => next(e))
+
   on('command.run', { command: PANE_COMMAND }, async $ => {
     await openPane($)
     const info = await read($, infoAtom)
@@ -292,7 +485,12 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     const own = await next(e)
-    const [unit, facts] = await Promise.all([read($, unitAtom), read($, factsAtom)])
+    const [unit, facts, deploy, isPaneOpen] = await Promise.all([
+      read($, unitAtom),
+      read($, factsAtom),
+      read($, deployAtom),
+      read($, paneOpenAtom),
+    ])
     if (!unit && !facts) return own
 
     const els = $.ui.resolve(e)
@@ -316,6 +514,15 @@ export const register: Register = on => {
             <Box key="status" flexShrink={0} marginLeft={1}>
               {pill(els, 'status-pill', status.pill.text, status.pill)}
             </Box>,
+            deploy &&
+              (() => {
+                const d = deployPill(deploy)
+                return (
+                  <Box key="deploy" flexShrink={0} marginLeft={1}>
+                    {pill(els, 'deploy-pill', d.text, d, d.href ?? undefined)}
+                  </Box>
+                )
+              })(),
           ]
         })()
       : []
@@ -323,7 +530,7 @@ export const register: Register = on => {
     const limits = limitViews(facts?.limits ?? [], now)
 
     // One row under the engine's line: the interactive half of the statusline
-    // (the workflow pills, `≡ more`, the rate limits). The static half (session,
+    // (the workflow and deploy pills, the pane toggle, the rate limits). The static half (session,
     // context, branch) is scripts/statusline's, in the statusline's own area.
     return (
       <Box flexDirection="column">
@@ -332,7 +539,13 @@ export const register: Register = on => {
           {workflow}
           {unit && (
             <Box key="details" flexShrink={0} marginLeft={1}>
-              <Button key="open-project" label="≡ more" plain dimColor onPress={() => openPane($)} />
+              <Button
+                key="open-project"
+                label={isPaneOpen ? '≡ less' : '≡ more'}
+                plain
+                dimColor
+                onPress={() => (isPaneOpen ? closePane($) : openPane($))}
+              />
             </Box>
           )}
           <Box flexGrow={1} />
@@ -409,15 +622,34 @@ export const register: Register = on => {
       info.owner ? `${info.owner.role} ${info.owner.name}` : null,
       info.dueDate ? `Due ${info.dueDate}` : null,
     ].filter(Boolean)
-    const unit = await read($, unitAtom)
+    const [unit, live, deploy, phaseTime] = await Promise.all([
+      read($, unitAtom),
+      read($, linearAtom),
+      read($, deployAtom),
+      read($, phaseTimeAtom),
+    ])
     const status = unit ? workflowStatus(unit) : null
+    /** `6:42 PM`: the host's clock time of an epoch minute. */
+    const clockAt = (minute: number): string => formatClock(minute * 60000, offset)
 
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" flexWrap="wrap">
           <Box marginRight={1}>{ticketPill(els, info.identifier, info.url)}</Box>
-          {/* The Linear issue's state, as ks-start-ticket recorded it. */}
-          {info.status && pill(els, 'linear-status', info.status, { bg: '#334155', fg: '#e2e8f0' })}
+          {/* The Linear issue's state: live while the pane is open, else as ks-start-ticket recorded it. */}
+          {live ? (
+            <Box flexDirection="row">
+              {pill(els, 'linear-status', live.name, { bg: live.color, fg: textOn(live.color) })}
+              <Text dimColor>{` live · ${clockAt(live.checkedMinute)}`}</Text>
+            </Box>
+          ) : (
+            info.status && (
+              <Box flexDirection="row">
+                {pill(els, 'linear-status', info.status, { bg: '#334155', fg: '#e2e8f0' })}
+                <Text dimColor> snapshot</Text>
+              </Box>
+            )
+          )}
         </Box>
         {/* The workflow's phase and status, as the statusline shows them, on a line of their own. */}
         {status && (
@@ -441,9 +673,11 @@ export const register: Register = on => {
         {info.phases.length === 0 && <Text dimColor>No phases recorded yet.</Text>}
         {info.phases.map(p => {
           const glyph = PHASE_GLYPHS[p.status] ?? NOT_STARTED_GLYPH
-          const span = p.startedAt && p.endedAt ? formatSpan(p.startedAt, p.endedAt) : null
+          // Time actually spent, from the time log; the phase's own span is calendar time and says little.
+          const engaged = phaseTime?.[String(p.number)]
+          const spent = engaged !== undefined ? `${formatDuration(engaged * 60_000)} engaged` : null
           const times = p.startedAt ? `${when(p.startedAt)} → ${p.endedAt ? when(p.endedAt) : '…'}` : ''
-          const extra = [span, p.iterations > 1 ? `${p.iterations} iterations` : null].filter(Boolean).join(', ')
+          const extra = [spent, p.iterations > 1 ? `${p.iterations} iterations` : null].filter(Boolean).join(', ')
           return row(
             `phase-${p.number}`,
             `${p.number}`.padStart(2) + ' ' + p.label,
@@ -463,7 +697,7 @@ export const register: Register = on => {
               ) : (
                 <Text color={glyph.color}>{`${glyph.glyph} `}</Text>
               )}
-              <Text dimColor>{times ? `${times}${extra ? `  (${extra})` : ''}` : p.status.toLowerCase().replace(/_/g, ' ')}</Text>
+              <Text dimColor>{`${times || p.status.toLowerCase().replace(/_/g, ' ')}${extra ? `  (${extra})` : ''}`}</Text>
             </Box>,
           )
         })}
@@ -485,6 +719,35 @@ export const register: Register = on => {
             </Box>,
           ),
         )}
+
+        {/* Only where the vercel plugin answers and the branch has a preview. */}
+        {deploy && section('PREVIEW DEPLOY')}
+        {deploy &&
+          (() => {
+            const d = deployPill(deploy)
+            return [
+              row(
+                'deploy-state',
+                'State',
+                <Box flexDirection="row" flexWrap="wrap">
+                  <Box marginRight={2}>{pill(els, 'deploy-state-pill', d.text, d)}</Box>
+                  {/* The branch's alias, which follows every new build; this build's own URL until Vercel has one. */}
+                  {(deploy.branchUrl ?? deploy.url) && link('deploy-url', 'open preview', deploy.branchUrl ?? deploy.url)}
+                  {deploy.inspectorUrl && link('deploy-logs', 'build logs', deploy.inspectorUrl)}
+                </Box>,
+              ),
+              row('deploy-branch', 'Branch', <Text>{deploy.branch}</Text>),
+              row(
+                'deploy-build',
+                'Build',
+                <Text dimColor>
+                  {[deploy.sha?.slice(0, 7), deploy.createdAt ? when(new Date(deploy.createdAt).toISOString()) : null, `checked ${clockAt(deploy.checkedMinute)}`]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </Text>,
+              ),
+            ]
+          })()}
 
         {section('LINEAR')}
         {row('linear-ticket', info.kind === 'ticket' ? 'Ticket' : 'Project', link('linear-link', info.identifier ?? info.name, info.url))}

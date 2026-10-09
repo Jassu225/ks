@@ -60,8 +60,48 @@ export type ProjectInfo = {
   workflowDir: string
 }
 
+/** The ticket's Linear state, fetched live while the project pane is open. */
+export type LinearStatus = {
+  name: string
+  /** Linear's state type: triage, backlog, unstarted, started, completed, canceled. */
+  type: string
+  /** `#rrggbb`: the state's own color, else its type's default. */
+  color: string
+  /** The minute (epoch ms / 60000) it was fetched: a refetch in the same minute writes nothing. */
+  checkedMinute: number
+}
+
+/** The newest Vercel preview deployment of the unit's branch. */
+export type PreviewDeploy = {
+  /** Vercel's deployment id (`dpl_…`). */
+  id: string
+  branch: string
+  /** Vercel's state: QUEUED, INITIALIZING, BUILDING, READY, ERROR, CANCELED. */
+  state: string
+  /** This build's own https URL: a new one every push. */
+  url: string | null
+  /** The branch's https alias, the same for every build of the branch: what the preview links open. */
+  branchUrl: string | null
+  /** The deployment's page on vercel.com (build logs). */
+  inspectorUrl: string | null
+  sha: string | null
+  /** Epoch ms the deployment was created. */
+  createdAt: number
+  checkedMinute: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    ks: { workflowUnit: WorkflowUnit | null; statusFacts: StatusFacts | null; projectInfo: ProjectInfo | null }
+    ks: {
+      workflowUnit: WorkflowUnit | null
+      statusFacts: StatusFacts | null
+      projectInfo: ProjectInfo | null
+      linearStatus: LinearStatus | null
+      previewDeploy: PreviewDeploy | null
+      /** Whether the project pane is open: the statusline's toggle reads `≡ less` then. */
+      paneOpen: boolean
+      /** Engaged minutes per phase number (`-`: none in progress), from the unit's time log. */
+      phaseTime: Record<string, number> | null
+    }
   }
 }
