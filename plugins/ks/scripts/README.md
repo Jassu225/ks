@@ -223,7 +223,7 @@ Use it only for files that are *already* failing on the main branch — otherwis
 
 How long a ticket took, from hooks rather than a timer you remember to start.
 
-- **`time-log.sh`**: a hook on `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Notification`, `SubagentStart`, `SubagentStop`, `Stop` and `SessionEnd`. Each event appends one line to `~/.claude/ks-time/<identifier>.jsonl` (`KS_TIME_DIR` overrides): time, event, session, subagent id, tool name (`PostToolUse`), and the phase in progress. The unit comes from `workflow-unit`, looked up when a session starts or a prompt is sent and cached per session in `~/.claude/ks-time/.sessions/`. Sessions outside a ks workflow are not logged. It only records events; it never fails one.
+- **`time-log.sh`**: a hook on `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Notification`, `SubagentStart`, `SubagentStop`, `Stop` and `SessionEnd`. Each event appends one line to `~/.claude/ks-time/<identifier>.jsonl` (`KS_TIME_DIR` overrides): time, event, session, subagent id, tool name (`PostToolUse`), and the phase in progress. The unit comes from `workflow-unit`, looked up when a session starts or a prompt is sent and cached per session in `~/.claude/ks-time/.sessions/`; the phase is read from that state.yaml on every event, since a phase can start mid-turn. Sessions outside a ks workflow are not logged. It only records events; it never fails one.
 - **`ks-time`**: turns the log into time. `ks-time` (this checkout's unit), `ks-time KAR-123`, `ks-time --all`, `--idle <minutes>`, `--json`.
 
 ```
@@ -234,15 +234,19 @@ KAR-13030
   By phase
   9 Plan          14m      agent 8m
   10 Implement    41m      agent 41m
+  No phase        3m       agent 1m
 ```
+
+**No phase** is time on the unit with no phase in progress: before the first one starts, between one ending and the next starting. It counts in the totals.
 
 What counts (`lib/time-tracking.ts`, tested in `lib/time-tracking.spec.ts`: `node --import tsx --test lib/time-tracking.spec.ts`):
 
 - **Agent**: Claude working. A turn runs from the prompt to `Stop`, and a subagent from `SubagentStart` to `SubagentStop`, background ones included. Only a prompt starts a turn: tool events between turns are ignored. That matters because plugins' own calls raise `PostToolUse` too — the statusline mod's Vercel check, an MCP call every 2 minutes while idle, once billed an idle session ~3 hours of "agent time" (KAR-13030, 2026-10-09).
 - **Engaged**: agent time plus your gaps between turns (reading, thinking, answering a permission prompt), when a gap is under the idle cut-off (10 minutes). A gap runs from `Stop` to your next prompt; a longer one is time away and counts nothing.
+- **Which phase**: each event goes to the phase whose run in state.yaml (`started_at` → `ended_at`, per iteration) covers it, where the state is at hand (`ks-time` in the unit's checkout, `--write`, the pane); else the phase logged with it. Logs from before the per-event phase read stamped the phase of the last prompt, which put KAR-13178's implementation run, started mid-turn, under no phase. A turn that moves on to the next phase splits there. The statusline mod's own Vercel calls (`list_deployments`, `list_deployment_aliases`) are dropped, so they can't keep a turn with no `Stop` running.
 - Both are **unions of intervals**: parallel subagents, a background agent beside the turn, or two sessions on one ticket count once.
 - A turn that never reached `Stop` (Esc, a crash) counts only up to the cut-off.
-- A session still going counts up to now (its running turn, or the gap you are in), if it was heard from within the cut-off. The `/ks-project` pane shows each phase's engaged time this way, refreshed every 60 seconds while it is open.
+- A session still going counts up to now (its running turn, or the gap you are in), if it was heard from within the cut-off. The `/ks-project` pane shows each phase's engaged time this way, then No phase (when any) and the unit's total, engaged and agent, refreshed every 60 seconds while it is open. The total is a union too, so not the sum of the phase rows.
 
 **In state.yaml.** On `Stop` and `SessionEnd` the hook also runs `ks-time --write` in the background, which writes the figures into the checkout's own `state.yaml` (only when one changed, editing those fields in place):
 
