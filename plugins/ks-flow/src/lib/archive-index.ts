@@ -1,68 +1,77 @@
-// lib/archive-index.ts — local bookkeeping for the transcript backup sweep.
+// lib/archive-index.ts — what the transcript backup has uploaded, per unit.
 //
 // Which session file was last uploaded, at what size/mtime, and under which
-// object name. Lives in $KS_FLOW_DATA next to checkpoints.json for the same
-// reason: it is per-file churn about LOCAL files, so it must not cost DB writes
-// and does not belong in the cloud store. The board reads it through
-// /api/archive-status rather than listing the bucket per card.
+// object name. Lives in the store (PocketBase `backup_units`, or Firestore
+// projects/{id}/backupUnits), one doc per unit, keyed by its object-name-safe
+// identifier. The backup CLI is its only reader and writer; the board sees it
+// through `transcript-backup --status`.
 //
 // The index is a CACHE, never the source of truth: a missing or stale entry
-// only costs a redundant upload, and `--force` ignores it entirely.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+// only costs a redundant upload, each sweep reconciles it against a bucket
+// listing, `--reindex` rebuilds it from the bucket, and `--force` ignores it.
+//
+// It used to be a file, $KS_FLOW_DATA/archive-index.json. The first load
+// imports that file into the store and renames it `.imported`, so nothing is
+// lost and nothing is imported twice.
+import { existsSync, readFileSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
 import { dataDir } from './config.js';
+import type { ArchivedSession, BackupStore, BackupUnitDoc } from './db/types.js';
 
-export const ARCHIVE_INDEX_PATH = join(dataDir(), 'archive-index.json');
+export type { ArchivedSession } from './db/types.js';
 
-/** One uploaded session JSONL. `rel` (the map key) is relative to the
- * transcript dir, so `subagents/<id>.jsonl` stays distinct from `<id>.jsonl`. */
-export interface ArchivedSession {
-  size: number;
-  mtimeMs: number;
-  object: string; // gs:// URI, for the UI and for restore
-  uploadedAt: string;
-}
+/** A unit's entry: its store doc without the doc id (that is derived from the identifier). */
+export type UnitArchive = Omit<BackupUnitDoc, 'uid'>;
 
-export interface UnitArchive {
-  identifier: string;
-  worktreePath: string;
-  transcriptDir: string;
-  sessions: Record<string, ArchivedSession>;
-  /** Refreshed whenever this unit had a session upload — the two always travel
-   * together, so a restore gets the workflow state that matches the transcript. */
-  workflow: { object: string; size: number; uploadedAt: string } | null;
-  /** The unit's time log (the ks plugin's ~/.claude/ks-time/<identifier>.jsonl),
-   * uploaded whenever it changed. Absent in indexes written before it existed. */
-  timeLog?: ArchivedSession | null;
-  lastArchivedAt: string;
-}
-
+/** Every unit's entry, keyed by identifier: what one sweep reads and updates. */
 export interface ArchiveIndex {
-  version: 1;
-  lastSweepAt: string | null;
-  units: Record<string, UnitArchive>; // keyed by identifier
+  units: Record<string, UnitArchive>;
 }
 
-const EMPTY: ArchiveIndex = { version: 1, lastSweepAt: null, units: {} };
+/** The pre-store index file, imported once. */
+export const LEGACY_INDEX_PATH = join(dataDir(), 'archive-index.json');
 
-export function readArchiveIndex(): ArchiveIndex {
+/** Object-name-safe identifier: the unit's bucket prefix and its doc id. */
+export function safeId(identifier: string): string {
+  return identifier.replace(/[^A-Za-z0-9._-]/g, '_');
+}
+
+/**
+ * Every unit's entry for `projectId`. Throws when the store cannot be reached:
+ * an empty index would make the next sweep re-upload every unit, so callers
+ * decide what an unreachable store means for them.
+ */
+export async function loadArchiveIndex(store: BackupStore, projectId: string): Promise<ArchiveIndex> {
+  const units: Record<string, UnitArchive> = {};
+  for (const { uid: _uid, ...unit } of await store.getBackupUnits(projectId)) units[unit.identifier] = unit;
+  await importLegacyIndex(store, projectId, units);
+  return { units };
+}
+
+/** Writes one unit's entry. */
+export async function saveUnit(store: BackupStore, projectId: string, unit: UnitArchive): Promise<void> {
+  await store.upsertBackupUnit(projectId, { uid: safeId(unit.identifier), ...unit });
+}
+
+/** One-time move of archive-index.json into the store: units the store lacks are added, then the file is set aside. */
+async function importLegacyIndex(store: BackupStore, projectId: string, units: Record<string, UnitArchive>): Promise<void> {
+  if (!existsSync(LEGACY_INDEX_PATH)) return;
+  let legacy: { units?: Record<string, UnitArchive> } | null = null;
   try {
-    const parsed = JSON.parse(readFileSync(ARCHIVE_INDEX_PATH, 'utf8')) as ArchiveIndex;
-    if (parsed?.version !== 1 || typeof parsed.units !== 'object' || parsed.units === null) {
-      return { ...EMPTY };
-    }
-    return { version: 1, lastSweepAt: parsed.lastSweepAt ?? null, units: parsed.units };
+    legacy = JSON.parse(readFileSync(LEGACY_INDEX_PATH, 'utf8')) as { units?: Record<string, UnitArchive> };
   } catch {
-    return { ...EMPTY };
+    legacy = null; // unreadable: nothing to import, and nothing worth keeping either
   }
-}
-
-/** Atomic write (tmp + rename) — a crash mid-write can't corrupt the index. */
-export function writeArchiveIndex(index: ArchiveIndex): void {
-  mkdirSync(dirname(ARCHIVE_INDEX_PATH), { recursive: true });
-  const tmp = `${ARCHIVE_INDEX_PATH}.tmp`;
-  writeFileSync(tmp, JSON.stringify(index, null, 2), 'utf8');
-  renameSync(tmp, ARCHIVE_INDEX_PATH);
+  for (const [identifier, unit] of Object.entries(legacy?.units ?? {})) {
+    if (units[identifier] || !unit?.sessions) continue;
+    await saveUnit(store, projectId, unit);
+    units[identifier] = unit;
+  }
+  try {
+    renameSync(LEGACY_INDEX_PATH, `${LEGACY_INDEX_PATH}.imported`);
+  } catch {
+    // another sweep imported it at the same moment
+  }
 }
 
 /** True when the local file differs from what the index says was uploaded.

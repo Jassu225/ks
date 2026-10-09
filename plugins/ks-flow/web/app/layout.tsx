@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { Providers } from './providers';
 
 export const metadata: Metadata = {
   title: 'ks-flow',
@@ -9,7 +10,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
-      <body className="bg-slate-950 text-slate-100">{children}</body>
+      <body className="bg-slate-950 text-slate-100">
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

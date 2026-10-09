@@ -12,6 +12,9 @@
 import PocketBase from 'pocketbase';
 import type { Config } from '../../config.js';
 import type {
+  BackupRunDoc,
+  BackupStore,
+  BackupUnitDoc,
   DbProvider,
   ProjectDoc,
   ReminderDoc,
@@ -26,6 +29,8 @@ const PROJECTS = 'projects';
 const WORK_UNITS = 'work_units';
 const SESSIONS = 'sessions';
 const REMINDERS = 'reminders';
+const BACKUP_UNITS = 'backup_units';
+const BACKUP_RUNS = 'backup_runs';
 
 function statusOf(e: unknown): number {
   return (e as { status?: number } | null)?.status ?? 0;
@@ -255,12 +260,80 @@ class PocketbaseSource implements SessionSource {
   }
 }
 
+/** The backup CLI's store: backup_units (the bucket cache) and backup_runs (sweep history). */
+class PocketbaseBackups implements BackupStore {
+  private pb: PocketBase;
+  private ids = new Map<string, string>();
+  constructor(cfg: Config) {
+    this.pb = client(cfg);
+  }
+
+  /** Insert-or-update the record `filter` finds (keyed by `uid`, like reminders). */
+  private async upsert(col: string, filter: string, body: Record<string, unknown>): Promise<void> {
+    const cacheKey = `${col}:${filter}`;
+    let id = this.ids.get(cacheKey);
+    if (!id) {
+      try {
+        id = (await this.pb.collection(col).getFirstListItem(filter)).id;
+        this.ids.set(cacheKey, id);
+      } catch (e) {
+        if (statusOf(e) !== 404) throw e; // unreachable is an error, not "absent"
+      }
+    }
+    if (id) {
+      try {
+        await this.pb.collection(col).update(id, body);
+        return;
+      } catch (e) {
+        if (statusOf(e) === 404) this.ids.delete(cacheKey);
+        else throw e;
+      }
+    }
+    const rec = await this.pb.collection(col).create(body);
+    this.ids.set(cacheKey, rec.id);
+  }
+
+  async getBackupUnits(projectId: string): Promise<BackupUnitDoc[]> {
+    const recs = await this.pb
+      .collection(BACKUP_UNITS)
+      .getFullList({ filter: this.pb.filter('projectKey={:k}', { k: projectId }) });
+    return recs.map((r) => r.data as BackupUnitDoc);
+  }
+
+  async upsertBackupUnit(projectId: string, doc: BackupUnitDoc): Promise<void> {
+    await this.upsert(BACKUP_UNITS, this.pb.filter('projectKey={:k} && uid={:u}', { k: projectId, u: doc.uid }), {
+      uid: doc.uid,
+      projectKey: projectId,
+      data: doc,
+    });
+  }
+
+  async getBackupRuns(projectId: string): Promise<BackupRunDoc[]> {
+    const recs = await this.pb.collection(BACKUP_RUNS).getFullList({
+      filter: this.pb.filter('projectKey={:k}', { k: projectId }),
+      sort: '-startedAt',
+    });
+    return recs.map((r) => r.data as BackupRunDoc);
+  }
+
+  async upsertBackupRun(projectId: string, doc: BackupRunDoc): Promise<void> {
+    await this.upsert(BACKUP_RUNS, this.pb.filter('uid={:u}', { u: doc.uid }), {
+      uid: doc.uid,
+      projectKey: projectId,
+      startedAt: doc.startedAt,
+      data: doc,
+    });
+  }
+}
+
 export function createPocketbaseProvider(cfg: Config): DbProvider {
   let writer: PocketbaseWriter | undefined;
   let source: PocketbaseSource | undefined;
+  let backups: PocketbaseBackups | undefined;
   return {
     name: 'pocketbase',
     writer: () => (writer ??= new PocketbaseWriter(cfg)),
     source: () => (source ??= new PocketbaseSource(cfg)),
+    backups: () => (backups ??= new PocketbaseBackups(cfg)),
   };
 }

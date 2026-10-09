@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { useStreamPanel } from '@/components/StreamPanel';
+import { SeeLogs, useStreams } from '@/components/StreamPanel';
 import type { WorkUnitDoc } from '@/lib/types';
 
 function relTime(iso: string | null): string {
@@ -21,10 +21,11 @@ interface BusyProc {
   isClaude: boolean;
 }
 
-// The bottom-right log panel lives in components/StreamPanel.tsx now, shared
-// with the backup/restore actions — one panel, one NDJSON reader. Remove's two
-// special cases map onto it: `warn` for "no command configured", and `custom`
-// for the "a live process is still in this worktree" confirm prompt.
+// Each Remove is a stream (components/StreamPanel.tsx) under `remove:<unitId>`,
+// with its own bottom-right panel. Remove's two special cases are states of that
+// stream: `warn` for "no command configured", and `custom` for the "a live
+// process is still in this worktree" confirm prompt. Hidden, it comes back
+// through See logs beside the button.
 
 /**
  * Worktrees whose work is finished (Linear status done/merged/closed) but whose
@@ -44,9 +45,16 @@ export function CompletedWorktrees({
   onRefresh?: () => void | Promise<void>;
 }) {
   const [removeCommand, setRemoveCommand] = useState<string | null>(null);
-  const [running, setRunning] = useState<string | null>(null); // unitId in flight
   const [removed, setRemoved] = useState<Set<string>>(new Set()); // optimistic hide
-  const { panel, setPanel, close: closePanel, runStream } = useStreamPanel();
+  // Each worktree's removal is its own stream: its checks, confirmation and
+  // output stay in its own panel, and survive a trip to another page.
+  const { get, show, run, dismiss } = useStreams();
+  const keyOf = (u: WorkUnitDoc): string => `remove:${u.unitId}`;
+  /** Running, or waiting on the kill-sessions confirmation. */
+  const isBusy = (u: WorkUnitDoc): boolean => {
+    const s = get(keyOf(u));
+    return Boolean(s && (s.isRunning || s.view.kind === 'custom'));
+  };
 
   useEffect(() => {
     fetch('/api/settings')
@@ -61,60 +69,53 @@ export function CompletedWorktrees({
   // first (only after the user confirmed). Updates the panel live + on exit.
   const doRemove = async (u: WorkUnitDoc, kill: boolean): Promise<void> => {
     if (!u.worktreeDir) return;
-    setRunning(u.unitId);
-    try {
-      if (kill) {
-        setPanel({
-          kind: 'running',
-          title: u.identifier,
-          output: 'killing sessions in worktree…\n',
-        });
-        const kRes = await fetch('/api/worktree-kill', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: u.worktreeDir }),
-        });
-        const k = await kRes.json().catch(() => ({ stillAlive: [] }));
-        if (Array.isArray(k.stillAlive) && k.stillAlive.length) {
-          setPanel({
-            kind: 'err',
-            title: u.identifier,
-            output: `could not kill pid(s) ${k.stillAlive.join(', ')} — remove aborted`,
-          });
-          return;
-        }
-      }
-
-      await runStream({
-        title: u.identifier,
-        url: '/api/run-command',
-        body: { path: u.worktreeDir, identifier: u.identifier, title: u.title },
-        successNote: '✓ removed',
-        onSuccess: async () => {
-          setRemoved((prev) => new Set(prev).add(u.unitId)); // optimistic hide
-          await onRefresh?.(); // re-pull the board + this section
-        },
-        // The route answers with JSON (not NDJSON) when no removal command is
-        // configured; that deserves a link to Settings, not a raw error line.
-        mapEarlyError: (payload) =>
-          (payload as { needsConfig?: boolean; error?: string })?.needsConfig
-            ? {
-                kind: 'warn',
-                title: 'No remove command',
-                msg: (payload as { error?: string }).error ?? 'Set a removal command in Settings.',
-                settingsLink: true,
-              }
-            : undefined,
+    const key = keyOf(u);
+    if (kill) {
+      show(key, { kind: 'running', title: u.identifier, output: 'killing sessions in worktree…\n' }, { isRunning: true });
+      const kRes = await fetch('/api/worktree-kill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: u.worktreeDir }),
       });
-    } finally {
-      setRunning(null);
+      const k = await kRes.json().catch(() => ({ stillAlive: [] }));
+      if (Array.isArray(k.stillAlive) && k.stillAlive.length) {
+        show(key, {
+          kind: 'err',
+          title: u.identifier,
+          output: `could not kill pid(s) ${k.stillAlive.join(', ')} — remove aborted`,
+        });
+        return;
+      }
     }
+
+    await run(key, {
+      title: u.identifier,
+      url: '/api/run-command',
+      body: { path: u.worktreeDir, identifier: u.identifier, title: u.title },
+      successNote: '✓ removed',
+      onSuccess: async () => {
+        setRemoved((prev) => new Set(prev).add(u.unitId)); // optimistic hide
+        await onRefresh?.(); // re-pull the board + this section
+      },
+      // The route answers with JSON (not NDJSON) when no removal command is
+      // configured; that deserves a link to Settings, not a raw error line.
+      mapEarlyError: (payload: unknown) =>
+        (payload as { needsConfig?: boolean; error?: string })?.needsConfig
+          ? {
+              kind: 'warn',
+              title: 'No remove command',
+              msg: (payload as { error?: string }).error ?? 'Set a removal command in Settings.',
+              settingsLink: true,
+            }
+          : undefined,
+    });
   };
 
   const onRemove = async (u: WorkUnitDoc): Promise<void> => {
-    if (!u.worktreeDir || running) return;
+    if (!u.worktreeDir || isBusy(u)) return;
+    const key = keyOf(u);
     if (removeCommand !== null && !removeCommand.trim()) {
-      setPanel({
+      show(key, {
         kind: 'warn',
         title: 'No remove command',
         msg: 'Set a removal command in Settings before removing a worktree.',
@@ -122,8 +123,7 @@ export function CompletedWorktrees({
       });
       return;
     }
-    setRunning(u.unitId);
-    setPanel({ kind: 'running', title: u.identifier, output: 'checking for live sessions…' });
+    show(key, { kind: 'running', title: u.identifier, output: 'checking for live sessions…' }, { isRunning: true });
     try {
       const busyRes = await fetch('/api/worktree-busy', {
         method: 'POST',
@@ -135,7 +135,7 @@ export function CompletedWorktrees({
         // Don't remove blindly — ask the user to approve killing the sessions.
         const procs: BusyProc[] = busy.processes ?? [];
         const claude = procs.some((p) => p.isClaude);
-        setPanel({
+        show(key, {
           kind: 'custom',
           title: u.identifier,
           body: (
@@ -161,7 +161,7 @@ export function CompletedWorktrees({
             <>
               <button
                 type="button"
-                onClick={closePanel}
+                onClick={() => dismiss(key)}
                 className="rounded bg-slate-800 px-3 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-700"
               >
                 Cancel
@@ -176,23 +176,21 @@ export function CompletedWorktrees({
             </>
           ),
         });
-        setRunning(null);
         return;
       }
     } catch {
-      setPanel({
+      show(key, {
         kind: 'err',
         title: u.identifier,
         output: 'Could not check for live sessions — is the board server still running?',
       });
-      setRunning(null);
       return;
     }
     // worktree is clear — remove without killing.
     await doRemove(u, false);
   };
 
-  if (visible.length === 0 && !panel) return null;
+  if (visible.length === 0) return null;
 
   return (
     <section className="mt-8 border-t border-slate-800 pt-5">
@@ -273,14 +271,17 @@ export function CompletedWorktrees({
                   </td>
                   <td className="px-3 py-2 text-slate-500">{relTime(u.lastActivity)}</td>
                   <td className="px-3 py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => onRemove(u)}
-                      disabled={running !== null || panel?.kind === 'custom'}
-                      className="rounded bg-red-950/60 px-2 py-0.5 text-[11px] font-medium text-red-300 hover:bg-red-900/70 disabled:opacity-50"
-                    >
-                      {running === u.unitId ? 'removing…' : 'Remove'}
-                    </button>
+                    <span className="inline-flex items-center gap-1">
+                      <SeeLogs streamKey={keyOf(u)} />
+                      <button
+                        type="button"
+                        onClick={() => onRemove(u)}
+                        disabled={isBusy(u)}
+                        className="rounded bg-red-950/60 px-2 py-0.5 text-[11px] font-medium text-red-300 hover:bg-red-900/70 disabled:opacity-50"
+                      >
+                        {get(keyOf(u))?.isRunning ? 'removing…' : 'Remove'}
+                      </button>
+                    </span>
                   </td>
                 </tr>
               ))}

@@ -22,7 +22,7 @@
 // objects make that impossible: pruning locally never deletes from the bucket.
 //
 // TRIGGER vs ACTION — these are deliberately different
-// TRIGGER: a session file whose size or mtime differs from the local index (see
+// TRIGGER: a session file whose size or mtime differs from the backup index (see
 // archive-index.ts). That is the only trigger; a lone state.yaml touch does
 // nothing. state.yaml changes are made from inside a session, so the session
 // file changes with them and triggers the unit anyway. That matters: workflow/
@@ -66,13 +66,15 @@ import {
   type GcsConfig,
 } from './archive-core.js';
 import {
+  loadArchiveIndex,
   needsUpload,
-  readArchiveIndex,
-  writeArchiveIndex,
+  safeId,
+  saveUnit,
   type ArchiveIndex,
   type ArchivedSession,
   type UnitArchive,
 } from './archive-index.js';
+import type { BackupStore, RunUpload } from './db/types.js';
 import { CLAUDE_PROJECTS_DIR, KS_TIME_DIR, encodeProjectDir } from './paths.js';
 import { parseStateYaml } from './stateyaml.js';
 import { listWorktrees } from './worktree.js';
@@ -98,9 +100,7 @@ export function timeLogPath(identifier: string): string {
   return join(KS_TIME_DIR, `${safeId(identifier)}.jsonl`);
 }
 
-export function safeId(identifier: string): string {
-  return identifier.replace(/[^A-Za-z0-9._-]/g, '_');
-}
+export { safeId };
 
 export function unitPrefix(gcs: GcsConfig, identifier: string): string {
   return [gcs.prefix, safeId(identifier)].filter(Boolean).join('/') + '/';
@@ -239,6 +239,23 @@ function findStateYamls(root: string, maxDepth = 5): string[] {
   return out;
 }
 
+/** Total bytes of the files under `dir`: a workflow folder's size before it is tarred and compressed. */
+function dirBytes(dir: string): number {
+  let total = 0;
+  for (const e of safeDirents(dir)) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) total += dirBytes(p);
+    else if (e.isFile()) {
+      try {
+        total += statSync(p).size;
+      } catch {
+        // vanished mid-walk
+      }
+    }
+  }
+  return total;
+}
+
 function realpathOr(p: string): string {
   try {
     return realpathSync(p);
@@ -304,6 +321,7 @@ export async function compressAndStamp(opts: {
   const tmp = join(tmpdir(), `ksflow-obj-${process.pid}-${randomUUID()}.zst`);
   try {
     await compressFile(file, tmp, zstdPath);
+    const compressedSize = statSync(tmp).size;
     await uploadFile(gcs, tmp, object, {
       srcSize: size,
       srcMtimeMs: mtimeMs,
@@ -313,6 +331,7 @@ export async function compressAndStamp(opts: {
     return {
       size,
       mtimeMs,
+      compressedSize,
       object: `gs://${gcs.bucket}/${object}`,
       uploadedAt: new Date().toISOString(),
     };
@@ -335,6 +354,10 @@ export interface SweepOpts {
   force?: boolean;
   dryRun?: boolean;
   log: (msg: string) => void;
+  /** Where the index lives. Null: the store is down and the run goes without
+   * one (only a `force` run can: it ignores the index anyway). */
+  store: BackupStore | null;
+  projectId: string;
 }
 
 export interface UnitSweepResult {
@@ -344,6 +367,8 @@ export interface UnitSweepResult {
   workflow: boolean;
   /** The time log went up this sweep. */
   timeLog: boolean;
+  /** Everything this unit put in the bucket this sweep, with source sizes (the run history lists them). */
+  uploads: RunUpload[];
   errors: string[];
   /** Nothing to do: no session file differs from what is already archived. */
   upToDate: boolean;
@@ -362,12 +387,12 @@ export interface SweepResult {
  * Upload every changed session file for each target, plus a refreshed
  * workflow.tar.zst for units that had one.
  *
- * The local index is written after EACH unit rather than once at the end, so an
+ * The index is written after EACH unit rather than once at the end, so an
  * interrupted sweep doesn't re-upload everything it already did.
  */
 export async function sweep(opts: SweepOpts): Promise<SweepResult> {
-  const { targets, gcs, zstdPath, sinceMs, force = false, dryRun = false, log } = opts;
-  const index = readArchiveIndex();
+  const { targets, gcs, zstdPath, sinceMs, force = false, dryRun = false, log, store, projectId } = opts;
+  const index: ArchiveIndex = store ? await loadArchiveIndex(store, projectId) : { units: {} };
   const results: UnitSweepResult[] = [];
   let uploadedCount = 0;
   let errorCount = 0;
@@ -379,6 +404,7 @@ export async function sweep(opts: SweepOpts): Promise<SweepResult> {
       skipped: 0,
       workflow: false,
       timeLog: false,
+      uploads: [],
       errors: [],
       upToDate: false,
       localSessions: 0,
@@ -491,6 +517,7 @@ export async function sweep(opts: SweepOpts): Promise<SweepResult> {
           transcriptDir: t.transcriptDir,
         });
         res.uploaded.push(rel);
+        res.uploads.push({ path: `transcript/${rel}`, kind: 'session', size, compressedSize: sessions[rel]?.compressedSize });
         uploadedCount++;
         log(`uploaded ${t.identifier}/${rel} (${size} B)`);
       } catch (e) {
@@ -525,6 +552,7 @@ export async function sweep(opts: SweepOpts): Promise<SweepResult> {
             uploadedAt: new Date().toISOString(),
           };
           res.workflow = true;
+          res.uploads.push({ path: 'workflow.tar.zst', kind: 'workflow', size: dirBytes(t.workflowDir), compressedSize: workflow.size });
           log(`refreshed ${t.identifier} workflow.tar.zst`);
         } catch (e) {
           const msg = (e as Error)?.message ?? String(e);
@@ -569,6 +597,7 @@ export async function sweep(opts: SweepOpts): Promise<SweepResult> {
             mtimeMs: timeLogStat.mtimeMs,
           });
           res.timeLog = true;
+          res.uploads.push({ path: TIME_LOG_OBJECT, kind: 'time-log', size: timeLogStat.size, compressedSize: timeLog.compressedSize });
           log(`uploaded ${t.identifier} time log (${timeLogStat.size} B)`);
         } catch (e) {
           const msg = (e as Error)?.message ?? String(e);
@@ -596,11 +625,11 @@ export async function sweep(opts: SweepOpts): Promise<SweepResult> {
           res.uploaded.length > 0 ? new Date().toISOString() : prev?.lastArchivedAt ?? '',
       };
       index.units[t.identifier] = unit;
-      persistIndex(index, log);
+      await persistUnit(store, projectId, unit, log);
 
-      // Per-unit manifest, uploaded alongside the data it describes. The local
-      // index is one file for the whole machine — lose it and every unit goes
-      // blind at once — whereas this travels WITH the unit: one manifest per
+      // Per-unit manifest, uploaded alongside the data it describes. The index
+      // lives in this machine's store — lose that and every unit goes blind at
+      // once — whereas this travels WITH the unit: one manifest per
       // worktree, owned by that worktree, readable straight from the console,
       // and enough to rebuild the index entry exactly. Object metadata can do
       // the same job but only via a full listing, and is easy to overlook.
@@ -613,27 +642,29 @@ export async function sweep(opts: SweepOpts): Promise<SweepResult> {
     results.push(res);
   }
 
-  if (!dryRun) {
-    index.lastSweepAt = new Date().toISOString();
-    persistIndex(index, log);
-  }
   return { units: results, uploadedCount, errorCount, dryRun };
 }
 
 /** The index is a CACHE of what was uploaded, so a failed write must never fail
  * the sweep: the objects are already in the bucket, and the removal hook aborts
- * a worktree deletion on any non-zero exit. Losing the index only costs a
+ * a worktree deletion on any non-zero exit. Losing an entry only costs a
  * redundant upload next run. */
-function persistIndex(index: ArchiveIndex, log: (msg: string) => void): void {
+async function persistUnit(
+  store: BackupStore | null,
+  projectId: string,
+  unit: UnitArchive,
+  log: (msg: string) => void,
+): Promise<void> {
+  if (!store) return;
   try {
-    writeArchiveIndex(index);
+    await saveUnit(store, projectId, unit);
   } catch (e) {
-    log(`WARNING: could not write the archive index — ${(e as Error)?.message ?? e}`);
+    log(`WARNING: could not record ${unit.identifier} in the backup index — ${(e as Error)?.message ?? e}`);
   }
 }
 
 /**
- * Rebuild the local index for one unit from the bucket.
+ * Rebuild the backup index entry for one unit from the bucket.
  *
  * The index is a cache, and losing it (new machine, cleared plugin data dir) used
  * to mean the board went blind and the next sweep re-uploaded everything. Since
@@ -747,7 +778,7 @@ export async function bucketUnits(gcs: GcsConfig): Promise<string[]> {
 }
 
 /**
- * Rebuild the whole local index from the bucket, for every unit found there.
+ * Rebuild the whole backup index (in the store) from the bucket, for every unit found there.
  *
  * Live worktrees supply their own transcript dir; units whose worktree is gone
  * fall back to the location stamped on their objects. Returns the number of
@@ -757,6 +788,8 @@ export async function reindexAll(
   projectPath: string | null,
   gcs: GcsConfig,
   log: (msg: string) => void,
+  store: BackupStore,
+  projectId: string,
 ): Promise<{ recovered: number; skipped: number }> {
   // Three sources for "where does this unit's transcript live", in order of
   // authority: a live worktree, the completed-unit record in the main checkout's
@@ -771,7 +804,6 @@ export async function reindexAll(
     for (const t of discoverTargets(projectPath)) known.set(t.identifier, t); // live wins
   }
 
-  const index = readArchiveIndex();
   let recovered = 0;
   let skipped = 0;
   for (const id of await bucketUnits(gcs)) {
@@ -780,10 +812,9 @@ export async function reindexAll(
       skipped++;
       continue;
     }
-    index.units[id] = unit;
+    await saveUnit(store, projectId, unit);
     recovered++;
   }
-  writeArchiveIndex(index);
   return { recovered, skipped };
 }
 
@@ -819,10 +850,13 @@ export interface UnitStatus {
 export async function unitStatuses(
   projectPath: string | null,
   gcs: GcsConfig,
+  store: BackupStore | null,
+  projectId: string,
 ): Promise<UnitStatus[]> {
   const root = gcs.prefix ? `${gcs.prefix}/` : '';
   const objects = await listObjects(gcs, root);
-  const index = readArchiveIndex();
+  // The index only adds lastArchivedAt and a fallback location: status still answers without it.
+  const index: ArchiveIndex = store ? await loadArchiveIndex(store, projectId).catch(() => ({ units: {} })) : { units: {} };
 
   // Where each unit's transcripts live: live worktree, else completed-unit
   // record, else the location stamped on its objects, else the index.

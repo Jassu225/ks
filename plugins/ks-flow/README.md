@@ -102,7 +102,7 @@ firebase emulators:start --only firestore
 | `ks-flow status` | Status of all services (daemon, PocketBase, board UI). |
 | `ks-flow daemon` | Run the ingester in the foreground (debug). |
 | `ks-flow set-project <path>` | Re-point the tracked project (rewrites `project.conf`, re-backfills). |
-| `ks-flow backup [target] [options]` | **The one uploader.** Targets: nothing = every live worktree; `--unit <id>`; `--worktree <path> [--identifier <id>]` (one worktree, live or about to be deleted); `--completed` (units whose worktree is gone). Options: `--since-hours <n>`, `--force`, `--dry-run`, `--json`, `--reindex` (upload nothing; rebuild `archive-index.json` from the bucket). |
+| `ks-flow backup [target] [options]` | **The one uploader.** Targets: nothing = every live worktree; `--unit <id>`; `--worktree <path> [--identifier <id>]` (one worktree, live or about to be deleted); `--completed` (units whose worktree is gone). Options: `--since-hours <n>`, `--force`, `--dry-run`, `--json`, `--reindex` (upload nothing; rebuild the store's backup index from the bucket), `--runs` (upload nothing; print the run history), `--trigger <daily\|manual\|unit\|removal\|completed>` (recorded with the run; inferred from the target when left out). |
 | `ks-flow restore --unit <id> [--overwrite] [--dry-run] [--json]` | Restore a unit's backed-up transcripts into `~/.claude/projects/<encoded>`. Local files win unless `--overwrite`. Reads per-file objects, falling back to a legacy `transcript.tar.zst`. |
 | `ks-flow archive <worktree> [id]` | Familiar alias — forwards to `backup --worktree … --force`. |
 | `ks-flow backfill-archive [--dry-run] [--force]` | Familiar alias — forwards to `backup --completed`. |
@@ -153,7 +153,7 @@ Each card carries quick links + live state:
 - **`⤓ restore N`** — appears **automatically** whenever the bucket holds session
   files this machine no longer has, which is the pruned-at-30-days case the
   backup exists for. Restoring only fills in what is missing; a local transcript
-  is never overwritten. Both stream into the shared bottom-right log panel.
+  is never overwritten. Each streams into its own bottom-right log panel.
 
 The full parsed `state.yaml` is replicated onto each work-unit (a `state` field),
 so any field can be surfaced on the board without new daemon plumbing.
@@ -237,7 +237,7 @@ deleted un-archived. Fix the config (or disable archiving) and retry.
 covers units whose worktree has already been removed — their state.yaml is in the
 main checkout's `workflow/` tree and their transcript dir survives under
 `~/.claude/projects/` after `git worktree remove`. Re-runnable and incremental:
-the local index means it uploads only what is missing, `--force` re-uploads
+the backup index means it uploads only what is missing, `--force` re-uploads
 everything, `--dry-run` previews.
 
 ### Transcript backup · end of day
@@ -253,6 +253,24 @@ that changed in the last 24h, for every unit reachable through a **live git
 worktree** of the tracked project. It runs as a child process, and catches up on
 wake or after a restart if a day was missed, so a Mac asleep through the window
 does not silently skip a day.
+
+**Run history (board → ☁ Backups).** Every real sweep — the daily one, the
+board's buttons, a worktree removal, a run by hand — is one record in the store
+(PocketBase `backup_runs`, or Firestore `projects/{id}/backupRuns`): when it
+started, what started it, its outcome, how many units it checked and how many
+were already current (nothing to upload, no errors), and per unit every object
+it uploaded — each with its uncompressed and uploaded (zstd) size, totalled per
+run — and every error. It is written as the run starts and completed as
+it ends, so a run that died mid-way still shows, as *interrupted*. The page
+lists the runs; clicking one opens what it uploaded. The daemon's once-a-day
+check reads the newest finished run to decide whether today's sweep has
+happened. Status, reindex and dry runs upload nothing and are not recorded.
+
+**The store is required.** The backup index (below) lives in the store too, so a
+sweep refuses to run when PocketBase is down rather than re-uploading every
+unit it can no longer see as backed up. PocketBase runs with the daemon. The one
+exception is a `--force` run (a worktree removal): it ignores the index anyway,
+and failing it would block the worktree's deletion; it goes ahead unrecorded.
 
 **One object per session file, not a tarball:**
 
@@ -290,7 +308,7 @@ the tree is walked rather than globbed at a fixed depth. Keying this way matches
 the removal path, so both write under the same per-unit prefix.
 
 **The trigger and the action are different, deliberately.** The trigger is a
-session file that differs from the local index — a lone `state.yaml` touch does
+session file that differs from the backup index — a lone `state.yaml` touch does
 nothing, since `state.yaml` changes are made from inside a session, whose file
 changes with them. That matters, because `workflow/` is gitignored: the
 `workflow.tar.zst` refreshed then is its only copy off this machine. The
@@ -332,13 +350,25 @@ again.
 without waiting for the schedule (useful before shutting down, or before leaving
 a session for a month). Each card's `☁` backs up that one unit.
 
-Both stream their output into the same bottom-right log panel the worktree Remove
-action uses — a backup spends real time in zstd and in the upload, and a button
+Both stream their output into a bottom-right log panel, as the worktree Remove
+action does — a backup spends real time in zstd and in the upload, and a button
 with no feedback is indistinguishable from a broken one (a no-op click looked
-exactly like a failure during development). The panel, its state machine, and the
-NDJSON reader live in `web/components/StreamPanel.tsx`; Remove, backup, and
-restore all drive it, so only one panel can ever be on screen. Routes emit the
-`{ type: 'stdout' | 'stderr' | 'exit' }` line protocol via `web/lib/streamproc.ts`.
+exactly like a failure during development).
+
+**Action streams** (`web/components/StreamPanel.tsx`). Every long-running action
+is a *stream* under a key it chooses — `backup:all`, `backup:<id>`,
+`restore:<id>`, `remove:<id>` (`web/lib/backupStreams.ts` holds the backup
+ones) — with its own panel, stacked bottom-right, so two actions at once each
+keep their own output and outcome. The provider sits in the root layout
+(`web/app/providers.tsx`), so a stream outlives a page change: start a backup on
+the board, open ☁ Backups, and it is still streaming there. A panel's ✕ only
+hides it; `<SeeLogs streamKey=…>`, rendered beside the button that started the
+action, brings it back (pulsing while it runs). *clear* forgets a finished
+stream. Each button is disabled by its own stream (`useStreams().anyRunning`),
+not by one board-wide flag. A backup stream also answers to its run's id — the
+CLI prints `run <uid> started` — so the Backups page's row for that run shows
+See logs too. Routes emit the `{ type: 'stdout' | 'stderr' | 'exit' }` line
+protocol via `web/lib/streamproc.ts`.
 
 **Settings** (`board-settings.json`, alongside `gcsArchive`):
 
@@ -363,9 +393,11 @@ GCS — an object's `updated` is when it was uploaded and its `size` is the
 
 Bookkeeping therefore lives in three places, most convenient first:
 
-1. **`archive-index.json`** in the plugin data dir, next to `checkpoints.json`.
-   Local churn about local files, so it never costs a DB write, and the board
-   reads it instead of listing the bucket per card.
+1. **The backup index** in the store (PocketBase `backup_units`, or Firestore
+   `projects/{id}/backupUnits`): one doc per unit, the size/mtime/object of each
+   session file it uploaded, its workflow and its time log. It used to be
+   `archive-index.json` in the plugin data dir; the first sweep after the move
+   imports that file and renames it `archive-index.json.imported`.
 2. **`<identifier>/manifest.json`** in the bucket, written by the sweep that
    uploaded the data: the same record, but travelling *with* the unit rather than
    in one machine-wide file, and readable straight from the GCS console.
@@ -373,8 +405,8 @@ Bookkeeping therefore lives in three places, most convenient first:
    `srcTranscriptDir` — stamped on each session object, so even a unit with no
    manifest can be reconstructed from a listing.
 
-So no, losing the index is not fatal: `ks-flow backup --reindex` rebuilds it from
-the bucket. It prefers a manifest, falls back to object metadata, and resolves
+So no, losing the index is not fatal: `ks-flow backup --reindex` rebuilds it in
+the store from the bucket. It prefers a manifest, falls back to object metadata, and resolves
 "where do these transcripts belong" from a live worktree, else the completed-unit
 record in the main checkout's `workflow/` tree, else the stamped location. On the
 first real bucket that recovered **40 of 40 units, 0 skipped** — including units
@@ -436,7 +468,8 @@ Each row has a **Remove** button:
    terminal. Placeholders `{{path}}` / `{{identifier}}` / `{{title}}` are
    substituted (also exposed as `$KS_WORKTREE` / `$KS_IDENTIFIER` / `$KS_TITLE`),
    and `{{path}}` is that row's worktree.
-4. **Streams output.** stdout/stderr stream live into a bottom-right panel; on
+4. **Streams output.** stdout/stderr stream live into that worktree's own
+   bottom-right panel (hide it, and See logs beside Remove brings it back); on
    success the row is hidden and the board refreshes, on failure the error
    stays in the panel.
 

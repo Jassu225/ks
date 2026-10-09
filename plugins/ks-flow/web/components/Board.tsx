@@ -2,7 +2,8 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { BackupStatusProvider, useBackupStatus } from '@/lib/backupStatus';
-import { StreamPanelProvider, useStreamPanel } from '@/components/StreamPanel';
+import { SeeLogs, useStreams } from '@/components/StreamPanel';
+import { BACKUP_ALL, backupRunAliases } from '@/lib/backupStreams';
 import { useBoard } from '@/lib/useBoard';
 import { useNow } from '@/lib/useNow';
 import type { BoardConfig, SessionDoc, WorkUnitDoc } from '@/lib/types';
@@ -37,17 +38,21 @@ const DONE_STATUSES = new Set([
  */
 function BackupNowButton() {
   const { lastSweepAt, refresh } = useBackupStatus();
-  const { runStream, busy } = useStreamPanel();
+  const { run, anyRunning } = useStreams();
+  // Any backup running (this one or a card's) holds the bucket: the CLI would refuse a second.
+  const busy = anyRunning('backup:');
 
   return (
+    <span className="inline-flex items-center gap-1">
     <button
       type="button"
       onClick={() =>
-        void runStream({
+        void run(BACKUP_ALL, {
           title: 'Backing up all worktrees',
           url: '/api/transcript-backup',
           successNote: '✓ backup complete',
           onSuccess: refresh,
+          aliasesFrom: backupRunAliases,
         })
       }
       disabled={busy}
@@ -60,6 +65,8 @@ function BackupNowButton() {
       <span className={busy ? 'animate-pulse' : ''}>☁</span>
       <span>{busy ? 'backing up…' : 'backup'}</span>
     </button>
+    <SeeLogs streamKey={BACKUP_ALL} />
+    </span>
   );
 }
 
@@ -187,8 +194,8 @@ export function Board({ config }: { config: BoardConfig }) {
 
   return (
     // Provider spans header + cards: the header's "back up now" and each card's
-    // restore badge read the same single status poll.
-    <StreamPanelProvider>
+    // restore badge read the same single status poll. (The action streams live
+    // above every page, in app/providers.tsx.)
     <BackupStatusProvider>
     <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
       <header className="flex items-center justify-between border-b border-slate-800 bg-slate-900 px-5 py-3">
@@ -252,6 +259,13 @@ export function Board({ config }: { config: BoardConfig }) {
               📝
             </Link>
           )}
+          <Link
+            href="/backups"
+            className="text-slate-400 hover:text-slate-200"
+            title="Backup runs"
+          >
+            ☁
+          </Link>
           <Link
             href="/processes"
             className="text-slate-400 hover:text-slate-200"
@@ -327,6 +341,5 @@ export function Board({ config }: { config: BoardConfig }) {
       </main>
     </div>
     </BackupStatusProvider>
-    </StreamPanelProvider>
   );
 }

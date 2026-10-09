@@ -30,7 +30,7 @@
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { dataDir, readProjectConf } from './lib/config.js';
+import { dataDir, loadConfig, readProjectConf } from './lib/config.js';
 import { loadEnvFile } from './lib/envfile.js';
 import {
   copyObject,
@@ -54,7 +54,8 @@ import {
   unitPrefix,
   type UnitTarget,
 } from './lib/transcript-archive.js';
-import { readArchiveIndex, writeArchiveIndex, type ArchivedSession, type UnitArchive } from './lib/archive-index.js';
+import { saveUnit, type ArchivedSession, type UnitArchive } from './lib/archive-index.js';
+import { createProvider } from './lib/db/index.js';
 
 function log(m: string): void {
   process.stdout.write(`[ks-flow migrate] ${m}\n`);
@@ -187,7 +188,9 @@ async function main(): Promise<void> {
   if (!args.skipBackup) log(`safety copy → gs://${config.bucket}/${args.backupPrefix}/<unit>/…`);
 
   // ── run ───────────────────────────────────────────────────────────────────
-  const index = readArchiveIndex();
+  // The backup index lives in the store; a converted unit is recorded there.
+  const store = createProvider(loadConfig()).backups();
+  const projectId = conf?.projectId ?? '';
   const outcomes: UnitOutcome[] = [];
 
   for (const plan of plans) {
@@ -284,15 +287,16 @@ async function main(): Promise<void> {
             );
           }
           await uploadJson(config, `${prefix}${MANIFEST_NAME}`, unit);
-          index.units[plan.identifier] = unit;
-          // The local index is a cache; the bucket already has the data and the
+
+          // The backup index is a cache; the bucket already has the data and the
           // manifest. Failing the unit over an unwritable cache would report a
           // successful conversion as a failure (and it did, on a read-only data
           // dir) — and a re-run would then redo every upload.
           try {
-            writeArchiveIndex(index);
+            if (!projectId) throw new Error('no project.conf');
+            await saveUnit(store, projectId, unit);
           } catch (e) {
-            err(`${plan.identifier}: converted, but could not update the local index — ${(e as Error).message}`);
+            err(`${plan.identifier}: converted, but could not update the backup index — ${(e as Error).message}`);
           }
         }
 

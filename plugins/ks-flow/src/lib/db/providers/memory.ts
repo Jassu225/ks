@@ -10,6 +10,9 @@ import { dirname } from 'node:path';
 import { DATA_DIR } from '../../paths.js';
 import { join as pjoin } from 'node:path';
 import type {
+  BackupRunDoc,
+  BackupStore,
+  BackupUnitDoc,
   DbProvider,
   ProjectDoc,
   ReminderDoc,
@@ -98,7 +101,26 @@ const noopSource: SessionSource = {
   },
 };
 
+/** Backups held for the life of the process (a dry run's sweep reads its own writes). */
+class MemoryBackups implements BackupStore {
+  units = new Map<string, BackupUnitDoc>();
+  runs = new Map<string, BackupRunDoc>();
+  async getBackupUnits(): Promise<BackupUnitDoc[]> {
+    return [...this.units.values()];
+  }
+  async upsertBackupUnit(_p: string, doc: BackupUnitDoc): Promise<void> {
+    this.units.set(doc.uid, doc);
+  }
+  async getBackupRuns(): Promise<BackupRunDoc[]> {
+    return [...this.runs.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
+  async upsertBackupRun(_p: string, doc: BackupRunDoc): Promise<void> {
+    this.runs.set(doc.uid, doc);
+  }
+}
+
 export function createMemoryProvider(): DbProvider {
   const writer = new MemoryWriter();
-  return { name: 'memory', writer: () => writer, source: () => noopSource };
+  const backups = new MemoryBackups();
+  return { name: 'memory', writer: () => writer, source: () => noopSource, backups: () => backups };
 }

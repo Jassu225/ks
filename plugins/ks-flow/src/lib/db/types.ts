@@ -149,6 +149,96 @@ export interface ReminderDoc {
   createdAt: string;
 }
 
+// ── transcript backups ──────────────────────────────────────────────────────
+// What the GCS backup has uploaded (one doc per unit) and the history of its
+// sweeps (one doc per run). Written and read by the backup CLI
+// (transcript-backup.ts), which the daemon, the board and the removal hook all
+// run. Ids are `uid`, like reminders.
+
+/** One uploaded session JSONL (or the time log), keyed in `sessions` by its
+ * path relative to the transcript dir. */
+export interface ArchivedSession {
+  size: number;
+  mtimeMs: number;
+  /** Bytes stored in the bucket (zstd); absent on records written before it was kept. */
+  compressedSize?: number;
+  object: string; // gs:// URI, for the UI and for restore
+  uploadedAt: string;
+}
+
+/** Everything the bucket holds for one unit, as the sweep last left it. A
+ * CACHE of the bucket: each sweep reconciles it against a listing, and
+ * `--reindex` rebuilds it from one. */
+export interface BackupUnitDoc {
+  uid: string; // object-name-safe identifier (safeId) — doc id
+  identifier: string;
+  worktreePath: string;
+  transcriptDir: string;
+  sessions: Record<string, ArchivedSession>;
+  /** Refreshed whenever this unit had a session upload — the two always travel
+   * together, so a restore gets the workflow state that matches the transcript. */
+  workflow: { object: string; size: number; uploadedAt: string } | null;
+  /** The unit's time log (the ks plugin's ~/.claude/ks-time/<identifier>.jsonl). */
+  timeLog?: ArchivedSession | null;
+  lastArchivedAt: string;
+}
+
+/** What started a sweep. */
+export type BackupTrigger = 'daily' | 'manual' | 'unit' | 'removal' | 'completed';
+
+/** One object a run put in the bucket. */
+export interface RunUpload {
+  /** `transcript/<id>.jsonl`, `workflow.tar.zst` or `time-log.jsonl.zst`, under the unit. */
+  path: string;
+  kind: 'session' | 'workflow' | 'time-log';
+  /** Uncompressed bytes: the source file, or a workflow folder's files together. */
+  size: number;
+  /** Bytes uploaded (zstd). Absent on runs recorded before it was kept. */
+  compressedSize?: number;
+}
+
+/** A unit a run did something for: uploaded or failed. Units already current are only counted. */
+export interface RunUnit {
+  identifier: string;
+  uploads: RunUpload[];
+  errors: string[];
+}
+
+/** One sweep. Written as it starts; the end fields arrive when it finishes. */
+export interface BackupRunDoc {
+  uid: string; // run id — doc id
+  startedAt: string;
+  trigger: BackupTrigger;
+  /** What the run was pointed at: `all live worktrees`, a unit id, a worktree path, `completed units`. */
+  scope: string;
+  /** The sweep's process, to tell a run still going from one that died. */
+  pid: number;
+  endedAt?: string;
+  /** ok: nothing failed; partial: some uploads failed; failed: it could not do its job. */
+  outcome?: 'ok' | 'partial' | 'failed';
+  error?: string;
+  /** Units the run looked at: one per target worktree. */
+  unitsChecked?: number;
+  /** Of those, units with nothing to upload (and no errors): already backed up. */
+  unitsCurrent?: number;
+  uploadedCount?: number;
+  errorCount?: number;
+  /** Uncompressed bytes of everything uploaded. */
+  bytesSource?: number;
+  /** Compressed bytes actually uploaded. */
+  bytesUploaded?: number;
+  units?: RunUnit[];
+}
+
+/** The backup CLI's side. */
+export interface BackupStore {
+  getBackupUnits(projectId: string): Promise<BackupUnitDoc[]>;
+  upsertBackupUnit(projectId: string, doc: BackupUnitDoc): Promise<void>;
+  /** Newest first. */
+  getBackupRuns(projectId: string): Promise<BackupRunDoc[]>;
+  upsertBackupRun(projectId: string, doc: BackupRunDoc): Promise<void>;
+}
+
 /** Daemon (Node) side. */
 export interface SessionWriter {
   upsertSession(projectId: string, doc: SessionDoc): Promise<void>;
@@ -187,4 +277,5 @@ export interface DbProvider {
   name: string;
   writer(): SessionWriter;
   source(): SessionSource;
+  backups(): BackupStore;
 }

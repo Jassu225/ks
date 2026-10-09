@@ -22,7 +22,7 @@ import { loadConfig, readProjectConf } from './lib/config.js';
 import { createProvider } from './lib/db/index.js';
 import type { ReminderDoc, SessionDoc, SessionWriter, WorkUnitDoc } from './lib/db/types.js';
 import { backupSettings, reminderSettings } from './lib/boardsettings.js';
-import { readArchiveIndex } from './lib/archive-index.js';
+import { isFullSweep, listRuns, type BackupRun } from './lib/backup-runs.js';
 import { notify, terminalNotifierAvailable } from './lib/notify.js';
 import {
   addOverlay,
@@ -851,8 +851,8 @@ function startWatchers(): void {
 
   // End-of-day transcript backup: a 60s poll that fires the sweep at most once
   // per day (also catching up after sleep). The check itself is a settings read
-  // plus one small JSON read.
-  setInterval(backupTick, 60_000);
+  // plus, until today's sweep has run, one small store read.
+  setInterval(() => void backupTick(), 60_000);
 
   // Daily log rotation: roll events.jsonl + daemon.log at the midnight boundary,
   // keeping the last 30 days of each. 60s granularity is plenty for a day flip.
@@ -888,31 +888,51 @@ function backupScriptPath(): string {
   return join(dirname(fileURLToPath(import.meta.url)), 'transcript-backup.js');
 }
 
-function backupTick(): void {
+/** The backup run history; null when the store cannot be read. */
+async function backupRuns(): Promise<BackupRun[] | null> {
+  try {
+    return await listRuns(provider.backups(), projectId);
+  } catch {
+    return null; // store down: the sweep it would start reports that itself
+  }
+}
+
+let backupChecking = false;
+
+async function backupTick(): Promise<void> {
   const s = backupSettings();
-  if (!s.enabled || backupRunning) return;
+  if (!s.enabled || backupRunning || backupChecking) return;
 
   const now = new Date();
   const today = dayStr();
   // Once per calendar day at most, regardless of how the trigger fired.
   if (backupLastAttemptDay === today) return;
 
-  const index = readArchiveIndex();
-  const lastMs = index.lastSweepAt ? Date.parse(index.lastSweepAt) : NaN;
+  backupChecking = true;
+  const runs = await backupRuns().finally(() => {
+    backupChecking = false;
+  });
+  // Any sweep still going (a "Back up now", a removal) owns the bucket and the
+  // index for now: wait for it rather than start a second one beside it.
+  if (runs?.some((r) => r.status === 'running')) return;
+  // Today's sweep is any full sweep that started today and did its job — the
+  // daily one or a "Back up now". One card's backup is not the project's.
+  const fullSweeps = (runs ?? []).filter((r) => isFullSweep(r) && (r.status === 'ok' || r.status === 'partial'));
+  const lastSweptToday = fullSweeps.some((r) => dayStr(new Date(r.startedAt)) === today);
+  if (lastSweptToday) return;
+  const lastMs = fullSweeps.length ? Math.max(...fullSweeps.map((r) => Date.parse(r.startedAt))) : NaN;
   const dueByClock =
     now.getHours() > s.hour || (now.getHours() === s.hour && now.getMinutes() >= s.minute);
   // Catch-up: a Mac asleep through the window would otherwise skip the day
   // entirely, which is exactly when transcripts age past the cutoff unwatched.
   const overdue = !Number.isFinite(lastMs) || Date.now() - lastMs >= 86_400_000;
-  const lastSweptToday = Number.isFinite(lastMs) && dayStr(new Date(lastMs)) === today;
-  if (lastSweptToday) return;
   if (!dueByClock && !overdue) return;
 
   backupRunning = true;
   backupLastAttemptDay = today;
   const script = backupScriptPath();
   log(`transcript backup sweep starting (window ${s.sinceHours}h)`);
-  const child = spawn(process.execPath, [script, '--since-hours', String(s.sinceHours)], {
+  const child = spawn(process.execPath, [script, '--since-hours', String(s.sinceHours), '--trigger', 'daily'], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let tail = '';

@@ -7,11 +7,9 @@
 //        progress live. A backup can take minutes on a long transcript, and a
 //        button that just sits there looks broken.
 //
-// Status is answered from the LOCAL index (archive-index.json) plus a stat of
-// each transcript dir — never by listing the bucket, which would be a network
-// round-trip per card on every board refresh. The index is a cache, so the
-// numbers are "what the last sweep uploaded", which is exactly what the board
-// needs to decide whether to offer Restore.
+// Status comes from the CLI (`transcript-backup --status`, below), which lists
+// the bucket once per call and reads the backup index and run history from the
+// store; `lastSweepAt` is when the last sweep finished.
 //
 // The work itself is delegated to dist/transcript-backup.js (the same CLI the
 // daemon's end-of-day sweep runs) so there is one implementation of the upload
@@ -46,8 +44,8 @@ function readJson<T>(file: string, fallback: T): T {
  *
  * Two reasons. The board has no GCS client — it is a separate npm package — and
  * status must be derived from the BUCKET, because a unit archived before the
- * local index existed (or on another machine, or after the data dir was cleared)
- * must still offer a Restore. Reading only the local index meant the cards with
+ * backup index existed (or on another machine, or after the store was cleared)
+ * must still offer a Restore. Reading only the backup index meant the cards with
  * the most to recover showed nothing at all.
  *
  * Cached briefly so several open tabs and the 60s client poll share one listing.
@@ -68,6 +66,7 @@ interface UnitStatus {
 interface StatusPayload {
   ok: boolean;
   units: UnitStatus[];
+  lastSweepAt: string | null;
   error?: string;
 }
 
@@ -79,7 +78,7 @@ async function readStatus(): Promise<StatusPayload> {
 
   const script = join(dataDir(), 'daemon', 'dist', 'transcript-backup.js');
   if (!existsSync(script)) {
-    return { ok: false, units: [], error: `backup script not found at ${script}` };
+    return { ok: false, units: [], lastSweepAt: null, error: `backup script not found at ${script}` };
   }
   const payload = await new Promise<StatusPayload>((resolve) => {
     execFile(
@@ -88,15 +87,15 @@ async function readStatus(): Promise<StatusPayload> {
       { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (!stdout) {
-          resolve({ ok: false, units: [], error: stderr.trim() || err?.message || 'no output' });
+          resolve({ ok: false, units: [], lastSweepAt: null, error: stderr.trim() || err?.message || 'no output' });
           return;
         }
         try {
           const lines = stdout.trim().split('\n');
-          const parsed = JSON.parse(lines[lines.length - 1]) as { units?: UnitStatus[] };
-          resolve({ ok: true, units: parsed.units ?? [] });
+          const parsed = JSON.parse(lines[lines.length - 1]) as { units?: UnitStatus[]; lastSweepAt?: string | null };
+          resolve({ ok: true, units: parsed.units ?? [], lastSweepAt: parsed.lastSweepAt ?? null });
         } catch {
-          resolve({ ok: false, units: [], error: stdout.slice(-500) });
+          resolve({ ok: false, units: [], lastSweepAt: null, error: stdout.slice(-500) });
         }
       },
     );
@@ -109,17 +108,7 @@ export async function GET(req: Request): Promise<NextResponse> {
   const wanted = new URL(req.url).searchParams.get('unit');
   const status = await readStatus();
   const units = wanted ? status.units.filter((u) => u.identifier === wanted) : status.units;
-  return NextResponse.json({ ...status, units, lastSweepAt: lastSweepAt() });
-}
-
-/** The one thing still worth reading locally: when this machine last swept. */
-function lastSweepAt(): string | null {
-  try {
-    const raw = readFileSync(join(dataDir(), 'archive-index.json'), 'utf8');
-    return (JSON.parse(raw) as { lastSweepAt?: string }).lastSweepAt ?? null;
-  } catch {
-    return null;
-  }
+  return NextResponse.json({ ...status, units });
 }
 
 export async function POST(req: Request): Promise<NextResponse> {

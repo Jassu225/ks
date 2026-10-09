@@ -2,7 +2,8 @@
 import { useState } from 'react';
 import type { ReminderDoc, SessionDoc, WorkUnitDoc } from '@/lib/types';
 import { useBackupStatus } from '@/lib/backupStatus';
-import { useStreamPanel } from '@/components/StreamPanel';
+import { SeeLogs, useStreams } from '@/components/StreamPanel';
+import { backupKey, backupRunAliases, restoreKey } from '@/lib/backupStreams';
 
 // A session counts as "active" (glowing border) if it wrote within this window.
 // Derived client-side off a ticking clock (passed down from the board) so the
@@ -170,7 +171,11 @@ function ReminderControls({ unitId, reminders }: { unitId: string; reminders: Re
  */
 function TranscriptBackup({ unitId }: { unitId: string }) {
   const { status, refresh } = useBackupStatus(unitId);
-  const { runStream, busy } = useStreamPanel();
+  const { run, anyRunning } = useStreams();
+  // A backup anywhere (this card's or the whole project's) holds the bucket; a
+  // restore only this card's transcripts.
+  const isBackingUp = anyRunning('backup:');
+  const isRestoring = anyRunning(restoreKey(unitId));
 
   // Output goes to the shared bottom-right log panel — the same one Remove uses
   // — because a backup is not instant: a long transcript spends real time in
@@ -178,18 +183,19 @@ function TranscriptBackup({ unitId }: { unitId: string }) {
   // did: a no-op click looked identical to a failure).
   const backup = (e: React.MouseEvent): void => {
     e.stopPropagation();
-    void runStream({
+    void run(backupKey(unitId), {
       title: `Backing up ${unitId}`,
       url: '/api/transcript-backup',
       body: { unit: unitId },
       successNote: '✓ backup complete',
       onSuccess: refresh,
+      aliasesFrom: backupRunAliases,
     });
   };
 
   const restore = (e: React.MouseEvent): void => {
     e.stopPropagation();
-    void runStream({
+    void run(restoreKey(unitId), {
       title: `Restoring ${unitId}`,
       url: '/api/transcript-restore',
       body: { unit: unitId },
@@ -211,7 +217,7 @@ function TranscriptBackup({ unitId }: { unitId: string }) {
       <button
         type="button"
         onClick={backup}
-        disabled={busy}
+        disabled={isBackingUp}
         title={
           pending > 0
             ? `${pending} session file(s) on disk are new or have grown since their last ` +
@@ -227,6 +233,7 @@ function TranscriptBackup({ unitId }: { unitId: string }) {
       >
         ☁ backup{pending > 0 ? ` ${pending}` : ''}
       </button>
+      <SeeLogs streamKey={backupKey(unitId)} />
       {/* Restore appears on its own the moment the bucket holds sessions this
           machine no longer has — that is the whole point of the backup, so it
           should never need hunting for. `legacyOnly` units have a pre-migration
@@ -236,7 +243,7 @@ function TranscriptBackup({ unitId }: { unitId: string }) {
         <button
           type="button"
           onClick={restore}
-          disabled={busy}
+          disabled={isRestoring}
           title={
             status.missingCount > 0
               ? `${status.missingCount} backed-up session file(s) are no longer on disk ` +
@@ -250,6 +257,8 @@ function TranscriptBackup({ unitId }: { unitId: string }) {
           ⤓ restore{status.missingCount > 0 ? ` ${status.missingCount}` : ''}
         </button>
       )}
+      {/* Outside the condition: a finished restore removes its own button, not its log. */}
+      <SeeLogs streamKey={restoreKey(unitId)} />
     </span>
   );
 }

@@ -1,25 +1,22 @@
 'use client';
-// components/StreamPanel.tsx — the bottom-right streaming log panel, shared.
+// components/StreamPanel.tsx — live output of the board's long-running actions.
 //
-// It started life inside CompletedWorktrees for the Remove action. Backup and
-// restore need exactly the same thing — "something is happening, here is the
-// output" — so the panel, its state machine, and the NDJSON reader live here
-// once. One provider means one panel can be on screen at a time, which is the
-// point: two overlapping fixed panels in the same corner would be worse than no
-// panel at all.
+// An action (back up, restore, remove a worktree) is a STREAM, kept under a key
+// the action chooses: `backup:all`, `backup:KAR-123`, `restore:KAR-123`,
+// `remove:KAR-123`. Each stream has its own panel, stacked bottom-right, so two
+// actions at once each keep their own output and outcome instead of
+// overwriting one shared panel.
+//
+// The provider sits in the root layout (app/providers.tsx), so streams outlive
+// a page change: start a backup on the board, open /backups, and it is still
+// streaming. A panel's ✕ only hides it; the stream stays, and <SeeLogs> next to
+// the action that started it brings it back. A stream lasts until it is
+// dismissed, the same action runs again, or the page is reloaded.
 //
 // Server routes speak the same NDJSON line protocol as /api/run-command:
 //   { type: 'stdout' | 'stderr', data: string }   … appended live
 //   { type: 'exit', code: number }                … terminal
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 
 export type PanelState =
@@ -29,6 +26,17 @@ export type PanelState =
   | { kind: 'warn'; title: string; msg: string; settingsLink?: boolean }
   /** Caller-supplied body/actions — e.g. Remove's "kill these processes?" list. */
   | { kind: 'custom'; title: string; tone?: 'warn' | 'plain'; body: React.ReactNode; actions?: React.ReactNode };
+
+export interface Stream {
+  key: string;
+  view: PanelState;
+  /** Its panel is on screen; hidden streams are reached through <SeeLogs>. */
+  isOpen: boolean;
+  /** A request is in flight (or a caller marked a pre-flight step as running). */
+  isRunning: boolean;
+  /** More keys it answers to, learned from its output (e.g. `backup-run:<uid>`). */
+  aliases: string[];
+}
 
 export interface RunStreamOpts {
   /** Shown in the panel header. */
@@ -47,133 +55,255 @@ export interface RunStreamOpts {
    * state to render something better than the raw message — e.g. Remove's
    * "no command configured" warning with a link to Settings. */
   mapEarlyError?: (payload: unknown, status: number) => PanelState | undefined;
+  /** Extra keys this stream answers to, read off its output as it arrives. */
+  aliasesFrom?: (output: string) => string[];
 }
 
-interface StreamPanelApi {
-  panel: PanelState | null;
-  setPanel: (p: PanelState | null) => void;
-  close: () => void;
-  /** POST `url`, stream its NDJSON into the panel, resolve to the exit code. */
-  runStream: (opts: RunStreamOpts) => Promise<number>;
-  /** True while a runStream is in flight, so callers can disable buttons. */
-  busy: boolean;
+interface StreamsApi {
+  /** Every stream, oldest first. */
+  streams: Stream[];
+  /** The stream under `key`, or one that took `key` as an alias. */
+  get: (key: string) => Stream | undefined;
+  /** True while any stream whose key starts with `prefix` is running. */
+  anyRunning: (prefix: string) => boolean;
+  /** POST `url` and stream its NDJSON into `key`'s panel; resolves to the exit
+   * code. Refused (-1) while `key` is already running. */
+  run: (key: string, opts: RunStreamOpts) => Promise<number>;
+  /** Show a non-streaming state under `key` (a warning, a confirmation, a
+   * pre-flight step), opening its panel. */
+  show: (key: string, view: PanelState, opts?: { isRunning?: boolean }) => void;
+  open: (key: string) => void;
+  /** Hide the panel; the stream stays, for <SeeLogs>. */
+  hide: (key: string) => void;
+  /** Forget the stream entirely. */
+  dismiss: (key: string) => void;
 }
 
-const Ctx = createContext<StreamPanelApi>({
-  panel: null,
-  setPanel: () => {},
-  close: () => {},
-  runStream: async () => -1,
-  busy: false,
+const Ctx = createContext<StreamsApi>({
+  streams: [],
+  get: () => undefined,
+  anyRunning: () => false,
+  run: async () => -1,
+  show: () => {},
+  open: () => {},
+  hide: () => {},
+  dismiss: () => {},
 });
 
 export function StreamPanelProvider({ children }: { children: React.ReactNode }) {
-  const [panel, setPanel] = useState<PanelState | null>(null);
-  const [busy, setBusy] = useState(false);
-  const close = useCallback(() => setPanel(null), []);
+  const [byKey, setByKey] = useState<Record<string, Stream>>({});
+  // Keys with a request in flight. A pre-flight step shown as running (Remove's
+  // "checking for live sessions…") is not one, so it hands over to its run.
+  const inFlight = useRef(new Set<string>());
 
-  const runStream = useCallback(async (opts: RunStreamOpts): Promise<number> => {
-    setBusy(true);
-    let output = opts.initial ?? '';
-    setPanel({ kind: 'running', title: opts.title, output });
-    try {
-      const res = await fetch(opts.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(opts.body ?? {}),
-      });
-
-      // A route that failed before streaming (bad request, missing script)
-      // answers with plain JSON, not NDJSON — surface its message rather than
-      // rendering "[object Object]".
-      if (!res.body || !(res.headers.get('content-type') ?? '').includes('ndjson')) {
-        const text = await res.text();
-        let msg = text;
-        let parsed: unknown = undefined;
-        try {
-          parsed = JSON.parse(text);
-          msg = (parsed as { error?: string })?.error ?? text;
-        } catch {
-          // not JSON — show it raw
-        }
-        const mapped = opts.mapEarlyError?.(parsed, res.status);
-        setPanel(mapped ?? { kind: 'err', title: opts.title, output: output + msg });
-        opts.onFailure?.(msg, res.status);
-        return res.status;
-      }
-
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = '';
-      let code = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() ?? '';
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const ev = JSON.parse(line) as { type: string; data?: string; code?: number };
-            if (ev.type === 'exit') code = ev.code ?? 0;
-            else if (ev.data) output += ev.data;
-          } catch {
-            output += line + '\n'; // a non-JSON line still belongs in the log
-          }
-        }
-        setPanel({ kind: 'running', title: opts.title, output });
-      }
-
-      if (code === 0) {
-        setPanel({
-          kind: 'ok',
-          title: opts.title,
-          output: output + (opts.successNote ? `\n${opts.successNote}` : ''),
-        });
-        await opts.onSuccess?.();
-      } else {
-        setPanel({ kind: 'err', title: opts.title, output: output || `exit ${code}` });
-        opts.onFailure?.(output, code);
-      }
-      return code;
-    } catch (e) {
-      const msg = (e as Error)?.message ?? String(e);
-      setPanel({ kind: 'err', title: opts.title, output: output + `\n${msg}` });
-      opts.onFailure?.(msg, -1);
-      return -1;
-    } finally {
-      setBusy(false);
-    }
+  const patch = useCallback((key: string, fn: (s: Stream | undefined) => Stream | null) => {
+    setByKey((prev) => {
+      const next = fn(prev[key]);
+      const copy = { ...prev };
+      delete copy[key]; // re-inserted last: a re-run moves to the bottom of the stack
+      if (next) copy[key] = next;
+      return copy;
+    });
   }, []);
 
-  const value = useMemo(
-    () => ({ panel, setPanel, close, runStream, busy }),
-    [panel, close, runStream, busy],
+  const update = useCallback(
+    (key: string, view: PanelState, isRunning: boolean, aliases?: string[]) =>
+      setByKey((prev) => {
+        const s = prev[key];
+        if (!s) return prev; // dismissed mid-run: let it finish unseen
+        return { ...prev, [key]: { ...s, view, isRunning, aliases: aliases ?? s.aliases } };
+      }),
+    [],
   );
+
+  const show = useCallback(
+    (key: string, view: PanelState, opts?: { isRunning?: boolean }) =>
+      patch(key, (s) => ({ key, view, isOpen: true, isRunning: opts?.isRunning ?? false, aliases: s?.aliases ?? [] })),
+    [patch],
+  );
+
+  const run = useCallback(
+    async (key: string, opts: RunStreamOpts): Promise<number> => {
+      if (inFlight.current.has(key)) return -1;
+      inFlight.current.add(key);
+      let output = opts.initial ?? '';
+      let aliases: string[] = [];
+      patch(key, () => ({ key, view: { kind: 'running', title: opts.title, output }, isOpen: true, isRunning: true, aliases }));
+      try {
+        const res = await fetch(opts.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(opts.body ?? {}),
+        });
+
+        // A route that failed before streaming (bad request, missing script)
+        // answers with plain JSON, not NDJSON — surface its message rather than
+        // rendering "[object Object]".
+        if (!res.body || !(res.headers.get('content-type') ?? '').includes('ndjson')) {
+          const text = await res.text();
+          let msg = text;
+          let parsed: unknown = undefined;
+          try {
+            parsed = JSON.parse(text);
+            msg = (parsed as { error?: string })?.error ?? text;
+          } catch {
+            // not JSON — show it raw
+          }
+          const mapped = opts.mapEarlyError?.(parsed, res.status);
+          update(key, mapped ?? { kind: 'err', title: opts.title, output: output + msg }, false);
+          opts.onFailure?.(msg, res.status);
+          return res.status;
+        }
+
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        let code = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop() ?? '';
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const ev = JSON.parse(line) as { type: string; data?: string; code?: number };
+              if (ev.type === 'exit') code = ev.code ?? 0;
+              else if (ev.data) output += ev.data;
+            } catch {
+              output += line + '\n'; // a non-JSON line still belongs in the log
+            }
+          }
+          if (opts.aliasesFrom) aliases = [...new Set([...aliases, ...opts.aliasesFrom(output)])];
+          update(key, { kind: 'running', title: opts.title, output }, true, aliases);
+        }
+
+        if (code === 0) {
+          update(key, { kind: 'ok', title: opts.title, output: output + (opts.successNote ? `\n${opts.successNote}` : '') }, false);
+          await opts.onSuccess?.();
+        } else {
+          update(key, { kind: 'err', title: opts.title, output: output || `exit ${code}` }, false);
+          opts.onFailure?.(output, code);
+        }
+        return code;
+      } catch (e) {
+        const msg = (e as Error)?.message ?? String(e);
+        update(key, { kind: 'err', title: opts.title, output: output + `\n${msg}` }, false);
+        opts.onFailure?.(msg, -1);
+        return -1;
+      } finally {
+        inFlight.current.delete(key);
+      }
+    },
+    [patch, update],
+  );
+
+  const setOpen = useCallback(
+    (key: string, isOpen: boolean) =>
+      setByKey((prev) => {
+        const s = prev[key] ?? Object.values(prev).find((x) => x.aliases.includes(key));
+        return s ? { ...prev, [s.key]: { ...s, isOpen } } : prev;
+      }),
+    [],
+  );
+
+  const value = useMemo<StreamsApi>(() => {
+    const streams = Object.values(byKey);
+    return {
+      streams,
+      get: (key) => byKey[key] ?? streams.find((s) => s.aliases.includes(key)),
+      anyRunning: (prefix) => streams.some((s) => s.isRunning && s.key.startsWith(prefix)),
+      run,
+      show,
+      open: (key) => setOpen(key, true),
+      hide: (key) => setOpen(key, false),
+      dismiss: (key) => patch(key, () => null),
+    };
+  }, [byKey, run, show, setOpen, patch]);
+
   return (
     <Ctx.Provider value={value}>
       {children}
-      <StreamPanelHost />
+      <StreamPanels />
     </Ctx.Provider>
   );
 }
 
-export function useStreamPanel(): StreamPanelApi {
+export function useStreams(): StreamsApi {
   return useContext(Ctx);
 }
 
-/** The panel itself. Rendered once by the provider. */
-function StreamPanelHost() {
-  const { panel, close } = useStreamPanel();
+/** One action's stream, for the component that starts it. */
+export function useStream(key: string) {
+  const api = useStreams();
+  const stream = api.get(key);
+  return {
+    stream,
+    isRunning: stream?.isRunning ?? false,
+    run: (opts: RunStreamOpts) => api.run(key, opts),
+    show: (view: PanelState, opts?: { isRunning?: boolean }) => api.show(key, view, opts),
+    open: () => api.open(key),
+    hide: () => api.hide(key),
+    dismiss: () => api.dismiss(key),
+  };
+}
+
+/**
+ * "See logs", for beside the button that started a stream: shown once that
+ * stream's panel is hidden, pulsing while it still runs. Nothing while the
+ * panel is on screen, or when there is no stream.
+ */
+export function SeeLogs({ streamKey, className = '' }: { streamKey: string; className?: string }) {
+  const { get, open } = useStreams();
+  const stream = get(streamKey);
+  if (!stream || stream.isOpen) return null;
+  const tone =
+    stream.view.kind === 'err'
+      ? 'text-red-300 hover:text-red-200'
+      : stream.view.kind === 'ok'
+        ? 'text-emerald-300 hover:text-emerald-200'
+        : 'text-indigo-300 hover:text-indigo-200';
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation(); // cards and table rows have their own click
+        open(stream.key);
+      }}
+      title={stream.isRunning ? 'Still running — show its output' : 'Show the output of the last run'}
+      className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium hover:bg-slate-800 ${tone} ${className}`}
+    >
+      {stream.isRunning && <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-400" />}
+      See logs
+    </button>
+  );
+}
+
+/** Every open stream's panel, stacked bottom-right, newest at the bottom. */
+function StreamPanels() {
+  const { streams } = useStreams();
+  const open = streams.filter((s) => s.isOpen);
+  if (open.length === 0) return null;
+  return (
+    <div className="fixed bottom-4 right-4 z-50 flex max-h-[calc(100vh-2rem)] w-[28rem] max-w-[calc(100vw-2rem)] flex-col gap-2 overflow-y-auto">
+      {open.map((s) => (
+        <StreamPanel key={s.key} stream={s} />
+      ))}
+    </div>
+  );
+}
+
+function StreamPanel({ stream }: { stream: Stream }) {
+  const { hide, dismiss } = useStreams();
+  const panel = stream.view;
   const outputEnd = useRef<HTMLDivElement>(null);
 
   // keep the streaming output scrolled to the latest line
+  const output = 'output' in panel ? panel.output : null;
   useEffect(() => {
-    if (panel && 'output' in panel) outputEnd.current?.scrollIntoView({ block: 'end' });
-  }, [panel]);
-
-  if (!panel) return null;
+    if (output !== null) outputEnd.current?.scrollIntoView({ block: 'end' });
+  }, [output]);
 
   const border =
     panel.kind === 'ok'
@@ -185,39 +315,43 @@ function StreamPanelHost() {
           : 'border-slate-700';
 
   return (
-    <div
-      className={`fixed bottom-4 right-4 z-50 flex max-h-[60vh] w-[28rem] max-w-[calc(100vw-2rem)] flex-col rounded-lg border bg-slate-950 shadow-xl ${border}`}
-    >
+    <div className={`flex max-h-[40vh] shrink-0 flex-col rounded-lg border bg-slate-950 shadow-xl ${border}`}>
       <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2 text-xs">
         <span className="flex items-center gap-2 font-medium text-slate-200">
-          {panel.kind === 'running' && (
-            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-indigo-400" />
-          )}
+          {stream.isRunning && <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-indigo-400" />}
           {panel.kind === 'ok' && <span className="text-emerald-400">✓</span>}
           {panel.kind === 'err' && <span className="text-red-400">✗</span>}
-          {(panel.kind === 'warn' || panel.kind === 'custom') && (
-            <span className="text-amber-400">⚠</span>
-          )}
+          {(panel.kind === 'warn' || panel.kind === 'custom') && <span className="text-amber-400">⚠</span>}
           {panel.title}
         </span>
-        <button
-          type="button"
-          onClick={close}
-          className="text-slate-500 hover:text-slate-300"
-          aria-label="Close"
-        >
-          ✕
-        </button>
+        <span className="flex items-center gap-2">
+          {!stream.isRunning && (
+            <button
+              type="button"
+              onClick={() => dismiss(stream.key)}
+              className="text-[11px] text-slate-500 hover:text-slate-300"
+              title="Forget this output (no See logs afterwards)"
+            >
+              clear
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => hide(stream.key)}
+            className="text-slate-500 hover:text-slate-300"
+            aria-label="Hide"
+            title="Hide — See logs beside the action brings it back"
+          >
+            ✕
+          </button>
+        </span>
       </div>
 
       {panel.kind === 'warn' ? (
         <div className="px-3 py-3 text-xs text-amber-200">
           <p>{panel.msg}</p>
           {panel.settingsLink && (
-            <Link
-              href="/settings"
-              className="mt-2 inline-block font-medium text-indigo-400 hover:text-indigo-300"
-            >
+            <Link href="/settings" className="mt-2 inline-block font-medium text-indigo-400 hover:text-indigo-300">
               Open Settings →
             </Link>
           )}
@@ -226,9 +360,7 @@ function StreamPanelHost() {
         <div className="flex flex-col overflow-hidden">
           <div className="overflow-auto px-3 py-3 text-xs text-amber-200">{panel.body}</div>
           {panel.actions && (
-            <div className="flex justify-end gap-2 border-t border-slate-800 px-3 py-2">
-              {panel.actions}
-            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-800 px-3 py-2">{panel.actions}</div>
           )}
         </div>
       ) : (

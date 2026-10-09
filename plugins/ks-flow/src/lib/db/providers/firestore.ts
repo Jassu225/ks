@@ -6,7 +6,10 @@
 // Collection tree (scoped per project so cross-project data never mixes):
 //   projects/{projectId}
 //     ├─ workUnits/{unitId}   ← the cards
-//     └─ sessions/{sessionId} ← JSONL-derived activity
+//     ├─ sessions/{sessionId} ← JSONL-derived activity
+//     ├─ reminders/{uid}
+//     ├─ backupUnits/{uid}    ← what the GCS backup holds per unit
+//     └─ backupRuns/{uid}     ← one per backup sweep
 import {
   applicationDefault,
   cert,
@@ -23,6 +26,9 @@ import {
 import { readFileSync } from 'node:fs';
 import type { Config } from '../../config.js';
 import type {
+  BackupRunDoc,
+  BackupStore,
+  BackupUnitDoc,
   DbProvider,
   ProjectDoc,
   ReminderDoc,
@@ -99,6 +105,46 @@ function workUnitsCol(fs: Firestore, projectId: string): CollectionReference {
 }
 function remindersCol(fs: Firestore, projectId: string): CollectionReference {
   return projectRef(fs, projectId).collection('reminders');
+}
+function backupUnitsCol(fs: Firestore, projectId: string): CollectionReference {
+  return projectRef(fs, projectId).collection('backupUnits');
+}
+function backupRunsCol(fs: Firestore, projectId: string): CollectionReference {
+  return projectRef(fs, projectId).collection('backupRuns');
+}
+
+/** Firestore refuses `undefined` fields (optional ones left out); a JSON round-trip drops them. */
+function plain<T>(doc: T): T {
+  return JSON.parse(JSON.stringify(doc)) as T;
+}
+
+/**
+ * The backup CLI's store. Whole-doc `set`, not a merge: a unit's `sessions` map
+ * loses entries the bucket no longer holds, and a merge would keep them.
+ */
+class FirestoreBackups implements BackupStore {
+  private fs: Firestore;
+  constructor(cfg: Config) {
+    this.fs = db(cfg);
+  }
+
+  async getBackupUnits(projectId: string): Promise<BackupUnitDoc[]> {
+    const snap = await backupUnitsCol(this.fs, projectId).get();
+    return snap.docs.map((d) => d.data() as BackupUnitDoc);
+  }
+
+  async upsertBackupUnit(projectId: string, doc: BackupUnitDoc): Promise<void> {
+    await backupUnitsCol(this.fs, projectId).doc(doc.uid).set(plain(doc));
+  }
+
+  async getBackupRuns(projectId: string): Promise<BackupRunDoc[]> {
+    const snap = await backupRunsCol(this.fs, projectId).orderBy('startedAt', 'desc').get();
+    return snap.docs.map((d) => d.data() as BackupRunDoc);
+  }
+
+  async upsertBackupRun(projectId: string, doc: BackupRunDoc): Promise<void> {
+    await backupRunsCol(this.fs, projectId).doc(doc.uid).set(plain(doc));
+  }
 }
 
 class FirestoreWriter implements SessionWriter {
@@ -216,9 +262,11 @@ class FirestoreSource implements SessionSource {
 export function createFirestoreProvider(cfg: Config): DbProvider {
   let writer: FirestoreWriter | undefined;
   let source: FirestoreSource | undefined;
+  let backups: FirestoreBackups | undefined;
   return {
     name: 'firestore',
     writer: () => (writer ??= new FirestoreWriter(cfg)),
     source: () => (source ??= new FirestoreSource(cfg)),
+    backups: () => (backups ??= new FirestoreBackups(cfg)),
   };
 }

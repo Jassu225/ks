@@ -14,11 +14,12 @@
 // encoded transcript path matches no live directory and `--resume` still won't
 // list the session until that worktree exists again — the board says so.
 import { join } from 'node:path';
-import { dataDir, readProjectConf } from './lib/config.js';
+import { dataDir, loadConfig, readProjectConf } from './lib/config.js';
 import { loadEnvFile } from './lib/envfile.js';
 import { readArchiveSettings, resolveBinary, resolveGcsConfig } from './lib/archive-core.js';
 import { discoverTargets, restoreUnit, type UnitTarget } from './lib/transcript-archive.js';
-import { readArchiveIndex } from './lib/archive-index.js';
+import { loadArchiveIndex } from './lib/archive-index.js';
+import { createProvider } from './lib/db/index.js';
 import { CLAUDE_PROJECTS_DIR, encodeProjectDir } from './lib/paths.js';
 
 function log(m: string): void {
@@ -59,7 +60,11 @@ async function main(): Promise<void> {
     ? discoverTargets(conf.projectPath).find((t) => t.identifier === unit)
     : undefined;
   if (!target) {
-    const remembered = readArchiveIndex().units[unit];
+    // The backup index (in the store) remembers where the unit's transcripts lived.
+    const index = conf?.projectId
+      ? await loadArchiveIndex(createProvider(loadConfig()).backups(), conf.projectId).catch(() => null)
+      : null;
+    const remembered = index?.units[unit];
     if (remembered) {
       target = {
         identifier: unit,

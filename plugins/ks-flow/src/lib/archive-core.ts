@@ -204,7 +204,7 @@ export function decompressFile(src: string, out: string, zstdPath: string): Prom
  * `updated` is when we uploaded it, not when the session was written, and its
  * `size` is the COMPRESSED size, so neither can be compared with a local file.
  * Stamping the source's size and mtime makes the bucket self-describing, which
- * is what lets the local index be treated as a pure cache and rebuilt from a
+ * is what lets the backup index be treated as a pure cache and rebuilt from a
  * single listing after it is lost (new machine, cleared data dir). */
 export interface SourceStamp {
   srcSize: number;
@@ -280,7 +280,7 @@ export interface RemoteObject {
 }
 
 /** List every object under `prefix`. Used by restore and by the status route to
- * answer "is there a cloud copy?" without trusting the local index. */
+ * answer "is there a cloud copy?" without trusting the backup index. */
 export async function listObjects(gcs: GcsConfig, prefix: string): Promise<RemoteObject[]> {
   const [files] = await makeStorage(gcs).bucket(gcs.bucket).getFiles({ prefix });
   return files.map((f) => {
