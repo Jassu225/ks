@@ -34,11 +34,6 @@ export type Interval = { start: number; end: number; phase: string | null; isAge
 
 export const DEFAULT_IDLE_MS = 10 * 60_000
 
-/** After these the session waits on you: the gap that follows is yours, not Claude's. */
-const WAITS_ON_YOU = new Set(['Stop', 'SessionStart', 'SessionEnd', 'Notification'])
-/** These start a turn: a busy gap that ends in one never reached its Stop. */
-const STARTS_A_TURN = new Set(['UserPromptSubmit', 'SessionStart'])
-
 /** Parses a time log (JSONL); malformed lines are skipped. */
 export function parseLog(text: string): TimeEvent[] {
   const events: TimeEvent[] = []
@@ -67,29 +62,95 @@ function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
   return groups
 }
 
+/**
+ * The main agent of one session, event by event, as a small state machine:
+ *
+ *   idle    — between turns: the gap is yours (counted while under the cut-off)
+ *   busy    — a turn is running: the gap is Claude's
+ *   waiting — a turn is blocked on you (a permission prompt): the gap is yours
+ *
+ * Only a prompt starts a turn. A tool event while idle is not Claude working:
+ * plugins' own calls (a mod polling an MCP server every two minutes) raise
+ * PostToolUse with no turn running, and counting those once billed hours of
+ * "agent time" to a session sitting idle. `Now` is the stand-in summarize()
+ * adds to count a live session up to the present.
+ */
+function mainIntervals(chain: TimeEvent[], idleMs: number, out: Interval[]): void {
+  let state: 'idle' | 'busy' | 'waiting' = 'idle'
+  /** Busy: the last moment Claude was seen working. Idle/waiting: when the wait began (null: nothing to count). */
+  let since: number | null = null
+  let phase: string | null = null
+
+  const yours = (end: number): void => {
+    if (since !== null && end > since && end - since <= idleMs) out.push({ start: since, end, phase, isAgent: false })
+  }
+  const claudes = (end: number, isCapped = false): void => {
+    if (since === null || end <= since) return
+    out.push({ start: since, end: isCapped ? since + Math.min(end - since, idleMs) : end, phase, isAgent: true })
+  }
+
+  for (const e of chain) {
+    switch (e.event) {
+      case 'UserPromptSubmit':
+        // A prompt while busy: the last turn never reached Stop (Esc, a crash) — cap it.
+        if (state === 'busy') claudes(e.ts, true)
+        else yours(e.ts)
+        state = 'busy'
+        since = e.ts
+        phase = e.phase ?? null
+        break
+      case 'Notification':
+        if (state === 'busy') {
+          claudes(e.ts)
+          state = 'waiting'
+          since = e.ts
+        }
+        break
+      case 'Stop':
+        if (state === 'busy') claudes(e.ts)
+        else if (state === 'waiting') yours(e.ts)
+        if (state !== 'idle' || since === null) since = e.ts
+        state = 'idle'
+        phase = e.phase ?? phase
+        break
+      case 'SessionStart':
+        if (state === 'busy') claudes(e.ts, true)
+        state = 'idle'
+        since = e.ts
+        phase = e.phase ?? phase
+        break
+      case 'SessionEnd':
+        if (state === 'busy') claudes(e.ts, true)
+        else yours(e.ts)
+        state = 'idle'
+        since = null; // nothing after an end is anyone's time
+        break
+      case 'Now':
+        if (state === 'busy') claudes(e.ts)
+        else yours(e.ts)
+        break
+      default:
+        // PostToolUse and the like: progress inside a turn, an answered prompt
+        // when waiting, noise when idle.
+        if (state === 'busy') {
+          claudes(e.ts)
+          since = e.ts
+        } else if (state === 'waiting') {
+          yours(e.ts)
+          state = 'busy'
+          since = e.ts
+        }
+    }
+  }
+}
+
 /** Every interval the events make: the main turns and gaps per session, and each subagent's run. */
 export function intervals(events: TimeEvent[], idleMs = DEFAULT_IDLE_MS): Interval[] {
   const out: Interval[] = []
   const sorted = [...events].sort((a, b) => a.ts - b.ts)
 
-  // The main agent, session by session: each gap between two events is
-  // Claude's or yours depending on what the first one left the session doing.
   for (const chain of groupBy(sorted.filter(e => !e.agent), e => e.session).values()) {
-    for (let i = 1; i < chain.length; i++) {
-      const a = chain[i - 1]
-      const b = chain[i]
-      if (!a || !b) continue
-      const gap = b.ts - a.ts
-      if (gap <= 0) continue
-      const phase = a.phase ?? null
-      if (WAITS_ON_YOU.has(a.event)) {
-        if (gap <= idleMs) out.push({ start: a.ts, end: b.ts, phase, isAgent: false })
-      } else if (STARTS_A_TURN.has(b.event)) {
-        out.push({ start: a.ts, end: a.ts + Math.min(gap, idleMs), phase, isAgent: true })
-      } else {
-        out.push({ start: a.ts, end: b.ts, phase, isAgent: true })
-      }
-    }
+    mainIntervals(chain, idleMs, out)
   }
 
   // Subagents: from their start to their stop, else to the last event they made.

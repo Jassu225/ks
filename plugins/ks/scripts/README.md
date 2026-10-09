@@ -223,7 +223,7 @@ Use it only for files that are *already* failing on the main branch — otherwis
 
 How long a ticket took, from hooks rather than a timer you remember to start.
 
-- **`time-log.sh`**: a hook on `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Notification`, `SubagentStart`, `SubagentStop`, `Stop` and `SessionEnd`. Each event appends one line to `~/.claude/ks-time/<identifier>.jsonl` (`KS_TIME_DIR` overrides): time, event, session, subagent id, and the phase in progress. The unit comes from `workflow-unit`, looked up when a session starts or a prompt is sent and cached per session in `~/.claude/ks-time/.sessions/`. Sessions outside a ks workflow are not logged. It only records events; it never fails one.
+- **`time-log.sh`**: a hook on `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Notification`, `SubagentStart`, `SubagentStop`, `Stop` and `SessionEnd`. Each event appends one line to `~/.claude/ks-time/<identifier>.jsonl` (`KS_TIME_DIR` overrides): time, event, session, subagent id, tool name (`PostToolUse`), and the phase in progress. The unit comes from `workflow-unit`, looked up when a session starts or a prompt is sent and cached per session in `~/.claude/ks-time/.sessions/`. Sessions outside a ks workflow are not logged. It only records events; it never fails one.
 - **`ks-time`**: turns the log into time. `ks-time` (this checkout's unit), `ks-time KAR-123`, `ks-time --all`, `--idle <minutes>`, `--json`.
 
 ```
@@ -238,8 +238,8 @@ KAR-13030
 
 What counts (`lib/time-tracking.ts`, tested in `lib/time-tracking.spec.ts`: `node --import tsx --test lib/time-tracking.spec.ts`):
 
-- **Agent**: Claude working. A turn runs from the prompt to `Stop`, and a subagent from `SubagentStart` to `SubagentStop`, background ones included.
-- **Engaged**: agent time plus your gaps between turns (reading, thinking, answering a permission prompt), when a gap is under the idle cut-off (10 minutes). A longer gap is time away and counts nothing.
+- **Agent**: Claude working. A turn runs from the prompt to `Stop`, and a subagent from `SubagentStart` to `SubagentStop`, background ones included. Only a prompt starts a turn: tool events between turns are ignored. That matters because plugins' own calls raise `PostToolUse` too — the statusline mod's Vercel check, an MCP call every 2 minutes while idle, once billed an idle session ~3 hours of "agent time" (KAR-13030, 2026-10-09).
+- **Engaged**: agent time plus your gaps between turns (reading, thinking, answering a permission prompt), when a gap is under the idle cut-off (10 minutes). A gap runs from `Stop` to your next prompt; a longer one is time away and counts nothing.
 - Both are **unions of intervals**: parallel subagents, a background agent beside the turn, or two sessions on one ticket count once.
 - A turn that never reached `Stop` (Esc, a crash) counts only up to the cut-off.
 - A session still going counts up to now (its running turn, or the gap you are in), if it was heard from within the cut-off. The `/ks-project` pane shows each phase's engaged time this way, refreshed every 60 seconds while it is open.

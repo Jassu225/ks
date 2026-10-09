@@ -6,6 +6,7 @@
 #
 #   ~/.claude/ks-time/<identifier>.jsonl
 #   {"ts":1791460300518,"event":"Stop","session":"…","phase":"9"}
+#   {"ts":…,"event":"PostToolUse","session":"…","tool":"Bash","phase":"9"}
 #
 # Wired in hooks.json to SessionStart, UserPromptSubmit, PostToolUse,
 # Notification, SubagentStart, SubagentStop, Stop and SessionEnd. Only events
@@ -77,6 +78,7 @@ jq -c --arg phase "$phase" '{
     session: .session_id,
     agent: (.agent_id // null),
     agentType: (.agent_type // null),
+    tool: (.tool_name // null),
     kind: (.notification_type // .source // .reason // null),
     phase: (if $phase == "" then null else $phase end)
 } | with_entries(select(.value != null))' <<<"$input" >>"$file" 2>/dev/null

@@ -102,6 +102,19 @@ test('with now, a session still going counts up to it; a quiet or ended one does
   assert.equal(summarize(ended, DEFAULT_IDLE_MS, T0 + 7 * MIN).engagedMs, 5 * MIN)
 })
 
+test('tool events while idle are not Claude working (a mod polling an MCP server)', () => {
+  // KAR-13030: a statusline mod's Vercel check raised PostToolUse every two minutes between turns.
+  const polls = Array.from({ length: 30 }, (_, i) => at(7 + i * 2, 'PostToolUse'))
+  const s = summarize([at(0, 'UserPromptSubmit'), at(5, 'Stop'), ...polls, at(70, 'UserPromptSubmit'), at(75, 'Stop')])
+  assert.equal(s.agentMs, 10 * MIN)
+  // The 65-minute gap between turns is time away, polls or not.
+  assert.equal(s.engagedMs, 10 * MIN)
+  // A short gap is still your reading time, measured from Stop to the next prompt.
+  const short = summarize([at(0, 'UserPromptSubmit'), at(5, 'Stop'), at(7, 'PostToolUse'), at(9, 'UserPromptSubmit'), at(10, 'Stop')])
+  assert.equal(short.engagedMs, 10 * MIN)
+  assert.equal(short.agentMs, 6 * MIN)
+})
+
 test('parseLog skips a line cut short and sorts by time', () => {
   const log = [JSON.stringify(at(5, 'Stop')), '{"ts":12', JSON.stringify(at(1, 'UserPromptSubmit')), ''].join('\n')
   assert.deepEqual(parseLog(log).map(e => e.event), ['UserPromptSubmit', 'Stop'])
