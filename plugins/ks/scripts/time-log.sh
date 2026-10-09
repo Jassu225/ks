@@ -35,24 +35,17 @@ cwd=$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)
 # A session id is a uuid; keep anything else out of the cache path.
 [[ "$session" =~ ^[A-Za-z0-9_-]+$ ]] || exit 0
 
-# Which unit (and phase) the session is working on. Looking it up greps the
-# checkout's workflow/ tree, too slow for every tool call, so it runs when a
-# session starts or a prompt is sent and is cached per session in between.
+# Which unit the session is working on. Looking it up greps the checkout's
+# workflow/ tree, too slow for every tool call, so it runs when a session starts
+# or a prompt is sent and is cached per session (identifier, state.yaml) in between.
 lookup() {
-    local unit_line state_file id phase
+    local unit_line state_file id
     unit_line=$(cd "${cwd:-.}" 2>/dev/null && "$scripts/workflow-unit" 2>/dev/null) || return 1
     state_file=$(cut -f1 <<<"$unit_line")
     id=$(cut -f3 <<<"$unit_line")
     # A unit without an identifier (a project) goes by its workflow folder, as in ks-flow.
     [ "$id" = "-" ] && id=$(basename "$(dirname "$state_file")")
-    # The phase being worked: the first IN_PROGRESS or REVISITING one under phases:.
-    phase=$(awk '
-        /^phases:/ { p = 1; next }
-        /^[^ #-]/ { p = 0 }
-        p && /- number:/ { n = $0; gsub(/[^0-9]/, "", n) }
-        p && /^ +status:/ && /IN_PROGRESS|REVISITING/ { print n; exit }
-    ' "$state_file")
-    printf '%s\t%s\n' "$id" "$phase"
+    printf '%s\t%s\n' "$id" "$state_file"
 }
 
 case "$event" in
@@ -66,8 +59,18 @@ case "$event" in
 esac
 
 [ -f "$cache/$session" ] || exit 0
-IFS=$'\t' read -r id phase <"$cache/$session"
+IFS=$'\t' read -r id state_file <"$cache/$session"
 [ -n "$id" ] || exit 0
+# The phase being worked, read on every event: a phase can start mid-turn
+# (/ks:project-manager moving on to Implement), and a phase cached at the prompt
+# logged that whole run under the one before. The first IN_PROGRESS or
+# REVISITING phase under phases:.
+phase=$(awk '
+    /^phases:/ { p = 1; next }
+    /^[^ #-]/ { p = 0 }
+    p && /- number:/ { n = $0; gsub(/[^0-9]/, "", n) }
+    p && /^ +status:/ && /IN_PROGRESS|REVISITING/ { print n; exit }
+' "$state_file" 2>/dev/null)
 # Object-name safe, the rule ks-flow's safeId() applies.
 file="$dir/$(sed 's/[^A-Za-z0-9._-]/_/g' <<<"$id").jsonl"
 

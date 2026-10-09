@@ -52,6 +52,8 @@ export type ProjectInfo = {
     startedAt: string | null
     endedAt: string | null
     iterations: number
+    /** Each run (the phase itself, or each iteration): which phase the time log's events fell in. */
+    runs: { startedAt: string; endedAt: string | null }[]
   }[]
   threads: ThreadLink[]
   prs: { url: string; number: string; branch: string | null; createdAt: string | null; reviewThread: ThreadLink | null }[]
@@ -100,8 +102,12 @@ declare module 'claude-code' {
       previewDeploy: PreviewDeploy | null
       /** Whether the project pane is open: the statusline's toggle reads `≡ less` then. */
       paneOpen: boolean
-      /** Engaged minutes per phase number (`-`: none in progress), from the unit's time log. */
-      phaseTime: Record<string, number> | null
+      /**
+       * Minutes from the unit's time log: engaged per phase number (`-`: none in
+       * progress — before the first phase, between phases), and engaged and agent
+       * in all, overlaps counted once (so not the sum of the phases).
+       */
+      phaseTime: { byPhase: Record<string, number>; engaged: number; agent: number } | null
     }
   }
 }

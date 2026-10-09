@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { DEFAULT_IDLE_MS, formatDuration, intervals, parseLog, summarize, unionMs } from './time-tracking.js'
+import { DEFAULT_IDLE_MS, formatDuration, intervals, parseLog, summarize, unionMs, withPhaseSpans } from './time-tracking.js'
 import type { TimeEvent } from './time-tracking.js'
 
 const MIN = 60_000
@@ -113,6 +113,49 @@ test('tool events while idle are not Claude working (a mod polling an MCP server
   const short = summarize([at(0, 'UserPromptSubmit'), at(5, 'Stop'), at(7, 'PostToolUse'), at(9, 'UserPromptSubmit'), at(10, 'Stop')])
   assert.equal(short.engagedMs, 10 * MIN)
   assert.equal(short.agentMs, 6 * MIN)
+})
+
+test("the mod's own MCP calls do not keep a turn with no Stop busy", () => {
+  // A slash command: a prompt, a tool call, no Stop; the mod polls Vercel every two minutes after.
+  const poll = { tool: 'mcp__plugin_vercel_vercel__list_deployments' }
+  const polls = Array.from({ length: 20 }, (_, i) => at(4 + i * 2, 'PostToolUse', poll))
+  const s = summarize([at(0, 'UserPromptSubmit'), at(2, 'PostToolUse', { tool: 'Bash' }), ...polls, at(60, 'UserPromptSubmit'), at(61, 'Stop')])
+  // 2 to the Bash call, capped at the idle cut-off after it, then the last turn's 1.
+  assert.equal(s.agentMs, (2 + 10 + 1) * MIN)
+})
+
+test('a turn that moves on to the next phase splits at the first event logged in it', () => {
+  const s = summarize([at(0, 'UserPromptSubmit'), at(4, 'PostToolUse'), at(6, 'PostToolUse', { phase: '10' }), at(20, 'Stop', { phase: '10' })])
+  assert.equal(s.byPhase['9']?.agentMs, 6 * MIN)
+  assert.equal(s.byPhase['10']?.agentMs, 14 * MIN)
+})
+
+test("withPhaseSpans restamps events from state.yaml's phase runs", () => {
+  // KAR-13178: Implement started mid-turn; the logger had stamped the prompt's phase (none) on the whole run.
+  const none = { phase: undefined }
+  const events = [
+    at(0, 'UserPromptSubmit', none),
+    at(1, 'PostToolUse', none),
+    // The edit that set Implement IN_PROGRESS.
+    at(2, 'PostToolUse', none),
+    at(3, 'SubagentStart', { agent: 'a', phase: undefined }),
+    at(12, 'SubagentStop', { agent: 'a', phase: undefined }),
+    at(15, 'Stop', none),
+  ]
+  const spans = [
+    { phase: '9', start: T0 - 60 * MIN, end: T0 - MIN },
+    { phase: '10', start: T0 + 2 * MIN, end: null },
+  ]
+  const s = summarize(withPhaseSpans(events, spans))
+  assert.equal(s.byPhase['-']?.agentMs, 2 * MIN)
+  assert.equal(s.byPhase['10']?.agentMs, 13 * MIN)
+  // A revisit started later wins where runs overlap; an event outside every run keeps its own phase.
+  const revisit = withPhaseSpans([at(5, 'PostToolUse'), at(30, 'PostToolUse', { phase: '2' })], [
+    { phase: '10', start: T0, end: null },
+    { phase: '9', start: T0 + 4 * MIN, end: T0 + 10 * MIN },
+  ])
+  assert.deepEqual(revisit.map(e => e.phase), ['9', '10'])
+  assert.deepEqual(withPhaseSpans([at(5, 'Stop')], [{ phase: '1', start: T0 + 6 * MIN, end: null }])[0]?.phase, '9')
 })
 
 test('parseLog skips a line cut short and sorts by time', () => {

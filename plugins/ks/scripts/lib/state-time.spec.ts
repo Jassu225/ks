@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { withTimeSpent } from './state-time.js'
+import { phaseSpans, withTimeSpent } from './state-time.js'
 import { summarize } from './time-tracking.js'
 import type { TimeEvent } from './time-tracking.js'
 
@@ -58,4 +58,28 @@ test('a changed figure rewrites it and stamps the time again', () => {
   assert.ok(twice)
   assert.match(twice, /engaged_minutes: 18\n/)
   assert.match(twice, /time_spent:\n {2}engaged_minutes: 30\n {2}idle_cutoff_minutes: 10\n {2}updated_at: "2026-10-09T07:00:00.000Z"\n/)
+})
+
+test('phaseSpans: a run per iteration, else the phase itself; no start, no run', () => {
+  const spans = phaseSpans(`phases:
+  - number: 1
+    status: "COMPLETED"
+    started_at: "2026-10-09T16:59:40.000Z"
+    ended_at: "2026-10-09T18:15:44.000Z"
+  - number: 9
+    status: "REVISITING"
+    iterations:
+      - started_at: "2026-10-09T19:02:09.000Z"
+        ended_at: "2026-10-09T19:45:08.000Z"
+      - started_at: "2026-10-10T08:00:00.000Z"
+        ended_at: null
+  - number: 10
+    status: "NOT_STARTED"
+`)
+  assert.deepEqual(spans, [
+    { phase: '1', start: Date.parse('2026-10-09T16:59:40.000Z'), end: Date.parse('2026-10-09T18:15:44.000Z') },
+    { phase: '9', start: Date.parse('2026-10-09T19:02:09.000Z'), end: Date.parse('2026-10-09T19:45:08.000Z') },
+    { phase: '9', start: Date.parse('2026-10-10T08:00:00.000Z'), end: null },
+  ])
+  assert.deepEqual(phaseSpans('ticket: {}'), [])
 })

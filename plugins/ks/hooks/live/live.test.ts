@@ -271,6 +271,10 @@ test('the statusline shows the preview deploy and toggles the pane; the pane sho
   expect(JSON.stringify(await pane.drawn())).toMatch(/ live · \d{1,2}:\d\d (AM|PM)/)
   // The phase being worked shows the time spent on it, from the time log.
   expect(await pane.find({ type: 'Text', text: 'in progress  (6m engaged)' })).toBeDefined()
+  // And the ticket's total beneath the phases; no time outside a phase, so no row for it.
+  expect(await pane.find({ type: 'Text', text: '6m engaged' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: ' · agent 5m' })).toBeDefined()
+  expect(await pane.find({ key: 'phase-none' })).toBeUndefined()
   expect(await pane.find({ type: 'Text', text: 'PREVIEW DEPLOY' })).toBeDefined()
   expect(JSON.stringify(await pane.find({ type: 'Link', text: 'open preview ↗' }))).toContain(ALIAS)
   expect(await pane.find({ type: 'Text', text: BRANCH })).toBeDefined()

@@ -7,7 +7,7 @@
  */
 import { isMap, isSeq, parseDocument, Scalar } from 'yaml';
 
-import type { TimeSummary } from './time-tracking.js';
+import type { PhaseSpan, TimeSummary } from './time-tracking.js';
 
 /** Whole minutes, as state.yaml records them. */
 function minutes(ms: number): number {
@@ -53,4 +53,26 @@ export function withTimeSpent(raw: string, summary: TimeSummary, updatedAt: stri
   }
 
   return isChanged ? doc.toString({ lineWidth: 0 }) : null;
+}
+
+/**
+ * Each run of each phase in a state.yaml: the phase's own started_at/ended_at,
+ * or one run per iteration (a revisited phase has several). A run with no
+ * parsable start is left out; one with no end is still going.
+ */
+export function phaseSpans(raw: string): PhaseSpan[] {
+  const phases: unknown = parseDocument(raw).toJS()?.phases;
+  if (!Array.isArray(phases)) return [];
+  const time = (value: unknown): number | null => {
+    const ms = typeof value === 'string' ? Date.parse(value) : NaN;
+    return Number.isFinite(ms) ? ms : null;
+  };
+  return phases.flatMap((phase: Record<string, unknown> | null) => {
+    if (!phase || typeof phase.number !== 'number') return [];
+    const runs: Record<string, unknown>[] = Array.isArray(phase.iterations) && phase.iterations.length > 0 ? phase.iterations : [phase];
+    return runs.flatMap(run => {
+      const start = time(run?.started_at);
+      return start === null ? [] : [{ phase: String(phase.number), start, end: time(run.ended_at) }];
+    });
+  });
 }

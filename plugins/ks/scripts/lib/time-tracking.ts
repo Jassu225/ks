@@ -28,9 +28,42 @@ export type TimeEvent = {
   kind?: string
   /** The workflow phase in progress when the event fired. */
   phase?: string
+  /** tool_name on a tool event. */
+  tool?: string
 }
 
+/**
+ * Tools the ks statusline mod calls itself (`$.mcp.call` in hooks/register.tsx),
+ * which raise PostToolUse like Claude's own calls. Inside a turn that never
+ * reached Stop (a slash command) its polls would keep the turn "busy" until the
+ * next prompt, so they are dropped. Claude calling one of these loses nothing:
+ * a turn's time runs on to its next event either way.
+ */
+const MOD_TOOLS = new Set(['mcp__plugin_vercel_vercel__list_deployments', 'mcp__plugin_vercel_vercel__list_deployment_aliases'])
+
 export type Interval = { start: number; end: number; phase: string | null; isAgent: boolean }
+
+/** One run of a phase, as state.yaml records it: started_at to ended_at (null: still going). */
+export type PhaseSpan = { phase: string; start: number; end: number | null }
+
+/**
+ * The events, each with the phase state.yaml says was running at that moment.
+ *
+ * Logs written before time-log.sh re-read the phase on every event carry the
+ * phase looked up at the last prompt, so a phase started mid-turn
+ * (/ks:project-manager moving on to Implement and running it) was logged under
+ * the phase before, or none. KAR-13178's whole implementation run landed in
+ * "No phase" that way. Where runs overlap (a phase revisited while another is
+ * open), the one started last wins; an event no run covers keeps its logged phase.
+ */
+export function withPhaseSpans(events: TimeEvent[], spans: PhaseSpan[]): TimeEvent[] {
+  if (spans.length === 0) return events
+  const latestFirst = [...spans].sort((a, b) => b.start - a.start)
+  return events.map(e => {
+    const span = latestFirst.find(s => s.start <= e.ts && (s.end === null || e.ts <= s.end))
+    return span && span.phase !== e.phase ? { ...e, phase: span.phase } : e
+  })
+}
 
 export const DEFAULT_IDLE_MS = 10 * 60_000
 
@@ -104,6 +137,7 @@ function mainIntervals(chain: TimeEvent[], idleMs: number, out: Interval[]): voi
           claudes(e.ts)
           state = 'waiting'
           since = e.ts
+          phase = e.phase ?? phase
         }
         break
       case 'Stop':
@@ -131,14 +165,17 @@ function mainIntervals(chain: TimeEvent[], idleMs: number, out: Interval[]): voi
         break
       default:
         // PostToolUse and the like: progress inside a turn, an answered prompt
-        // when waiting, noise when idle.
+        // when waiting, noise when idle. A turn can move on to the next phase:
+        // the time up to this event is the phase before, what follows is this one's.
         if (state === 'busy') {
           claudes(e.ts)
           since = e.ts
+          phase = e.phase ?? phase
         } else if (state === 'waiting') {
           yours(e.ts)
           state = 'busy'
           since = e.ts
+          phase = e.phase ?? phase
         }
     }
   }
@@ -147,7 +184,7 @@ function mainIntervals(chain: TimeEvent[], idleMs: number, out: Interval[]): voi
 /** Every interval the events make: the main turns and gaps per session, and each subagent's run. */
 export function intervals(events: TimeEvent[], idleMs = DEFAULT_IDLE_MS): Interval[] {
   const out: Interval[] = []
-  const sorted = [...events].sort((a, b) => a.ts - b.ts)
+  const sorted = events.filter(e => !(e.tool && MOD_TOOLS.has(e.tool))).sort((a, b) => a.ts - b.ts)
 
   for (const chain of groupBy(sorted.filter(e => !e.agent), e => e.session).values()) {
     mainIntervals(chain, idleMs, out)

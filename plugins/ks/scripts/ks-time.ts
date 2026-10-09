@@ -22,8 +22,8 @@ import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import chalk from 'chalk';
 
-import { withTimeSpent } from './lib/state-time.js';
-import { DEFAULT_IDLE_MS, formatDuration, parseLog, summarize } from './lib/time-tracking.js';
+import { phaseSpans, withTimeSpent } from './lib/state-time.js';
+import { DEFAULT_IDLE_MS, formatDuration, parseLog, summarize, withPhaseSpans } from './lib/time-tracking.js';
 import type { TimeSummary } from './lib/time-tracking.js';
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
@@ -62,11 +62,15 @@ function currentUnit(): { id: string; stateFile: string } | null {
   return { id: id && id !== '-' ? id : basename(dirname(stateFile)), stateFile };
 }
 
-/** `now`: count a session still going up to it (the screen); left out, only what the events close (the file). */
-function load(identifier: string, idleMs: number, now?: number): TimeSummary | null {
+/**
+ * `now`: count a session still going up to it (the screen); left out, only what the events close (the file).
+ * `stateFile`: the unit's state.yaml, whose phase runs say which phase each event fell in.
+ */
+function load(identifier: string, idleMs: number, now?: number, stateFile?: string): TimeSummary | null {
   const file = join(LOG_DIR, `${safeId(identifier)}.jsonl`);
   if (!existsSync(file)) return null;
-  return summarize(parseLog(readFileSync(file, 'utf8')), idleMs, now);
+  const spans = stateFile && existsSync(stateFile) ? phaseSpans(readFileSync(stateFile, 'utf8')) : [];
+  return summarize(withPhaseSpans(parseLog(readFileSync(file, 'utf8')), spans), idleMs, now);
 }
 
 /** Writes the figures into state.yaml when they changed; tmp + rename, so a reader never sees half a file. */
@@ -157,18 +161,20 @@ const program = new Command()
         process.exit(1);
       }
       // What the events close, not up to now: the file records finished time.
-      const summary = load(unit.id, idleMs);
+      const summary = load(unit.id, idleMs, undefined, unit.stateFile);
       if (summary) writeState(unit.stateFile, summary);
       return;
     }
 
-    const id = identifier ?? currentUnit()?.id;
+    const here = currentUnit();
+    const id = identifier ?? here?.id;
     if (!id) {
       console.error(chalk.red('Not in a ks workflow checkout; name the unit: ks-time KAR-123'));
       process.exit(1);
     }
     // Counted up to now: a session still going shows its running turn.
-    const summary = load(id, idleMs, Date.now());
+    // Phases from this checkout's state.yaml when it is the unit asked for; else as logged.
+    const summary = load(id, idleMs, Date.now(), here?.id === id ? here.stateFile : undefined);
     if (!summary) {
       console.error(chalk.yellow(`No time logged for ${id} yet (${join(LOG_DIR, `${safeId(id)}.jsonl`)}).`));
       process.exit(1);

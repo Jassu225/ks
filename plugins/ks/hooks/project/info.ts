@@ -126,6 +126,10 @@ export function projectInfo(doc: unknown, ctx: InfoContext): ProjectInfo | null 
           startedAt: str(phase.started_at) ?? str(first?.started_at),
           endedAt: str(phase.ended_at) ?? str(last?.ended_at),
           iterations: iterations.length,
+          runs: (iterations.length > 0 ? iterations : [phase]).flatMap(run => {
+            const startedAt = str(run.started_at)
+            return startedAt ? [{ startedAt, endedAt: str(run.ended_at) }] : []
+          }),
         },
       ]
     }),

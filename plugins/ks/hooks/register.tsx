@@ -6,7 +6,7 @@ import { linearStatus, textOn } from './live/linear'
 import { scheduler } from './live/schedule'
 import type { Scheduler } from './live/schedule'
 import { ACTIVE_STATES, branchAlias, deployPill, githubRepo, latestPreview, previewBranch } from './live/vercel'
-import { formatDuration, parseLog, summarize } from '../scripts/lib/time-tracking'
+import { formatDuration, parseLog, summarize, withPhaseSpans } from '../scripts/lib/time-tracking'
 import { formatClock, formatWhen, projectInfo, workflowLabel } from './project/info'
 import { PULSE_FRAMES, PULSE_MS, pulseCell } from './project/pulse'
 import { COLORS, limitViews } from './statusline/usage'
@@ -370,11 +370,20 @@ async function loadPhaseTime($: EngineInterface): Promise<void> {
   const id = (info.identifier ?? info.workflowDir.split('/').pop() ?? '').replace(/[^A-Za-z0-9._-]/g, '_')
   const dir = (await $.env.get('KS_TIME_DIR')) ?? `${(await $.env.get('HOME')) ?? ''}/.claude/ks-time`
   const text = id ? await $.fs.read(`${dir}/${id}.jsonl`).catch(() => null) : null
+  // Which phase each event fell in, from state.yaml's phase runs (older logs stamped the phase a turn began in).
+  const spans = info.phases.flatMap(p =>
+    p.runs.map(r => ({ phase: String(p.number), start: Date.parse(r.startedAt), end: r.endedAt ? Date.parse(r.endedAt) : null })),
+  ).filter(s => Number.isFinite(s.start))
   // Up to now, so the phase being worked grows while a session is on it.
-  const byPhase = text ? summarize(parseLog(text), undefined, await $.clock.now()).byPhase : null
+  const summary = text ? summarize(withPhaseSpans(parseLog(text), spans), undefined, await $.clock.now()) : null
   // Whole minutes: the pane shows no finer, and a write only when one ticks over.
-  const minutes = byPhase
-    ? Object.fromEntries(Object.entries(byPhase).map(([phase, f]) => [phase, Math.round(f.engagedMs / 60_000)]))
+  const toMinutes = (ms: number): number => Math.round(ms / 60_000)
+  const minutes = summary
+    ? {
+        byPhase: Object.fromEntries(Object.entries(summary.byPhase).map(([phase, f]) => [phase, toMinutes(f.engagedMs)])),
+        engaged: toMinutes(summary.engagedMs),
+        agent: toMinutes(summary.agentMs),
+      }
     : null
   const was = await read($, phaseTimeAtom)
   if (JSON.stringify(was) !== JSON.stringify(minutes)) await update($, phaseTimeAtom, () => minutes)
@@ -674,7 +683,7 @@ export const register: Register = on => {
         {info.phases.map(p => {
           const glyph = PHASE_GLYPHS[p.status] ?? NOT_STARTED_GLYPH
           // Time actually spent, from the time log; the phase's own span is calendar time and says little.
-          const engaged = phaseTime?.[String(p.number)]
+          const engaged = phaseTime?.byPhase[String(p.number)]
           const spent = engaged !== undefined ? `${formatDuration(engaged * 60_000)} engaged` : null
           const times = p.startedAt ? `${when(p.startedAt)} → ${p.endedAt ? when(p.endedAt) : '…'}` : ''
           const extra = [spent, p.iterations > 1 ? `${p.iterations} iterations` : null].filter(Boolean).join(', ')
@@ -701,6 +710,18 @@ export const register: Register = on => {
             </Box>,
           )
         })}
+        {/* Time on the ticket with no phase in progress: before the first, between phases. */}
+        {(phaseTime?.byPhase['-'] ?? 0) > 0 &&
+          row('phase-none', '   No phase', <Text dimColor>{`${formatDuration((phaseTime?.byPhase['-'] ?? 0) * 60_000)} engaged`}</Text>)}
+        {phaseTime &&
+          row(
+            'phase-total',
+            '   Total',
+            <Box flexDirection="row">
+              <Text bold>{`${formatDuration(phaseTime.engaged * 60_000)} engaged`}</Text>
+              <Text dimColor>{` · agent ${formatDuration(phaseTime.agent * 60_000)}`}</Text>
+            </Box>,
+          )}
 
         {section('SLACK')}
         {info.threads.length === 0 && <Text dimColor>No Slack threads recorded.</Text>}
