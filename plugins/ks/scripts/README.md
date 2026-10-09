@@ -219,6 +219,48 @@ Use it only for files that are *already* failing on the main branch — otherwis
 - **`workflow-unit`**: prints the ks workflow unit that owns the current checkout, tab-separated: `<state.yaml path>  <ticket|project>  <identifier or ->  <linear url>  <name>`. It matches the `state.yaml` under `workflow/` whose `worktree_dir` is the git root, else (older states) the ticket id in the branch name. Exits 1 outside a workflow checkout. The statusline and `session-title.sh` use it; the plugin's hooks do the same lookup in-process.
 - **`session-title.sh`**: a `SessionStart` hook (startup, resume, clear) that sets `sessionTitle` to the ticket id (`KAR-123`), or a project's workflow folder name. That is the session's name, the one `ListAgents` prints and `SendMessage` takes, so it stays short and space-free.
 
+### Time tracking (`time-log.sh`, `ks-time`)
+
+How long a ticket took, from hooks rather than a timer you remember to start.
+
+- **`time-log.sh`**: a hook on `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Notification`, `SubagentStart`, `SubagentStop`, `Stop` and `SessionEnd`. Each event appends one line to `~/.claude/ks-time/<identifier>.jsonl` (`KS_TIME_DIR` overrides): time, event, session, subagent id, and the phase in progress. The unit comes from `workflow-unit`, looked up when a session starts or a prompt is sent and cached per session in `~/.claude/ks-time/.sessions/`. Sessions outside a ks workflow are not logged. It only records events; it never fails one.
+- **`ks-time`**: turns the log into time. `ks-time` (this checkout's unit), `ks-time KAR-123`, `ks-time --all`, `--idle <minutes>`, `--json`.
+
+```
+KAR-13030
+  Engaged   55m  (gaps over 10m count as away)
+  Agent     49m
+
+  By phase
+  9 Plan          14m      agent 8m
+  10 Implement    41m      agent 41m
+```
+
+What counts (`lib/time-tracking.ts`, tested in `lib/time-tracking.spec.ts`: `node --import tsx --test lib/time-tracking.spec.ts`):
+
+- **Agent**: Claude working. A turn runs from the prompt to `Stop`, and a subagent from `SubagentStart` to `SubagentStop`, background ones included.
+- **Engaged**: agent time plus your gaps between turns (reading, thinking, answering a permission prompt), when a gap is under the idle cut-off (10 minutes). A longer gap is time away and counts nothing.
+- Both are **unions of intervals**: parallel subagents, a background agent beside the turn, or two sessions on one ticket count once.
+- A turn that never reached `Stop` (Esc, a crash) counts only up to the cut-off.
+- A session still going counts up to now (its running turn, or the gap you are in), if it was heard from within the cut-off. The `/ks-project` pane shows each phase's engaged time this way, refreshed every 60 seconds while it is open.
+
+**In state.yaml.** On `Stop` and `SessionEnd` the hook also runs `ks-time --write` in the background, which writes the figures into the checkout's own `state.yaml` (only when one changed, editing those fields in place):
+
+```yaml
+phases:
+  - number: 9
+    ...
+    engaged_minutes: 14      # this phase, all iterations
+time_spent:
+  engaged_minutes: 55        # the whole unit, overlaps counted once
+  idle_cutoff_minutes: 10
+  updated_at: "2026-10-09T06:00:00.000Z"
+```
+
+Both are in the ticket and project schemas. They count only what the events close (no running turn), and a ticket restart (`ks-start-ticket`) keeps them.
+
+The log keeps events, not totals, so a different cut-off recounts the past. ks-flow's backup sweep uploads each unit's log beside its transcripts (`time-log.jsonl.zst`).
+
 ## Output Format
 
 The generated `state.yaml` follows this structure:

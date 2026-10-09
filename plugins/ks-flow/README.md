@@ -260,7 +260,15 @@ does not silently skip a day.
 gs://<bucket>/<prefix>/<identifier>/transcript/<sessionId>.jsonl.zst
 gs://<bucket>/<prefix>/<identifier>/transcript/subagents/<id>.jsonl.zst
 gs://<bucket>/<prefix>/<identifier>/workflow.tar.zst
+gs://<bucket>/<prefix>/<identifier>/time-log.jsonl.zst
 ```
+
+`time-log.jsonl.zst` is the unit's time log: the ks plugin's
+`~/.claude/ks-time/<identifier>.jsonl`, the events its `time-log.sh` hook
+records, which `ks-time` turns into time spent (see the ks scripts README). It
+goes up whenever it changed, on its own: every turn grows it, and it does not
+wait for a session file to trigger the unit. A restore brings it back when it is
+missing locally, never over a local one.
 
 This layout is the whole point, not an implementation detail. Re-tarring the
 transcript *directory* would eventually destroy the thing being protected: once
@@ -273,7 +281,8 @@ is downloaded or rewritten. Compression is `zstd -19` (~5x on JSONL; measured
 391,483 B → 76,921 B on a real session, restored byte-identical).
 
 A unit is keyed by the **identifier out of its own `state.yaml`** — the one whose
-`worktree_dir` points back at that worktree. `workflow/` is committed, so every
+`worktree_dir` points back at that worktree. `workflow/` is gitignored, but
+`create-worktree` copies the main checkout's into each new worktree, so every
 worktree carries every unit's `state.yaml`; taking the first one found made five
 unrelated worktrees share one object prefix. Ticket units live at
 `workflow/<user>/tickets/<id>/`, project units at `workflow/<user>/<slug>/`, so
@@ -282,7 +291,9 @@ the removal path, so both write under the same per-unit prefix.
 
 **The trigger and the action are different, deliberately.** The trigger is a
 session file that differs from the local index — a lone `state.yaml` touch does
-nothing, since `workflow/` is committed to git and already recoverable. The
+nothing, since `state.yaml` changes are made from inside a session, whose file
+changes with them. That matters, because `workflow/` is gitignored: the
+`workflow.tar.zst` refreshed then is its only copy off this machine. The
 action is to back up **the whole worktree**: every session file not already in
 the bucket, plus a refreshed `workflow.tar.zst`.
 

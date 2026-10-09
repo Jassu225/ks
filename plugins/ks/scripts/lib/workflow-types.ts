@@ -32,6 +32,15 @@ export interface Phase {
   status: PhaseStatus;
   started_at: string | null;
   ended_at: string | null;
+  /** Engaged minutes in this phase, all iterations together; written by `ks-time --write`. */
+  engaged_minutes?: number;
+}
+
+/** `time_spent:` in state.yaml: totals from the ks time log, written by `ks-time --write`. */
+export interface TimeSpent {
+  engaged_minutes: number;
+  idle_cutoff_minutes?: number;
+  updated_at: string;
 }
 
 export interface SlackState {

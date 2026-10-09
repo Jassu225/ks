@@ -6,6 +6,10 @@ import { dataDir } from './config.js';
 /** ~/.claude/projects — one dir per encoded cwd, *.jsonl per session. */
 export const CLAUDE_PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 
+/** ~/.claude/ks-time — the ks plugin's per-unit time logs (<identifier>.jsonl,
+ * written by its time-log.sh hook). KS_TIME_DIR overrides, as it does there. */
+export const KS_TIME_DIR = process.env.KS_TIME_DIR || join(homedir(), '.claude', 'ks-time');
+
 export const DATA_DIR = dataDir();
 export const EVENTS_PATH = join(DATA_DIR, 'events.jsonl');
 /** Daemon log — the *current day's* log. The daemon rolls it to

@@ -26,7 +26,7 @@ import chalk from 'chalk';
 
 import { loadEnv } from './lib/env.js';
 import { getLinearClient, getPriorityName } from './lib/linear-client.js';
-import type { SlackThread, Phase, PrEntry } from './lib/workflow-types.js';
+import type { SlackThread, Phase, PrEntry, TimeSpent } from './lib/workflow-types.js';
 import { parseSlackMessageUrl } from './lib/slack.js';
 import { createWorktreeAndLaunchClaude, findExistingWorktree } from './lib/worktree.js';
 
@@ -81,6 +81,7 @@ interface TicketWorkflowState {
   };
   prs: PrEntry[];
   phases: Phase[];
+  time_spent?: TimeSpent;
 }
 
 // ============================================================================
@@ -289,7 +290,9 @@ function mergeWithExistingState(
       release_thread: existing.slack?.release_thread ?? null
     },
     prs: existing.prs ?? [],
-    phases: existing.phases?.length ? existing.phases : fresh.phases
+    phases: existing.phases?.length ? existing.phases : fresh.phases,
+    // Time already spent survives a restart; `ks-time --write` keeps it current.
+    ...(existing.time_spent ? { time_spent: existing.time_spent } : {})
   };
 }
 
@@ -367,6 +370,10 @@ function formatYaml(state: TicketWorkflowState): string {
     } else if (line.startsWith('phases:')) {
       formattedLines.push('');
       formattedLines.push('# Phases tracking');
+      formattedLines.push(line);
+    } else if (line.startsWith('time_spent:')) {
+      formattedLines.push('');
+      formattedLines.push('# Time spent (written by ks-time --write)');
       formattedLines.push(line);
     } else {
       formattedLines.push(line);

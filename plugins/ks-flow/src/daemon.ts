@@ -731,8 +731,9 @@ async function backfill(): Promise<void> {
 }
 
 /** Workflow roots to scan: the main repo plus each worktree. Each worktree
- * carries its own committed copy of workflow/**, so a ticket's real progress
- * lives in ITS worktree, not the main checkout (which is often a stale stub). */
+ * carries its own copy of workflow/** (gitignored; create-worktree copies the
+ * main checkout's in), so a ticket's real progress lives in ITS worktree, not
+ * the main checkout (which is often a stale stub). */
 function workflowRoots(): string[] {
   const user = cfg.workflowUser ?? deriveWorkflowUser();
   const roots = new Set<string>([workflowDir(projectPath, user)]);

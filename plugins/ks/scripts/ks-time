@@ -1,0 +1,12 @@
+#!/bin/bash
+# ks-time wrapper: active time spent on a ks workflow unit
+# Usage: ks-time [KAR-123] [--all] [--idle <minutes>] [--json]
+#
+# Stays in the caller's directory: with no identifier it reports the unit the
+# current checkout belongs to.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# node + tsx's loader rather than the tsx CLI: the CLI opens an IPC pipe, which
+# a sandboxed shell (Claude Code's Bash tool) refuses.
+exec node --import "$SCRIPT_DIR/node_modules/tsx/dist/loader.mjs" "$SCRIPT_DIR/ks-time.ts" "$@"

@@ -24,7 +24,10 @@
 // TRIGGER vs ACTION — these are deliberately different
 // TRIGGER: a session file whose size or mtime differs from the local index (see
 // archive-index.ts). That is the only trigger; a lone state.yaml touch does
-// nothing, because workflow/ is committed to git and already recoverable.
+// nothing. state.yaml changes are made from inside a session, so the session
+// file changes with them and triggers the unit anyway. That matters: workflow/
+// is gitignored, so the workflow.tar.zst refreshed then is its only copy off
+// this machine.
 //
 // ACTION: back up the WHOLE worktree — every session file not already in the
 // bucket, plus a refreshed workflow.tar.zst. Not just the file that changed.
@@ -70,7 +73,7 @@ import {
   type ArchivedSession,
   type UnitArchive,
 } from './archive-index.js';
-import { CLAUDE_PROJECTS_DIR, encodeProjectDir } from './paths.js';
+import { CLAUDE_PROJECTS_DIR, KS_TIME_DIR, encodeProjectDir } from './paths.js';
 import { parseStateYaml } from './stateyaml.js';
 import { listWorktrees } from './worktree.js';
 
@@ -86,6 +89,14 @@ export interface UnitTarget {
  * under the same per-unit prefix. */
 /** Per-unit manifest object name, written next to the unit's data. */
 export const MANIFEST_NAME = 'manifest.json';
+
+/** The unit's time log in the bucket, beside its transcript/ and workflow. */
+export const TIME_LOG_OBJECT = 'time-log.jsonl.zst';
+
+/** Where the ks plugin's time-log hook writes this unit's log. */
+export function timeLogPath(identifier: string): string {
+  return join(KS_TIME_DIR, `${safeId(identifier)}.jsonl`);
+}
 
 export function safeId(identifier: string): string {
   return identifier.replace(/[^A-Za-z0-9._-]/g, '_');
@@ -130,7 +141,7 @@ export function discoverTargets(projectPath: string): UnitTarget[] {
  * Units whose worktree is GONE — completed work that `discoverTargets` cannot
  * see because `git worktree list` no longer mentions it.
  *
- * Discovery runs off the main checkout's committed workflow tree: each
+ * Discovery runs off the main checkout's workflow tree: each
  * state.yaml records the `worktree_dir` it belonged to, and the transcript dir
  * survives under ~/.claude/projects/ after `git worktree remove`, so the
  * conversation is still recoverable even though the code checkout is not. Units
@@ -170,10 +181,11 @@ interface UnitIdentity {
 
 /**
  * Map realpath(worktree_dir) → unit identity, built ONCE from the main
- * checkout's committed workflow tree.
+ * checkout's workflow tree.
  *
- * Two traps this navigates. First, `workflow/` is committed, so every worktree
- * carries every unit's state.yaml — the only file that identifies a given
+ * Two traps this navigates. First, `workflow/` is gitignored but copied whole
+ * into each new worktree (create-worktree), so every worktree carries every
+ * unit's state.yaml — the only file that identifies a given
  * worktree is the one whose own `worktree_dir` points back at it, never "the
  * first one on disk" (that bug made five unrelated worktrees share one object
  * prefix). Second, the tree is not one shape: project units sit at
@@ -330,6 +342,8 @@ export interface UnitSweepResult {
   uploaded: string[]; // rel paths
   skipped: number; // already in the bucket / outside the trigger window
   workflow: boolean;
+  /** The time log went up this sweep. */
+  timeLog: boolean;
   errors: string[];
   /** Nothing to do: no session file differs from what is already archived. */
   upToDate: boolean;
@@ -364,6 +378,7 @@ export async function sweep(opts: SweepOpts): Promise<SweepResult> {
       uploaded: [],
       skipped: 0,
       workflow: false,
+      timeLog: false,
       errors: [],
       upToDate: false,
       localSessions: 0,
@@ -384,7 +399,11 @@ export async function sweep(opts: SweepOpts): Promise<SweepResult> {
       // A listing failure must not stop the sweep; fall back to trusting the
       // index, which errs towards uploading less rather than losing data.
       log(`WARNING: could not list gs://${gcs.bucket}/${prefix} — ${(e as Error).message}`);
-      remote = new Set(Object.values(sessions).map((v) => v.object.replace(`gs://${gcs.bucket}/`, '')));
+      remote = new Set(
+        [...Object.values(sessions), ...(prev?.timeLog ? [prev.timeLog] : [])].map((v) =>
+          v.object.replace(`gs://${gcs.bucket}/`, ''),
+        ),
+      );
     }
     let vanished = 0;
     for (const rel of Object.keys(sessions)) {
@@ -522,18 +541,57 @@ export async function sweep(opts: SweepOpts): Promise<SweepResult> {
       }
     }
 
+    // The time log goes up whenever it changed, on its own clock: it grows with
+    // every turn, and unlike a transcript nothing else (a session file changing)
+    // has to trigger it. Same stamping and object rules as a session file.
+    let timeLog = prev?.timeLog ?? null;
+    const timeLogObject = `${prefix}${TIME_LOG_OBJECT}`;
+    if (timeLog && !remote.has(timeLogObject)) timeLog = null; // deleted in the cloud: re-upload
+    const timeLogFile = timeLogPath(t.identifier);
+    let timeLogStat: { size: number; mtimeMs: number } | null = null;
+    try {
+      timeLogStat = statSync(timeLogFile);
+    } catch {
+      timeLogStat = null; // nothing logged for this unit (yet)
+    }
+    if (timeLogStat && (force || needsUpload(timeLog ?? undefined, timeLogStat.size, timeLogStat.mtimeMs))) {
+      if (dryRun) {
+        log(`would upload ${t.identifier} time log → gs://${gcs.bucket}/${timeLogObject}`);
+        res.timeLog = true;
+      } else {
+        try {
+          timeLog = await compressAndStamp({
+            gcs,
+            zstdPath,
+            file: timeLogFile,
+            object: timeLogObject,
+            size: timeLogStat.size,
+            mtimeMs: timeLogStat.mtimeMs,
+          });
+          res.timeLog = true;
+          log(`uploaded ${t.identifier} time log (${timeLogStat.size} B)`);
+        } catch (e) {
+          const msg = (e as Error)?.message ?? String(e);
+          res.errors.push(`time log: ${msg}`);
+          errorCount++;
+          log(`FAILED ${t.identifier} time log — ${msg}`);
+        }
+      }
+    }
+
     // Only record a unit that actually has something in the bucket. Writing an
     // entry for every worktree scanned left 28 empty records in a 33-worktree
     // project, which the board would then render as units "known to the backup"
     // with nothing behind them.
-    const hasContent = Object.keys(sessions).length > 0 || workflow !== null;
-    if (!dryRun && hasContent && (res.uploaded.length > 0 || res.errors.length === 0)) {
+    const hasContent = Object.keys(sessions).length > 0 || workflow !== null || timeLog !== null;
+    if (!dryRun && hasContent && (res.uploaded.length > 0 || res.timeLog || res.errors.length === 0)) {
       const unit: UnitArchive = {
         identifier: t.identifier,
         worktreePath: t.worktreePath,
         transcriptDir: t.transcriptDir,
         sessions,
         workflow,
+        timeLog,
         lastArchivedAt:
           res.uploaded.length > 0 ? new Date().toISOString() : prev?.lastArchivedAt ?? '',
       };
@@ -546,7 +604,7 @@ export async function sweep(opts: SweepOpts): Promise<SweepResult> {
       // worktree, owned by that worktree, readable straight from the console,
       // and enough to rebuild the index entry exactly. Object metadata can do
       // the same job but only via a full listing, and is easy to overlook.
-      if (res.uploaded.length > 0 || res.workflow) {
+      if (res.uploaded.length > 0 || res.workflow || res.timeLog) {
         await uploadJson(gcs, `${prefix}${MANIFEST_NAME}`, unit).catch((e: Error) =>
           log(`WARNING: could not write ${t.identifier} manifest — ${e.message}`),
         );
@@ -613,6 +671,7 @@ export async function reindexUnit(
 
   const sessions: Record<string, ArchivedSession> = {};
   let workflow: UnitArchive['workflow'] = null;
+  let timeLog: ArchivedSession | null = null;
   let unstamped = 0;
   // Prefer the location stamped on the objects: for a unit whose worktree is
   // gone, that is the only surviving record of where its transcripts belonged.
@@ -625,6 +684,15 @@ export async function reindexUnit(
       workflow = {
         object: `gs://${gcs.bucket}/${obj.name}`,
         size: obj.size,
+        uploadedAt: obj.updated ?? '',
+      };
+      continue;
+    }
+    if (obj.name === `${unitRoot}${TIME_LOG_OBJECT}`) {
+      timeLog = {
+        size: obj.srcSize ?? 0,
+        mtimeMs: obj.srcMtimeMs ?? 0,
+        object: `gs://${gcs.bucket}/${obj.name}`,
         uploadedAt: obj.updated ?? '',
       };
       continue;
@@ -646,6 +714,7 @@ export async function reindexUnit(
   log(
     `${identifier}: ${Object.keys(sessions).length} session object(s)` +
       `${workflow ? ' + workflow' : ''}` +
+      `${timeLog ? ' + time log' : ''}` +
       `${unstamped ? `, ${unstamped} without source metadata (will re-upload once)` : ''}`,
   );
 
@@ -659,6 +728,7 @@ export async function reindexUnit(
     transcriptDir,
     sessions,
     workflow,
+    timeLog,
     lastArchivedAt: objects.reduce((latest, o) => (o.updated && o.updated > latest ? o.updated : latest), ''),
   };
 }
@@ -690,7 +760,7 @@ export async function reindexAll(
 ): Promise<{ recovered: number; skipped: number }> {
   // Three sources for "where does this unit's transcript live", in order of
   // authority: a live worktree, the completed-unit record in the main checkout's
-  // workflow tree (worktree removed, state.yaml still committed), and finally the
+  // workflow tree (worktree removed, state.yaml still on disk there), and finally the
   // location stamped on the objects themselves (inside reindexUnit). The middle
   // one matters most for old archives: objects uploaded before stamping existed
   // carry no location, and without it 35 of 40 units in the first real bucket
@@ -857,6 +927,8 @@ export interface RestoreOpts {
 
 export interface RestoreResult {
   restored: string[];
+  /** The unit's time log came back (it was missing locally). */
+  timeLogRestored?: boolean;
   keptLocal: string[]; // present locally, left alone — local always wins
   errors: string[];
   workflowObject: string | null;
@@ -933,9 +1005,50 @@ export async function restoreUnit(opts: RestoreOpts): Promise<RestoreResult> {
     }
   }
 
+  out.timeLogRestored = await restoreTimeLog(opts, unitRoot);
+
   const wf = await listObjects(gcs, `${unitPrefix(gcs, target.identifier)}workflow.tar.zst`);
   out.workflowObject = wf.length > 0 ? `gs://${gcs.bucket}/${wf[0].name}` : null;
   return out;
+}
+
+/**
+ * Bring the unit's time log back when it is missing locally (a new machine, a
+ * cleared ~/.claude/ks-time). Same rule as a session file: a local log is the
+ * live one the hook appends to, so it is never overwritten unless asked.
+ */
+async function restoreTimeLog(opts: RestoreOpts, unitRoot: string): Promise<boolean> {
+  const { target, gcs, zstdPath, overwrite = false, dryRun = false, log } = opts;
+  const dest = timeLogPath(target.identifier);
+  if (existsSync(dest) && !overwrite) return false;
+  const object = `${unitRoot}${TIME_LOG_OBJECT}`;
+  if ((await listObjects(gcs, object)).length === 0) return false;
+  if (dryRun) {
+    log(`would restore the time log → ${dest}`);
+    return true;
+  }
+  const tmpZst = join(tmpdir(), `ksflow-restore-time-${process.pid}.zst`);
+  const tmpOut = `${tmpZst}.jsonl`;
+  try {
+    await downloadObject(gcs, object, tmpZst);
+    await decompressFile(tmpZst, tmpOut, zstdPath);
+    mkdirSync(dirname(dest), { recursive: true });
+    // Not a rename: ~/.claude may sit on another volume than $TMPDIR.
+    copyFileSync(tmpOut, dest);
+    log('restored the time log');
+    return true;
+  } catch (e) {
+    log(`FAILED time log restore — ${(e as Error)?.message ?? e}`);
+    return false;
+  } finally {
+    for (const f of [tmpZst, tmpOut]) {
+      try {
+        unlinkSync(f);
+      } catch {
+        // best-effort temp cleanup
+      }
+    }
+  }
 }
 
 /**

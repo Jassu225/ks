@@ -215,7 +215,9 @@ async function main(): Promise<void> {
   } else {
     const changed = result.units.filter((u) => u.uploaded.length > 0).length;
     const current = result.units.filter((u) => u.upToDate).length;
-    if (result.uploadedCount === 0 && result.errorCount === 0) {
+    const timeLogs = result.units.filter((u) => u.timeLog).length;
+    const timeLogNote = timeLogs ? `, ${timeLogs} time log(s)` : '';
+    if (result.uploadedCount === 0 && timeLogs === 0 && result.errorCount === 0) {
       // The common, healthy outcome for a unit that was already swept. Report it
       // as success with evidence, not as a bare zero.
       const backed = result.units.reduce((n, u) => n + u.localSessions, 0);
@@ -226,6 +228,7 @@ async function main(): Promise<void> {
     } else {
       log(
         `${result.dryRun ? '[dry run] ' : ''}${result.uploadedCount} file(s) across ${changed} unit(s)` +
+          timeLogNote +
           `${current ? `, ${current} already current` : ''}` +
           `${result.errorCount ? `, ${result.errorCount} error(s)` : ''}.`,
       );

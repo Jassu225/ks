@@ -31,6 +31,9 @@ export interface UnitArchive {
   /** Refreshed whenever this unit had a session upload — the two always travel
    * together, so a restore gets the workflow state that matches the transcript. */
   workflow: { object: string; size: number; uploadedAt: string } | null;
+  /** The unit's time log (the ks plugin's ~/.claude/ks-time/<identifier>.jsonl),
+   * uploaded whenever it changed. Absent in indexes written before it existed. */
+  timeLog?: ArchivedSession | null;
   lastArchivedAt: string;
 }
 

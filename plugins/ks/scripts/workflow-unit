@@ -8,8 +8,9 @@
 # Prints nothing (exit 1) outside a workflow checkout. Used by the statusline and
 # the SessionStart title hook; hooks/workflow-band/ does the same lookup in-process.
 #
-# workflow/ is committed, so every checkout carries every unit's state.yaml; the
-# one that owns this checkout is the one whose worktree_dir points back at it.
+# workflow/ is gitignored, but create-worktree copies the main checkout's into
+# each new worktree, so every checkout carries every unit's state.yaml; the one
+# that owns this checkout is the one whose worktree_dir points back at it.
 # Units sit at workflow/<user>/<slug>/ and workflow/<user>/tickets/<id>/.
 
 git_root=$(git rev-parse --show-toplevel 2>/dev/null)

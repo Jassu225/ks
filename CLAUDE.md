@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A monorepo for Claude Code plugins:
 
-- **`ks`** — KarmaSuite development workflows, which orchestrate a 10-phase software project lifecycle using slash commands, specialized agents, and Linear integration. In `claude-ks` sessions it also draws the workflow in the UI through a function-hook module (`hooks/register.tsx`): ticket and phase pills under the prompt (the shell statusline keeps session, context and branch) and a `/ks-project` pane.
+- **`ks`** — KarmaSuite development workflows, which orchestrate a 10-phase software project lifecycle using slash commands, specialized agents, and Linear integration. In `claude-ks` sessions it also draws the workflow in the UI through a function-hook module (`hooks/register.tsx`): ticket and phase pills under the prompt (the shell statusline keeps session, context and branch) and a `/ks-project` pane. Its `time-log.sh` hook logs session events per ticket to `~/.claude/ks-time/`, and `ks-time` turns them into time spent (engaged and agent, by phase and day; gaps over 10 min count as away).
 - **`ks-flow`** — a per-project Kanban board over your Claude Code sessions (an always-on launchd daemon ingests session JSONL + workflow `state.yaml` into PocketBase/Firestore; a Next.js board renders it live), plus macOS notifications when a session blocks. Also has a per-card/per-session **reminder** system (daily re-nag, overdue red glow), an opt-in **Notes** page (free-form + Slack-permalink notes with reminders, split Professional/Personal), and **transcript backup** — Claude Code prunes `~/.claude/projects/**/*.jsonl` at 30 days, so a daily sweep (plus per-card and toolbar buttons) archives each session file and the unit's workflow to GCS, and cards offer a Restore when the bucket holds sessions this machine no longer has. Self-bootstrapping. See `plugins/ks-flow/README.md`.
 
 ## Repository Structure
@@ -76,6 +76,9 @@ npx tsx plugins/ks/scripts/linear-cli.ts issue get KAR-123
 npx tsx plugins/ks/scripts/grain-cli.ts --help
 npx tsx plugins/ks/scripts/grain-cli.ts recording list --after 2026-08-01 -i ai_summary
 
+# Time spent on a ticket (from the time-log.sh hook's events)
+plugins/ks/scripts/ks-time KAR-123          # or no argument: this checkout's unit; --all for every unit
+
 # Initialize a project workflow from Linear
 npx tsx plugins/ks/scripts/ks-start-project.ts <linear-project-url> [output-path]
 
@@ -135,7 +138,7 @@ Skills live in `plugins/ks/skills/<name>/SKILL.md` and load automatically when t
 
 **Ticket Workflow** (phases 1, 2, 9, 10 only): Quick turnaround for specific Linear tickets. Started via `ks-start-ticket.ts` with a `ticket` key in state.yaml. Skips phases 3-8 since requirements are already defined.
 
-**Restarting is not a reset.** Re-running `ks-start-ticket` on a ticket that already has a `state.yaml` (a reopened ticket) refreshes only the `ticket:` block from Linear and keeps `phases[]`, `prs[]`, the Slack threads and `worktree_dir`. When the worktree is still on disk, that worktree's `state.yaml` is the one carried forward — phases advance in the worktree session, so the main-repo copy is the stale one — and the existing worktree is worked in as it stands (branch and uncommitted work untouched, `create-worktree` never runs).
+**Restarting is not a reset.** Re-running `ks-start-ticket` on a ticket that already has a `state.yaml` (a reopened ticket) refreshes only the `ticket:` block from Linear and keeps `phases[]`, `prs[]`, the Slack threads, `time_spent` and `worktree_dir`. When the worktree is still on disk, that worktree's `state.yaml` is the one carried forward — phases advance in the worktree session, so the main-repo copy is the stale one — and the existing worktree is worked in as it stands (branch and uncommitted work untouched, `create-worktree` never runs).
 
 ### Workflow Directory Layout
 

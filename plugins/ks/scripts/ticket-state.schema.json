@@ -185,6 +185,29 @@
         "$ref": "#/$defs/phase"
       }
     },
+    "time_spent": {
+      "type": "object",
+      "description": "Time spent on this unit, from the ks time log (~/.claude/ks-time/<identifier>.jsonl). Written by `ks-time --write`; see the ks scripts README, \"Time tracking\"",
+      "required": ["engaged_minutes", "updated_at"],
+      "additionalProperties": false,
+      "properties": {
+        "engaged_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total engaged minutes: Claude working plus your gaps between turns under the idle cut-off, overlaps counted once. Less than the phases' sum when sessions in different phases overlapped"
+        },
+        "idle_cutoff_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Gaps longer than this counted as time away"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When these figures were last written (ISO 8601)"
+        }
+      }
+    },
     "slack": {
       "type": "object",
       "description": "Slack thread references for communication tracking",
@@ -261,6 +284,11 @@
           "type": ["string", "null"],
           "format": "date-time",
           "description": "When the phase was completed/skipped (ISO 8601). Not used by iterating phases — see iterations"
+        },
+        "engaged_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Engaged minutes spent in this phase, all iterations together, from the ks time log: Claude working plus your gaps between turns under the idle cut-off. Written by `ks-time --write` (the time-log.sh hook runs it on Stop and SessionEnd); absent until the phase has logged time"
         },
         "iterations": {
           "type": "array",
