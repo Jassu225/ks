@@ -1,20 +1,10 @@
 import type { PreviewDeploy } from '../../types'
 
 // Vercel builds a preview of every pushed branch (its GitHub integration), so
-// a ticket's preview is the newest deployment of the ticket's branch.
+// each PR's preview is the newest deployment of the PR's branch.
 
 /** States in which a deployment is still on its way. */
 export const ACTIVE_STATES: ReadonlySet<string> = new Set(['QUEUED', 'INITIALIZING', 'BUILDING'])
-
-/** Branches that are never a ticket's own. */
-const SHARED_BRANCHES = new Set(['main', 'master', 'live', 'HEAD'])
-
-/** The branch whose preview to watch: the unit's latest PR branch, else the checkout's own. */
-export function previewBranch(prBranches: (string | null)[], current: string | null): string | null {
-  const fromPr = [...prBranches].reverse().find((b): b is string => !!b)
-  if (fromPr) return fromPr
-  return current && !SHARED_BRANCHES.has(current) ? current : null
-}
 
 /** `{ org, repo }` from a GitHub remote URL (ssh or https). */
 export function githubRepo(remote: string | null): { org: string; repo: string } | null {
@@ -90,7 +80,7 @@ export function branchAlias(text: string): string | null {
   return alias ? `https://${alias}` : null
 }
 
-/** The statusline's deploy pill: where the preview stands, and where it links. */
+/** A PR's deploy pill: where its preview stands, and where it links. */
 export function deployPill(d: PreviewDeploy): { text: string; bg: string; fg: string; href: string | null } {
   if (ACTIVE_STATES.has(d.state)) return { text: '▲ DEPLOYING', bg: '#2563eb', fg: '#ffffff', href: d.inspectorUrl }
   if (d.state === 'READY') return { text: '▲ PREVIEW', bg: '#16a34a', fg: '#ffffff', href: d.branchUrl ?? d.url }

@@ -3,7 +3,7 @@ import type { On, RenderElement } from 'claude-code'
 
 import { linearStatus, textOn } from './linear'
 import { scheduler } from './schedule'
-import { branchAlias, deployPill, githubRepo, latestPreview, previewBranch } from './vercel'
+import { branchAlias, deployPill, githubRepo, latestPreview } from './vercel'
 
 test('the scheduler runs each job on its own interval, off one tick', async () => {
   const runs: string[] = []
@@ -109,11 +109,7 @@ test('latestPreview takes the newest deployment of the branch in the repo', () =
   expect(latestPreview('not json', BRANCH, 'karmasuite', 9)).toBe(null)
 })
 
-test('the preview branch is the latest PR branch, else a ticket branch checked out', () => {
-  expect(previewBranch(['a', null, 'b'], 'c')).toBe('b')
-  expect(previewBranch([], 'jaswanth/kar-1')).toBe('jaswanth/kar-1')
-  expect(previewBranch([], 'main')).toBe(null)
-  expect(previewBranch([], null)).toBe(null)
+test('githubRepo reads the org and repo from a GitHub remote', () => {
   expect(githubRepo('git@github.com:karmasuite/karmasuite.git')).toEqual({ org: 'karmasuite', repo: 'karmasuite' })
   expect(githubRepo('https://github.com/karmasuite/karmasuite')).toEqual({ org: 'karmasuite', repo: 'karmasuite' })
   expect(githubRepo('git@gitlab.com:x/y.git')).toBe(null)
@@ -232,7 +228,7 @@ const PANE = {
 
 const label = async (ui: { find: (q: { key: string }) => Promise<unknown> }) => JSON.stringify(await ui.find({ key: 'open-project' }))
 
-test('the statusline shows the preview deploy and toggles the pane; the pane shows Linear live', async ($, on) => {
+test('the statusline toggles the pane; the pane shows Linear live and each PR its preview', async ($, on) => {
   const clock = mock.clock(on)
   let state = 'BUILDING'
   // An ended session in the Plan phase: a 5m turn, then 1m reading → 6m engaged.
@@ -244,8 +240,15 @@ test('the statusline shows the preview deploy and toggles the pane; the pane sho
   await clock.advance(5_000)
 
   const hint = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...HINT })
-  expect(await hint.find({ type: 'Text', text: '▲ DEPLOYING' })).toBeDefined()
+  // The statusline shows no preview, and with the pane closed none is asked for.
+  expect(JSON.stringify(await hint.drawn())).not.toContain('▲')
   expect(await label(hint)).toContain('≡ more')
+  expect(vercel.mcpCalls()).toBe(0)
+
+  await hint.press({ key: 'open-project' })
+  expect(await label(hint)).toContain('≡ less')
+  const pane = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...PANE })
+  expect(await pane.find({ type: 'Text', text: '▲ DEPLOYING' })).toBeDefined()
 
   // Building: polled every 10s.
   const before = vercel.mcpCalls()
@@ -254,8 +257,7 @@ test('the statusline shows the preview deploy and toggles the pane; the pane sho
 
   state = 'READY'
   await clock.advance(10_000)
-  // The pill opens the branch's alias, not this build's own URL.
-  expect(JSON.stringify(await hint.find({ type: 'Link', text: '▲ PREVIEW ↗' }))).toContain(ALIAS)
+  expect(await pane.find({ type: 'Text', text: '▲ PREVIEW' })).toBeDefined()
   // Asked for once: the alias is the branch's for good.
   expect(vercel.aliasCalls()).toBe(1)
   // Ready: back to every 2 minutes.
@@ -263,10 +265,6 @@ test('the statusline shows the preview deploy and toggles the pane; the pane sho
   await clock.advance(60_000)
   expect(vercel.mcpCalls()).toBe(settled)
 
-  await hint.press({ key: 'open-project' })
-  expect(await label(hint)).toContain('≡ less')
-
-  const pane = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...PANE })
   expect(await pane.find({ type: 'Text', text: 'In Review' })).toBeDefined()
   expect(JSON.stringify(await pane.drawn())).toMatch(/ live · \d{1,2}:\d\d (AM|PM)/)
   // The phase being worked shows the time spent on it, from the time log.
@@ -275,9 +273,10 @@ test('the statusline shows the preview deploy and toggles the pane; the pane sho
   expect(await pane.find({ type: 'Text', text: '6m engaged' })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: ' · agent 5m' })).toBeDefined()
   expect(await pane.find({ key: 'phase-none' })).toBeUndefined()
-  expect(await pane.find({ type: 'Text', text: 'PREVIEW DEPLOY' })).toBeDefined()
-  expect(JSON.stringify(await pane.find({ type: 'Link', text: 'open preview ↗' }))).toContain(ALIAS)
-  expect(await pane.find({ type: 'Text', text: BRANCH })).toBeDefined()
+  // The PR's row carries its preview: the branch's alias, not this build's own URL, and the build logs.
+  expect(await pane.find({ type: 'Text', text: 'PREVIEW DEPLOY' })).toBeUndefined()
+  expect(JSON.stringify(await pane.find({ key: 'pr-preview-6724' }))).toContain(ALIAS)
+  expect(await pane.find({ key: 'pr-logs-6724' })).toBeDefined()
   await pane.unmount()
 
   await hint.press({ key: 'open-project' })
@@ -285,22 +284,24 @@ test('the statusline shows the preview deploy and toggles the pane; the pane sho
   await hint.unmount()
 })
 
-test('without the vercel plugin the deploy pill and section stay hidden, and it stops asking', async ($, on) => {
+test('without the vercel plugin the PRs show no preview, and it stops asking', async ($, on) => {
   const clock = mock.clock(on)
   const vercel = checkout(on, 'missing')
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await clock.advance(5_000)
+
+  const hint = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...HINT })
+  expect(await hint.find({ type: 'Link', text: 'KAR-13147 ↗' })).toBeDefined()
+  await hint.press({ key: 'open-project' })
   await clock.advance(5_000)
   const asked = vercel.mcpCalls()
   expect(asked).toBe(1)
   await clock.advance(300_000)
   expect(vercel.mcpCalls()).toBe(asked)
 
-  const hint = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...HINT })
-  expect(await hint.find({ type: 'Link', text: 'KAR-13147 ↗' })).toBeDefined()
-  expect(JSON.stringify(await hint.drawn())).not.toContain('▲')
-  await hint.unmount()
-
   const pane = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...PANE })
-  expect(await pane.find({ type: 'Text', text: 'PREVIEW DEPLOY' })).toBeUndefined()
+  expect(await pane.find({ type: 'Link', text: 'GitHub ↗' })).toBeDefined()
+  expect(JSON.stringify(await pane.drawn())).not.toContain('▲')
   await pane.unmount()
+  await hint.unmount()
 })

@@ -73,7 +73,7 @@ export type LinearStatus = {
   checkedMinute: number
 }
 
-/** The newest Vercel preview deployment of the unit's branch. */
+/** The newest Vercel preview deployment of a PR's branch. */
 export type PreviewDeploy = {
   /** Vercel's deployment id (`dpl_…`). */
   id: string
@@ -99,7 +99,8 @@ declare module 'claude-code' {
       statusFacts: StatusFacts | null
       projectInfo: ProjectInfo | null
       linearStatus: LinearStatus | null
-      previewDeploy: PreviewDeploy | null
+      /** Each PR branch's newest preview, by branch name; fetched while the project pane is open. */
+      previewDeploys: Record<string, PreviewDeploy> | null
       /** Whether the project pane is open: the statusline's toggle reads `≡ less` then. */
       paneOpen: boolean
       /**
