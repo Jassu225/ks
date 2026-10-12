@@ -4,6 +4,7 @@ Monorepo for Claude Code plugins:
 
 - **`ks`** — KarmaSuite development workflows: a 10-phase project lifecycle orchestrated with slash commands, agents, and Linear integration.
 - **`ks-flow`** — a per-project Kanban board over your Claude Code sessions, with macOS notifications when a session blocks waiting for you. See `plugins/ks-flow/README.md`.
+- **`ks-agent-limit`** — caps how many Claude sessions and agents run at once on this machine (8 by default); a spawn past the limit is refused and reported, and the model waits and retries. Off unless loaded. See `plugins/ks-agent-limit/README.md`.
 
 ## Structure
 
@@ -13,7 +14,8 @@ ks/
 │   └── marketplace.json    # Plugin marketplace listing
 ├── plugins/
 │   ├── ks/                 # KarmaSuite plugin
-│   └── ks-flow/            # Session Kanban board + notifications
+│   ├── ks-flow/            # Session Kanban board + notifications
+│   └── ks-agent-limit/     # Machine-wide session + agent cap
 ├── CLAUDE.md
 └── README.md
 ```

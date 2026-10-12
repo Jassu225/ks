@@ -28,6 +28,17 @@
       },
       "repository": "https://github.com/karmasuite/ks",
       "keywords": ["claude-code", "kanban", "sessions", "notifications", "firestore"]
+    },
+    {
+      "name": "ks-agent-limit",
+      "source": "./plugins/ks-agent-limit",
+      "description": "Caps how many Claude sessions and agents run at once on this machine; a spawn past the limit is refused and reported",
+      "version": "0.1.0",
+      "author": {
+        "name": "Jaswanth Sai Sattenapalli"
+      },
+      "repository": "https://github.com/karmasuite/ks",
+      "keywords": ["claude-code", "agents", "concurrency", "limit"]
     }
   ]
 }

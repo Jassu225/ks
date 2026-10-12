@@ -1,0 +1,22 @@
+{
+  "name": "ks-agent-limit",
+  "version": "0.1.0",
+  "description": "Caps how many Claude sessions and agents run at once on this machine: every open session and every live agent holds a slot, and a spawn past the limit is refused and reported",
+  "author": {
+    "name": "Jaswanth Sai Sattenapalli"
+  },
+  "userConfig": {
+    "max_parallel": {
+      "type": "number",
+      "title": "Parallel limit",
+      "description": "Slots on this machine: every open Claude session and every live agent (subagent, teammate, workflow agent) holds one.",
+      "default": 8
+    },
+    "retry_minutes": {
+      "type": "number",
+      "title": "Retry after (minutes)",
+      "description": "How long a refused spawn tells the model to wait before it checks for a free slot again.",
+      "default": 3
+    }
+  }
+}

@@ -8,6 +8,7 @@ A monorepo for Claude Code plugins:
 
 - **`ks`** — KarmaSuite development workflows, which orchestrate a 10-phase software project lifecycle using slash commands, specialized agents, and Linear integration. In `claude-ks` sessions it also draws the workflow in the UI through a function-hook module (`hooks/register.tsx`): ticket and phase pills under the prompt (the shell statusline keeps session, context and branch) and a `/ks-project` pane (live Linear status, each PR's Vercel preview, engaged time per phase and in total). Its `time-log.sh` hook logs session events per ticket to `~/.claude/ks-time/`, and `ks-time` turns them into time spent (engaged and agent, by phase and day; gaps over 10 min count as away).
 - **`ks-flow`** — a per-project Kanban board over your Claude Code sessions (an always-on launchd daemon ingests session JSONL + workflow `state.yaml` into PocketBase/Firestore; a Next.js board renders it live), plus macOS notifications when a session blocks. Also has a per-card/per-session **reminder** system (daily re-nag, overdue red glow), an opt-in **Notes** page (free-form + Slack-permalink notes with reminders, split Professional/Personal), and **transcript backup** — Claude Code prunes `~/.claude/projects/**/*.jsonl` at 30 days, so a daily sweep (plus per-card and toolbar buttons) archives each session file, the unit's workflow and its time log to GCS, and cards offer a Restore when the bucket holds sessions this machine no longer has. The upload index and the run history live in the store (PocketBase `backup_units` / `backup_runs`); a **☁ Backups** page lists every run and what it uploaded. Long-running board actions (backup, restore, remove) each stream into their own bottom-right panel, kept above every page, with a **See logs** button beside the action once hidden. Self-bootstrapping. See `plugins/ks-flow/README.md`.
+- **`ks-agent-limit`** — a machine-wide cap on parallel Claude work: every open session and every live agent (subagent, teammate, workflow agent) holds a slot, 8 by default. Its `agent.spawn` gate refuses a spawn past the limit and tells the user (toast + status line); the model waits `retry_minutes` (3) and asks `mcp__ks-agent-limit__capacity` how many it may start. Sessions share counts through heartbeat files in `~/.claude/ks-agent-limit/`. See `plugins/ks-agent-limit/README.md`.
 
 ## Repository Structure
 
@@ -36,6 +37,10 @@ A monorepo for Claude Code plugins:
 │       ├── scripts/bootstrap.sh       # Self-bootstrap (deps, daemon build, launchd)
 │       ├── pocketbase/pb_migrations/  # Local store schema
 │       └── README.md                  # Full plugin docs
+│   └── ks-agent-limit/               # Machine-wide session + agent cap
+│       ├── hooks/register.ts          # agent.spawn gate, capacity tool, heartbeat
+│       ├── hooks/capacity.ts          # Counting logic (tested in capacity.test.ts)
+│       └── README.md
 ├── CLAUDE.md
 └── README.md
 ```
