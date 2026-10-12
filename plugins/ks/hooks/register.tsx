@@ -5,7 +5,7 @@ import type { PreviewDeploy, ProjectInfo, StatusFacts, WorkflowUnit } from '../t
 import { linearStatus, textOn } from './live/linear'
 import { scheduler } from './live/schedule'
 import type { Scheduler } from './live/schedule'
-import { ACTIVE_STATES, branchAlias, deployPill, githubRepo, latestPreview } from './live/vercel'
+import { ACTIVE_STATES, branchAlias, type Deployment, deployPill, githubRepo, latestPreview, listedDeployments } from './live/vercel'
 import { formatDuration, parseLog, summarize, withPhaseSpans } from '../scripts/lib/time-tracking'
 import { formatClock, formatWhen, projectInfo, workflowLabel } from './project/info'
 import { PULSE_FRAMES, PULSE_MS, pulseCell } from './project/pulse'
@@ -53,6 +53,10 @@ const DEPLOY_ACTIVE_MS = 10_000
 const DEPLOY_IDLE_MS = 120_000
 /** After a `git push`, poll as if deploying: Vercel takes a few seconds to list the new build. */
 const PUSH_WINDOW_MS = 90_000
+/** The most deployments one poll asks for; a full page means more happened, and each branch is asked again. */
+const SWEEP_LIMIT = 20
+/** How far before the last poll the next one reaches: Vercel's clock is not this machine's. */
+const SWEEP_SKEW_MS = 60_000
 
 /** The Vercel MCP server, as the vercel plugin registers it. */
 const VERCEL_SERVER = 'plugin:vercel:vercel'
@@ -290,9 +294,8 @@ async function discoverUnit($: EngineInterface): Promise<void> {
     mtimeMs = 0
     // Another unit's live figures are not this one's.
     await update($, linearAtom, () => null)
-    await update($, deployAtom, () => null)
     await update($, phaseTimeAtom, () => null)
-    deployActive = false
+    await forgetPreviews($)
   }
   statePath = found
   await loadUnit($)
@@ -305,6 +308,10 @@ let deployActive = false
 let pushedAt = -Infinity
 /** Each branch's stable preview alias, once Vercel has one: it never changes, so it is asked for once. */
 const branchUrls = new Map<string, string>()
+/** Each PR branch's newest preview as last seen (null: none yet); a branch missing here is looked up on its own. */
+const previews = new Map<string, PreviewDeploy | null>()
+/** When the last poll began: the next one asks only for deployments made since. Null: look every branch up. */
+let sweptAt: number | null = null
 /** Set once `$.mcp.call` cannot reach the Vercel server: the deploy job stops and the PRs show no preview. */
 let vercelMissing = false
 
@@ -324,42 +331,86 @@ async function loadLinear($: EngineInterface): Promise<void> {
   if (JSON.stringify(was) !== JSON.stringify(status)) await update($, linearAtom, () => status)
 }
 
-/** Each PR branch's newest Vercel preview, through the vercel plugin's MCP server. */
+/**
+ * Each PR branch's newest Vercel preview, through the vercel plugin's MCP
+ * server. A branch is looked up on its own once; after that one call per poll
+ * covers every branch: the team's deployments since the last poll.
+ */
 async function loadPreviews($: EngineInterface): Promise<void> {
   const info = await read($, infoAtom)
   const branches = [...new Set((info?.prs ?? []).flatMap(p => (p.branch ? [p.branch] : [])))]
   const repo = githubRepo(await run($, ['git', 'remote', 'get-url', 'origin']))
   if (branches.length === 0 || !repo) {
-    deployActive = false
-    await update($, deployAtom, () => null)
+    await forgetPreviews($)
     return
   }
+  for (const branch of previews.keys()) if (!branches.includes(branch)) previews.delete(branch)
 
-  const checkedMinute = Math.floor((await $.clock.now()) / 60000)
-  let found: (PreviewDeploy | null)[]
+  const startedAt = await $.clock.now()
+  const checkedMinute = Math.floor(startedAt / 60000)
+  /** One `list_deployments` call; the deployments it lists. */
+  const list = async (args: Record<string, unknown>): Promise<Deployment[]> => {
+    const result = await $.mcp.call(VERCEL_SERVER, 'list_deployments', { slug: repo.org, ...args })
+    // The server answered but refused (auth, scope): show no previews, try again next interval.
+    if (result.isError) throw new Error('refused')
+    return listedDeployments(result.content.map(c => ('text' in c ? String(c.text) : '')).join('')) ?? []
+  }
+  /** Each branch's newest deployment, asked one by one: a branch's last build can be weeks old. */
+  const seed = (todo: string[]) =>
+    Promise.all(todo.map(async branch => previews.set(branch, latestPreview(await list({ branch, limit: 1 }), branch, repo.repo, checkedMinute))))
+
   try {
-    found = await Promise.all(
+    const known = branches.filter(b => previews.has(b))
+    if (known.length > 0 && sweptAt !== null) {
+      // Back to the last poll, and to the oldest build still under way: its state moves without a new deployment.
+      const building = known.flatMap(b => {
+        const d = previews.get(b)
+        return d && ACTIVE_STATES.has(d.state) ? [d.createdAt] : []
+      })
+      const since = Math.min(sweptAt - SWEEP_SKEW_MS, ...building)
+      const listed = await list({ since, limit: SWEEP_LIMIT })
+      if (listed.length >= SWEEP_LIMIT) {
+        // More happened than one page shows (a long-closed pane): ask each branch again.
+        await seed(known)
+      } else {
+        for (const branch of known) {
+          const was = previews.get(branch) ?? null
+          const now = latestPreview(listed, branch, repo.repo, checkedMinute)
+          if (now && (!was || now.createdAt >= was.createdAt)) previews.set(branch, now)
+          else if (was) previews.set(branch, { ...was, checkedMinute })
+        }
+      }
+    }
+    await seed(branches.filter(b => !previews.has(b)))
+    await Promise.all(
       branches.map(async branch => {
-        const result = await $.mcp.call(VERCEL_SERVER, 'list_deployments', { slug: repo.org, branch, limit: 1 })
-        // The server answered but refused (auth, scope): show no previews, try again next interval.
-        if (result.isError) throw new Error('refused')
-        const text = result.content.map(c => ('text' in c ? String(c.text) : '')).join('')
-        const deploy = latestPreview(text, branch, repo.repo, checkedMinute)
-        return deploy && { ...deploy, branchUrl: await previewAlias($, deploy.id, branch, repo.org) }
+        const d = previews.get(branch)
+        if (d && !d.branchUrl) previews.set(branch, { ...d, branchUrl: await previewAlias($, d.id, branch, repo.org) })
       }),
     )
   } catch (error) {
     // No such server or tool (the vercel plugin is not installed): stop asking.
     if (!(error instanceof Error && error.message === 'refused')) vercelMissing = true
-    deployActive = false
-    await update($, deployAtom, () => null)
+    await forgetPreviews($)
     return
   }
+  sweptAt = startedAt
 
-  const deploys = Object.fromEntries(found.flatMap(d => (d ? [[d.branch, d] as const] : [])))
+  const deploys = Object.fromEntries(branches.flatMap(b => {
+    const d = previews.get(b)
+    return d ? [[b, d] as const] : []
+  }))
   deployActive = Object.values(deploys).some(d => ACTIVE_STATES.has(d.state))
   const was = await read($, deployAtom)
   if (JSON.stringify(was) !== JSON.stringify(deploys)) await update($, deployAtom, () => deploys)
+}
+
+/** Drops what is known of the previews: the next poll looks each branch up again. */
+async function forgetPreviews($: EngineInterface): Promise<void> {
+  previews.clear()
+  sweptAt = null
+  deployActive = false
+  await update($, deployAtom, () => null)
 }
 
 /**

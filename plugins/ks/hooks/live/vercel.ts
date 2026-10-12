@@ -12,7 +12,7 @@ export function githubRepo(remote: string | null): { org: string; repo: string }
   return m?.[1] && m[2] ? { org: m[1], repo: m[2] } : null
 }
 
-type Deployment = {
+export type Deployment = {
   id?: unknown
   url?: unknown
   state?: unknown
@@ -22,11 +22,11 @@ type Deployment = {
 }
 
 /**
- * The newest deployment of `branch` in `repo`, from the text `list_deployments`
- * answers with (`{ result: { deployments: { deployments: [...] } } }`); null
- * when it holds none.
+ * The deployments in the text `list_deployments` answers with
+ * (`{ result: { deployments: { deployments: [...] } } }`); null when it is not
+ * such a list.
  */
-export function latestPreview(text: string, branch: string, repo: string, checkedMinute: number): PreviewDeploy | null {
+export function listedDeployments(text: string): Deployment[] | null {
   let doc: unknown
   try {
     doc = JSON.parse(text)
@@ -35,9 +35,12 @@ export function latestPreview(text: string, branch: string, repo: string, checke
   }
   const root = doc as { result?: { deployments?: { deployments?: unknown } }; deployments?: unknown } | null
   const listed = root?.result?.deployments?.deployments ?? root?.deployments
-  if (!Array.isArray(listed)) return null
+  return Array.isArray(listed) ? (listed as Deployment[]) : null
+}
 
-  const newest = (listed as Deployment[])
+/** The newest deployment of `branch` in `repo` among `listed`; null when it holds none. */
+export function latestPreview(listed: Deployment[], branch: string, repo: string, checkedMinute: number): PreviewDeploy | null {
+  const newest = listed
     .filter(d => d.meta?.githubCommitRef === branch && (d.meta?.githubRepo === undefined || d.meta.githubRepo === repo))
     .sort((a, b) => Number(b.created ?? 0) - Number(a.created ?? 0))[0]
   if (!newest || typeof newest.state !== 'string' || typeof newest.id !== 'string') return null

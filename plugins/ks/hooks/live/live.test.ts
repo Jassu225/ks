@@ -3,7 +3,7 @@ import type { On, RenderElement } from 'claude-code'
 
 import { linearStatus, textOn } from './linear'
 import { scheduler } from './schedule'
-import { branchAlias, deployPill, githubRepo, latestPreview } from './vercel'
+import { branchAlias, deployPill, githubRepo, latestPreview, listedDeployments } from './vercel'
 
 test('the scheduler runs each job on its own interval, off one tick', async () => {
   const runs: string[] = []
@@ -88,13 +88,14 @@ function deployments(...list: { ref: string; state: string; created: number; rep
 }
 
 test('latestPreview takes the newest deployment of the branch in the repo', () => {
+  const listed = (text: string) => listedDeployments(text) ?? []
   const text = deployments(
     { ref: BRANCH, state: 'READY', created: 1 },
     { ref: BRANCH, state: 'BUILDING', created: 3 },
     { ref: 'main', state: 'BUILDING', created: 4 },
     { ref: BRANCH, state: 'READY', created: 5, repo: 'other' },
   )
-  expect(latestPreview(text, BRANCH, 'karmasuite', 9)).toEqual({
+  expect(latestPreview(listed(text), BRANCH, 'karmasuite', 9)).toEqual({
     id: 'dpl_1',
     branch: BRANCH,
     state: 'BUILDING',
@@ -105,8 +106,8 @@ test('latestPreview takes the newest deployment of the branch in the repo', () =
     createdAt: 3,
     checkedMinute: 9,
   })
-  expect(latestPreview(deployments({ ref: 'main', state: 'READY', created: 1 }), BRANCH, 'karmasuite', 9)).toBe(null)
-  expect(latestPreview('not json', BRANCH, 'karmasuite', 9)).toBe(null)
+  expect(latestPreview(listed(deployments({ ref: 'main', state: 'READY', created: 1 })), BRANCH, 'karmasuite', 9)).toBe(null)
+  expect(listedDeployments('not json')).toBe(null)
 })
 
 test('githubRepo reads the org and repo from a GitHub remote', () => {
@@ -151,13 +152,15 @@ const ticketDoc = {
 
 const LINEAR_JSON = JSON.stringify({ identifier: 'KAR-13147', state: { name: 'In Review', type: 'started', color: '#0f783c' } })
 
-/** `mcp` answers list_deployments; 'missing' fails as an engine without the vercel plugin does. */
+/** `mcp` answers list_deployments (given its arguments); 'missing' fails as an engine without the vercel plugin does. */
 function checkout(
   on: On,
-  mcp: (() => string) | 'missing',
+  mcp: ((args: Record<string, unknown>) => string) | 'missing',
   timeLog: () => string = () => '',
-): { mcpCalls: () => number; aliasCalls: () => number } {
+  doc: typeof ticketDoc = ticketDoc,
+): { mcpCalls: () => number; aliasCalls: () => number; listed: Record<string, unknown>[] } {
   let calls = 0
+  const listed: Record<string, unknown>[] = []
   let aliasCalls = 0
   mock.env(on, { HOME: '/home/u' })
   on('session.start', () => ({ cwd: ROOT }))
@@ -175,7 +178,7 @@ function checkout(
             : argv.startsWith('date ')
               ? '+0530'
               : e.argv[0] === 'node'
-                ? JSON.stringify(ticketDoc)
+                ? JSON.stringify(doc)
                 : argv.includes('linear-cli.ts issue get KAR-13147 --json')
                   ? LINEAR_JSON
                   : ''
@@ -205,14 +208,16 @@ function checkout(
       return { value: { content: [{ type: 'text' as const, text: aliases(ALIAS) }], isError: false } }
     }
     calls++
-    return { value: { content: [{ type: 'text' as const, text: mcp() }], isError: false } }
+    const args = e.args
+    listed.push(args)
+    return { value: { content: [{ type: 'text' as const, text: mcp(args) }], isError: false } }
   })
   // The engine's own hint line, beneath the plugin.
   on('ui.render', { component: 'PromptHint' }, ($, e) => {
     const { Text } = $.ui.resolve(e)
     return h(Text, {}, 'bypass permissions on') as RenderElement
   })
-  return { mcpCalls: () => calls, aliasCalls: () => aliasCalls }
+  return { mcpCalls: () => calls, aliasCalls: () => aliasCalls, listed }
 }
 
 const HINT = {
@@ -302,6 +307,53 @@ test('without the vercel plugin the PRs show no preview, and it stops asking', a
   const pane = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...PANE })
   expect(await pane.find({ type: 'Link', text: 'GitHub ↗' })).toBeDefined()
   expect(JSON.stringify(await pane.drawn())).not.toContain('▲')
+  await pane.unmount()
+  await hint.unmount()
+})
+
+test('every PR branch is looked up once; after that one call per poll covers them all', async ($, on) => {
+  const clock = mock.clock(on)
+  const branches = ['b/one', 'b/two', 'b/three']
+  const doc = { ...ticketDoc, prs: branches.map((branch, i) => ({ url: `https://github.com/karmasuite/karmasuite/pull/${100 + i}`, branch })) }
+  // Each branch has a ready build; a sweep lists only what changed: b/two building again.
+  let sweep = () => deployments({ ref: 'b/two', state: 'BUILDING', created: 50 }, { ref: 'main', state: 'READY', created: 51 })
+  const vercel = checkout(
+    on,
+    args => (typeof args.branch === 'string' ? deployments({ ref: args.branch, state: 'READY', created: 10 }) : sweep()),
+    () => '',
+    doc,
+  )
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await clock.advance(5_000)
+  const hint = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...HINT })
+  await hint.press({ key: 'open-project' })
+  const pane = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...PANE })
+
+  // Opening the pane: one call per branch.
+  expect(vercel.listed.map(a => a.branch).sort()).toEqual([...branches].sort())
+  expect(JSON.stringify(await pane.find({ key: 'pr-preview-100' }))).toContain(ALIAS)
+
+  // The next poll: one call for every branch, back to the last poll.
+  await clock.advance(120_000)
+  const polls = vercel.listed.slice(branches.length)
+  expect(polls).toHaveLength(1)
+  expect(polls[0]?.branch).toBeUndefined()
+  expect(typeof polls[0]?.since).toBe('number')
+  expect(JSON.stringify(await pane.drawn())).toContain('▲ DEPLOYING')
+  // A branch the sweep did not list keeps its last build.
+  expect(JSON.stringify(await pane.drawn())).toContain('▲ PREVIEW')
+
+  // Building: polled every 10s, still one call a poll, reaching back to the build's start.
+  const before = vercel.listed.length
+  await clock.advance(10_000)
+  expect(vercel.listed.length).toBe(before + 1)
+  expect(vercel.listed.at(-1)?.since).toBe(50)
+
+  // A full page means more happened than it shows: each branch is asked again.
+  sweep = () => deployments(...Array.from({ length: 20 }, (_, i) => ({ ref: 'main', state: 'READY', created: 60 + i })))
+  const full = vercel.listed.length
+  await clock.advance(10_000)
+  expect(vercel.listed.slice(full).map(a => a.branch ?? 'sweep').sort()).toEqual([...branches, 'sweep'].sort())
   await pane.unmount()
   await hint.unmount()
 })
