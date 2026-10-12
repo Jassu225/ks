@@ -52,6 +52,10 @@ linear issue update KAR-123 --cycle next --position last   # also: current, prev
 linear issue update KAR-123 --after KAR-124                 # or --before KAR-124
 linear issue create --title "Follow-up" --team KAR --cycle current --position last
 
+# Bulk: the same fields on many issues in ONE request (issueBatchUpdate, at most 50 issues; one team for --cycle/--state)
+linear issue bulk-update KAR-1 KAR-2 KAR-3 --cycle next --dry-run   # resolve and show, change nothing
+linear issue bulk-update KAR-1 KAR-2 KAR-3 --cycle next             # also --state, --assignee, --priority; sends no sortOrder
+
 # Relations (KAR-123 <type> each listed issue)
 linear issue relate KAR-123 KAR-124 KAR-125              # related (default)
 linear issue relate KAR-123 KAR-124 --type blocks        # KAR-123 blocks KAR-124

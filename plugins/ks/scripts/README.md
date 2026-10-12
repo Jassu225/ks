@@ -88,6 +88,7 @@ npx tsx linear-cli.ts issue unrelate KAR-123 KAR-124
 # Move into a cycle and set manual (drag-and-drop) order
 npx tsx linear-cli.ts issue update KAR-123 --cycle next --position last
 npx tsx linear-cli.ts issue update KAR-123 --after KAR-124
+npx tsx linear-cli.ts issue bulk-update KAR-1 KAR-2 KAR-3 --cycle next  # one issueBatchUpdate request, ≤50 issues, no sortOrder sent
 npx tsx linear-cli.ts issue create --title "Follow-up" --team KAR --related KAR-123 \
   --description-file desc.md   # file form keeps backticks off the command line ("-" = stdin)
 

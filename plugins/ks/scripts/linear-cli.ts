@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 
 import { loadEnv } from './lib/env.js';
 import { getLinearClient } from './lib/linear-client.js';
+import { ISSUE_SORTS, issueSort, type IssueSort } from './lib/issue-sort.js';
 
 loadEnv();
 
@@ -430,7 +431,7 @@ async function listIssues(options: {
 }): Promise<void> {
   const client = getClient();
 
-  if (options.sort && !['manual', 'created', 'updated'].includes(options.sort)) {
+  if (options.sort && !(ISSUE_SORTS as readonly string[]).includes(options.sort)) {
     console.error(chalk.red(`Invalid --sort: ${options.sort} (use manual, created, or updated)`));
     process.exit(1);
   }
@@ -466,7 +467,9 @@ async function listIssues(options: {
 
   const issues = await client.issues({
     first: options.limit || 50,
-    filter: Object.keys(filter).length > 0 ? filter : undefined
+    filter: Object.keys(filter).length > 0 ? filter : undefined,
+    // Sorted by Linear, before `first` applies (lib/issue-sort.ts).
+    sort: issueSort(options.sort as IssueSort | undefined)
   });
 
   const data = await Promise.all(issues.nodes.map(async (i) => {
@@ -492,16 +495,6 @@ async function listIssues(options: {
       updatedAt: i.updatedAt
     };
   }));
-
-  // Sorting is client-side, so it orders only the fetched page — raise --limit if it truncates.
-  // "manual" is Linear's drag-and-drop order (Issue.sortOrder, ascending = top of the list).
-  if (options.sort === 'manual') {
-    data.sort((a, b) => a.sortOrder - b.sortOrder);
-  } else if (options.sort === 'created') {
-    data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } else if (options.sort === 'updated') {
-    data.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  }
 
   if (options.json) {
     output(data, true);
@@ -941,6 +934,91 @@ async function updateIssue(identifier: string, options: {
     output({ success: true, identifier: issue.identifier, sortOrder: updateInput.sortOrder }, true);
   } else {
     console.log(chalk.green(`Updated issue: ${issue.identifier}`));
+  }
+}
+
+/** Linear refuses an `issueBatchUpdate` over this many issues. */
+const BATCH_UPDATE_MAX = 50;
+
+/**
+ * Set the same fields on many issues in ONE `issueBatchUpdate` request (not a
+ * loop of updates). Sends no sortOrder: Linear decides where they land.
+ */
+async function bulkUpdateIssues(identifiers: string[], options: {
+  state?: string;
+  assignee?: string;
+  priority?: number;
+  cycle?: string;
+  dryRun?: boolean;
+  json?: boolean;
+}): Promise<void> {
+  const client = getClient();
+  const fail = (message: string): never => {
+    console.error(chalk.red(message));
+    process.exit(1);
+  };
+
+  const wanted = [...new Set(identifiers.map(i => i.toUpperCase()))];
+  if (wanted.length > BATCH_UPDATE_MAX) {
+    fail(`${wanted.length} issues: Linear takes at most ${BATCH_UPDATE_MAX} per batch update. Split them into several calls.`);
+  }
+  const malformed = wanted.filter(i => !/^[A-Z]+-\d+$/.test(i));
+  if (malformed.length > 0) fail(`Not issue identifiers: ${malformed.join(', ')}`);
+  if (options.state === undefined && options.assignee === undefined && options.priority === undefined && options.cycle === undefined) {
+    fail('Nothing to update: pass --cycle, --state, --assignee or --priority');
+  }
+
+  // One lookup per team: every number of that team in one query.
+  const byTeam = new Map<string, number[]>();
+  for (const id of wanted) {
+    const [teamKey, num] = id.split('-');
+    byTeam.set(teamKey, [...(byTeam.get(teamKey) ?? []), parseInt(num, 10)]);
+  }
+  const found: Issue[] = [];
+  for (const [teamKey, numbers] of byTeam) {
+    const page = await client.issues({ first: BATCH_UPDATE_MAX, filter: { team: { key: { eq: teamKey } }, number: { in: numbers } } });
+    found.push(...page.nodes);
+  }
+  const missing = wanted.filter(id => !found.some(i => i.identifier === id));
+  if (missing.length > 0) fail(`Issues not found: ${missing.join(', ')}`);
+  // Keep the order they were given in.
+  const issues = wanted.map(id => found.find(i => i.identifier === id) as Issue);
+
+  const input: LinearDocument.IssueUpdateInput = {};
+  if (options.priority !== undefined) input.priority = options.priority;
+  if (options.assignee !== undefined) {
+    input.assigneeId = options.assignee === 'me' ? (await client.viewer).id : options.assignee === 'none' ? null : options.assignee;
+  }
+  // Cycles and workflow states belong to a team: one value fits only issues of one team.
+  if (options.cycle !== undefined || options.state !== undefined) {
+    if (byTeam.size > 1) fail(`--cycle and --state are per team; these issues span ${[...byTeam.keys()].join(', ')}`);
+    const team = await issues[0].team;
+    if (!team) fail(`No team for ${issues[0].identifier}`);
+    if (options.cycle !== undefined) {
+      const cycle = await resolveCycle(team as Team, options.cycle);
+      input.cycleId = cycle ? cycle.id : null;
+    }
+    if (options.state !== undefined) {
+      const states = await (team as Team).states();
+      const state = states.nodes.find(s => s.name.toLowerCase() === options.state?.toLowerCase());
+      if (!state) fail(`State not found for team ${(team as Team).key}: ${options.state}`);
+      input.stateId = (state as { id: string }).id;
+    }
+  }
+
+  const summary = { count: issues.length, identifiers: issues.map(i => i.identifier), input };
+  if (options.dryRun) {
+    if (options.json) output({ dryRun: true, ...summary }, true);
+    else console.log(chalk.yellow(`Dry run: would update ${issues.length} issues in one request with ${JSON.stringify(input)}\n  ${summary.identifiers.join(' ')}`));
+    return;
+  }
+
+  const result = await client.updateIssueBatch(issues.map(i => i.id), input);
+  if (!result.success) fail('Linear did not apply the batch update');
+  if (options.json) {
+    output({ success: true, ...summary }, true);
+  } else {
+    console.log(chalk.green(`Updated ${issues.length} issues in one request: ${summary.identifiers.join(' ')}`));
   }
 }
 
@@ -1993,6 +2071,20 @@ issueCmd
   .option('--before <identifier>', 'Manual order: place directly before this issue')
   .option('-j, --json', 'Output as JSON')
   .action(createIssue);
+
+issueCmd
+  .command('bulk-update <identifiers...>')
+  .description(`Set the same fields on many issues in one request (at most ${BATCH_UPDATE_MAX}); sends no manual order`)
+  .option('--cycle <cycle>', 'Cycle: current, next, previous, a cycle number, a cycle ID, or none')
+  .option('--state <name>', 'New state name')
+  .option('--status <name>', 'Alias for --state')
+  .option('--assignee <id>', 'New assignee (use "me" or "none")')
+  .option('--priority <number>', 'New priority', (v: string) => parseInt(v, 10))
+  .option('--dry-run', 'Resolve the issues and the update, change nothing')
+  .option('-j, --json', 'Output as JSON')
+  .action((identifiers: string[], opts: Record<string, unknown>) =>
+    bulkUpdateIssues(identifiers, { ...opts, state: opts.state || opts.status } as Parameters<typeof bulkUpdateIssues>[1])
+  );
 
 issueCmd
   .command('update <identifier>')
