@@ -313,7 +313,7 @@ async function main(): Promise<void> {
     // A single worktree by path. The removal hook needs this: the worktree is
     // about to be deleted, and it may not be in `git worktree list` order or
     // resolvable from the project root by then.
-    targets = [targetForWorktree(expandTilde(args.worktree), args.identifier)];
+    targets = [targetForWorktree(expandTilde(args.worktree), args.identifier, conf.projectPath)];
   } else if (args.completed) {
     targets = discoverCompletedTargets(conf.projectPath);
   } else {

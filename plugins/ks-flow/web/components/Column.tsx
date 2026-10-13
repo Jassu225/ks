@@ -7,12 +7,14 @@ export function Column({
   sessions,
   reminders,
   now,
+  onRefresh,
 }: {
   phase: PhaseRef;
   units: WorkUnitDoc[];
   sessions: SessionDoc[];
   reminders: ReminderDoc[];
   now: number;
+  onRefresh?: () => void | Promise<void>;
 }) {
   return (
     <div className="flex w-72 shrink-0 flex-col rounded-xl bg-slate-900/60">
@@ -37,6 +39,7 @@ export function Column({
               reminders={reminders}
               now={now}
               dimmed={!u.worktreeDir}
+              onRemoved={onRefresh}
             />
           ))}
         {units.length === 0 && (

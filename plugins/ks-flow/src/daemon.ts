@@ -52,6 +52,8 @@ import {
 } from './lib/paths.js';
 import { isInProject, listWorktrees, toplevel } from './lib/worktree.js';
 import { dayStr, fileDay, pruneRotations, rotateFile } from './lib/rotate.js';
+import { scheduler, type Scheduler } from './lib/schedule.js';
+import { fetchLinearFacts, type LinearFacts } from './lib/linear-sync.js';
 
 const cfg = loadConfig();
 const conf = readProjectConf();
@@ -111,6 +113,11 @@ const units = new Map<string, WorkUnitDoc>(); // stateYamlPath → work-unit
 const stateMtimes = new Map<string, number>(); // stateYamlPath → last-parsed mtimeMs (read-I/O gate)
 const lastUnitSig = new Map<string, string>(); // unitId → last-written doc signature (write gate)
 let lastProjectSig: string | null = null; // last-written project doc signature (write gate)
+const linearLive = new Map<string, LinearFacts>(); // identifier → last values read from Linear
+let boardTickets: string[] = []; // identifiers of the tickets the board shows as cards
+const lastJoined = new Map<string, WorkUnitDoc>(); // unitId → the card as last computed (sessions joined)
+const cardRefresh = new Map<string, { at: string; error: string | null }>(); // unitId → last card Refresh
+let clock: Scheduler | null = null; // the one clock (startWatchers)
 const worktreePathCache = new Map<string, string | null>(); // cwd → toplevel
 const pendingOverlays = new Map<string, Array<{ id: string; kind: string; since: string }>>();
 let knownWorktrees: string[] = conf.worktreePaths ?? [];
@@ -131,7 +138,10 @@ const stopState = new Map<string, StopState>(); // sessionId → stop-nudge stat
 // into a single grouped notice instead of an N-notice burst. Cleared after the
 // first reminderTick.
 let armingFromStartup = true;
-const REMINDER_TICK_MS = 30_000;
+/** The daemon's one clock (lib/schedule); every job interval is a multiple of it. */
+const TICK_MS = 15_000;
+const REMINDER_TICK_MS = 30_000; // 2 ticks
+const LINEAR_SYNC_MS = 180_000; // 12 ticks
 // Activity newer than the stop by more than this = a genuine resume (not the
 // turn-ending transcript line, which trails the Stop event by a few seconds).
 const RESUME_MARGIN_MS = 30_000;
@@ -250,8 +260,95 @@ function scheduleProjectRecompute(): void {
   }, 700);
 }
 
+// ── live Linear fields ───────────────────────────────────────────────────────
+// Statuses the board treats as finished (mirrors DONE_STATUSES in
+// web/components/Board.tsx), plus Linear's own completed/canceled state types.
+const BOARD_DONE_STATUSES = new Set(['done', 'completed', 'complete', 'canceled', 'cancelled', 'merged', 'closed', 'archived']);
+const isDoneOnBoard = (u: WorkUnitDoc): boolean =>
+  (!!u.linearStatus && BOARD_DONE_STATUSES.has(u.linearStatus.trim().toLowerCase())) ||
+  u.linearStatusType === 'completed' ||
+  u.linearStatusType === 'canceled';
+
+/** A unit with the values last read from Linear laid over its state.yaml snapshot. */
+function withLinear(u: WorkUnitDoc): WorkUnitDoc {
+  const live = u.type === 'ticket' ? linearLive.get(u.identifier) : undefined;
+  if (!live) return u;
+  return {
+    ...u,
+    title: live.title,
+    linearUrl: live.url,
+    priority: live.priority,
+    estimate: live.estimate,
+    linearStatus: live.status?.name ?? u.linearStatus,
+    linearStatusColor: live.status?.color ?? null,
+    linearStatusType: live.status?.type ?? null,
+    linearSyncedAt: live.syncedAt,
+  };
+}
+
+/**
+ * The `linear` job: read every board ticket from Linear in one call and lay the
+ * values over the cards. Only the board's cards (live worktree, not finished) —
+ * a ticket moving to Done is seen here, and its card then leaves the board and
+ * stops being polled. A failed call keeps the last good values.
+ */
+async function syncLinear(): Promise<void> {
+  try {
+    await readLinear(boardTickets);
+  } catch (e) {
+    log('linear sync failed (keeping last values):', (e as Error)?.message);
+  }
+}
+
+/** Read `ids` from Linear into linearLive. Throws on failure (last values stay). */
+async function readLinear(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const facts = await fetchLinearFacts(ids);
+  for (const [id, f] of facts) linearLive.set(id, f);
+  scheduleProjectRecompute();
+}
+
+/** The `stateYaml` job for one card: re-parse its state.yaml copies even if their
+ * mtime says unchanged (a Refresh is the user saying "look again"). */
+function rescanUnitStateYaml(unitId: string): void {
+  for (const [path, u] of units) {
+    if (u.unitId !== unitId) continue;
+    try {
+      ingestStateYaml(path, statSync(path).mtimeMs);
+    } catch {
+      // gone since the last scan — the next full scan drops it
+    }
+  }
+}
+
+/** Catch up one card's session transcripts (normally the watcher's job). */
+function catchUpUnitSessions(unitId: string): void {
+  for (const sessionId of lastJoined.get(unitId)?.sessionIds ?? []) {
+    const path = sessionDocs.get(sessionId)?.filePath;
+    if (path) onSession(path);
+  }
+}
+
+/**
+ * A card's Refresh (the board appends a RefreshCard event): run every clock job
+ * that has a per-card form for this card — worktrees, its state.yaml, its Linear
+ * fields — catch up its session transcripts, then rewrite the card with
+ * cardRefreshedAt (and cardRefreshError when a step failed) so the board knows
+ * it is done.
+ */
+async function refreshCard(unitId: string): Promise<void> {
+  if (!clock) return; // startup replay: the first tick refreshes everything anyway
+  const failed = await clock.runFor(unitId);
+  catchUpUnitSessions(unitId);
+  cardRefresh.set(unitId, {
+    at: nowIso(),
+    error: failed.length ? failed.map((f) => `${f.name}: ${f.error}`).join('; ') : null,
+  });
+  await recomputeProject();
+}
+
 async function recomputeProject(): Promise<void> {
-  const unitList = [...units.values()];
+  const unitList = [...units.values()].map(withLinear);
   const sessions = [...sessionDocs.values()].filter((s) => s.inProject);
   // phase model + per-card column
   const withPhase = unitList.map((u) => ({ ...u, currentPhase: currentPhase(u) }));
@@ -292,6 +389,11 @@ async function recomputeProject(): Promise<void> {
   const phaseModel = derivePhaseModel(deduped);
   // join sessions onto each card
   const joined = deduped.map((u) => joinUnit(u, sessions));
+  lastJoined.clear();
+  for (const u of joined) lastJoined.set(u.unitId, u);
+  boardTickets = joined
+    .filter((u) => u.type === 'ticket' && /^[A-Z]+-\d+$/.test(u.identifier) && isLive(u.worktreeDir) && !isDoneOnBoard(u))
+    .map((u) => u.identifier);
 
   // Write gate: only upsert docs that actually changed. recomputeProject runs on
   // every state.yaml/session change but touches every unit, so without this a
@@ -316,7 +418,12 @@ async function recomputeProject(): Promise<void> {
   // existsSync isn't enough). Null it otherwise so the board hides the backlog.
   for (const u of joined) {
     const worktreeDir = isLive(u.worktreeDir) ? u.worktreeDir : null;
-    const doc = { ...u, worktreeDir };
+    const refreshed = cardRefresh.get(u.unitId);
+    const doc = {
+      ...u,
+      worktreeDir,
+      ...(refreshed ? { cardRefreshedAt: refreshed.at, cardRefreshError: refreshed.error } : {}),
+    };
     const sig = JSON.stringify(doc);
     if (lastUnitSig.get(u.unitId) === sig) continue; // unchanged → skip the DB write
     lastUnitSig.set(u.unitId, sig);
@@ -365,8 +472,16 @@ function ingestEvents(): void {
   }
   for (const line of lines) {
     const ev = line as Record<string, unknown>;
-    const sessionId = typeof ev.sessionId === 'string' ? ev.sessionId : null;
     const kind = typeof ev.kind === 'string' ? ev.kind : null;
+    // A card's Refresh (the board appends this): bring that card up to date now.
+    if (kind === 'RefreshCard') {
+      if (typeof ev.unitId === 'string') {
+        const unitId = ev.unitId;
+        refreshCard(unitId).catch((e) => log(`refresh ${unitId} failed`, (e as Error)?.message));
+      }
+      continue;
+    }
+    const sessionId = typeof ev.sessionId === 'string' ? ev.sessionId : null;
     const id = typeof ev.id === 'string' ? ev.id : null;
     const since = typeof ev.ts === 'string' ? ev.ts : nowIso();
     if (!sessionId || !kind || !id) continue;
@@ -827,38 +942,69 @@ function startWatchers(): void {
   eventsWatcher.on('change', ingestEvents);
   eventsWatcher.on('error', (e) => log('events watcher error (continuing):', (e as Error)?.message));
 
-  // state.yaml: a recursive chokidar `**` glob over the workflow tree opens an
-  // FSWatcher per directory and blows the FD limit (EMFILE) on a big tree.
-  // state.yaml changes are infrequent, so a periodic re-scan (idempotent) is
-  // both cheaper and far more robust.
-  setInterval(scanAllStateYaml, 15_000);
-
-  // periodic worktree re-enumeration → add watches for new worktrees. When the
-  // worktree set changes (e.g. a completed worktree was removed), recompute so
-  // dead worktreeDirs get nulled — the state.yaml rescan no longer forces a
-  // recompute every tick now that it's mtime-gated.
-  setInterval(() => {
+  // Every periodic job runs off one clock (lib/schedule): a tick every TICK_MS
+  // runs the jobs whose interval has passed, never one still running from the
+  // last tick. A wake from sleep runs each overdue job once on the first tick.
+  // The debounces and watchers above are event-driven, not polls, so they stay
+  // off the clock.
+  // Worktree re-enumeration → add watches for new worktrees. When the set
+  // changes (a worktree created or removed), recompute so dead worktreeDirs get
+  // nulled, and rescan state.yaml now so a new worktree's unit shows without
+  // waiting for its tick.
+  const rescanWorktrees = (): void => {
     const before = knownWorktrees.join('\n');
     const fresh = enumerateProjectDirs();
     sessionWatcher.add(fresh);
-    if (knownWorktrees.join('\n') !== before) scheduleProjectRecompute();
-  }, 60_000);
+    if (knownWorktrees.join('\n') !== before) {
+      scheduleProjectRecompute();
+      clock?.kick('stateYaml', Date.now());
+    }
+  };
 
-  // Reminder engine: one light poll — stop-nudges + due custom reminders.
-  setInterval(() => {
-    reminderTick().catch((e) => log('reminderTick failed', e?.message));
-  }, REMINDER_TICK_MS);
+  // Table order is also the order a card's Refresh runs the per-card forms
+  // (runFor): worktrees, then state.yaml, then Linear.
+  clock = scheduler(
+    {
+      // One `git worktree list`; per card it is the same call — whether the
+      // card's worktree is still live is a property of the whole list.
+      worktrees: { every: 60_000, run: rescanWorktrees, runFor: rescanWorktrees },
 
-  // End-of-day transcript backup: a 60s poll that fires the sweep at most once
-  // per day (also catching up after sleep). The check itself is a settings read
-  // plus, until today's sweep has run, one small store read.
-  setInterval(() => void backupTick(), 60_000);
+      // state.yaml: a recursive chokidar `**` glob over the workflow tree opens an
+      // FSWatcher per directory and blows the FD limit (EMFILE) on a big tree.
+      // state.yaml changes are infrequent, so a periodic re-scan (idempotent,
+      // mtime-gated) is both cheaper and far more robust.
+      stateYaml: { every: TICK_MS, run: scanAllStateYaml, runFor: rescanUnitStateYaml },
 
-  // Daily log rotation: roll events.jsonl + daemon.log at the midnight boundary,
-  // keeping the last 30 days of each. 60s granularity is plenty for a day flip.
-  setInterval(rotateLogsIfNewDay, 60_000);
+      // Reminder engine: stop-nudges + due custom reminders.
+      reminders: { every: REMINDER_TICK_MS, run: reminderTick },
 
-  log('watching', dirs.length, 'session dir(s) + events; rescanning workflow state.yaml every 15s');
+      // End-of-day transcript backup: fires the sweep at most once per day (also
+      // catching up after sleep). The check is a settings read plus, until
+      // today's sweep has run, one small store read.
+      backup: { every: 60_000, run: backupTick },
+
+      // Daily log rotation: roll events.jsonl + daemon.log at the midnight
+      // boundary, keeping the last 30 days of each. A minute is plenty for a day flip.
+      rotateLogs: { every: 60_000, run: rotateLogsIfNewDay },
+
+      // Live Linear fields (status, title, priority, estimate, URL) for every
+      // ticket on the board, in one `linear issue batch-get` call; per card,
+      // the same call for that one ticket.
+      linear: {
+        every: LINEAR_SYNC_MS,
+        run: syncLinear,
+        runFor: (unitId) => (/^[A-Z]+-\d+$/.test(unitId) ? readLinear([unitId]) : undefined),
+      },
+    },
+    (name, e) => log(`${name} failed`, (e as Error)?.message),
+  );
+  // No tick now: startup has just scanned state.yaml (backfill) and runs its own
+  // reminder pass after reconstructStopState() — a reminder tick here would come
+  // before the re-arm and use up the startup catch-up. The first tick is at
+  // +TICK_MS, when every job runs once.
+  setInterval(() => clock?.tick(Date.now()), TICK_MS);
+
+  log('watching', dirs.length, `session dir(s) + events; one ${TICK_MS / 1000}s clock for the periodic jobs`);
 }
 
 function onSession(path: string): void {

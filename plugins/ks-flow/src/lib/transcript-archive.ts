@@ -295,17 +295,35 @@ function safeDirents(dir: string): import('node:fs').Dirent[] {
  * than a project root — notably the removal hook, which runs against a worktree
  * that is about to be deleted.
  */
-export function targetForWorktree(worktreePath: string, identifier?: string): UnitTarget {
-  const found = identityFromWorktree(worktreePath);
+export function targetForWorktree(worktreePath: string, identifier?: string, projectPath?: string): UnitTarget {
+  const id = identifier?.trim() || null;
+  // Older state.yamls carry no worktree_dir, so identityFromWorktree misses them;
+  // the removal hook still hands us the identifier, which names the unit's dir.
+  // Never fall back to the whole `workflow/` folder: it holds every unit's
+  // tree (create-worktree copies it whole), and restoring that archive nested
+  // the lot inside one ticket's folder.
+  const found =
+    identityFromWorktree(worktreePath) ??
+    (id ? identityByIdentifier(worktreePath, id) : null) ??
+    (id && projectPath ? identityByIdentifier(projectPath, id) : null);
   const own = found ? join(worktreePath, found.workflowRel) : null;
-  const fallbackWorkflow = join(worktreePath, 'workflow');
+  const shared = found && projectPath ? join(projectPath, found.workflowRel) : null;
   return {
-    identifier: identifier?.trim() || found?.identifier || basename(worktreePath),
+    identifier: id || found?.identifier || basename(worktreePath),
     worktreePath,
     transcriptDir: join(CLAUDE_PROJECTS_DIR, encodeProjectDir(worktreePath)),
-    workflowDir:
-      own && existsSync(own) ? own : existsSync(fallbackWorkflow) ? fallbackWorkflow : null,
+    workflowDir: own && existsSync(own) ? own : shared && existsSync(shared) ? shared : null,
   };
+}
+
+/** The unit whose state.yaml names `identifier`, under `root`'s workflow tree. */
+function identityByIdentifier(root: string, identifier: string): UnitIdentity | null {
+  for (const path of findStateYamls(join(root, 'workflow'))) {
+    if (parseStateYaml(path)?.doc.identifier === identifier) {
+      return { identifier, workflowRel: relative(root, dirname(path)) };
+    }
+  }
+  return null;
 }
 
 /**
@@ -1220,8 +1238,8 @@ async function restoreWorkflow(
   const { target, gcs, zstdPath, overwrite = false, dryRun = false, log } = opts;
   const workDir = mkdtempSync(join(tmpdir(), 'ksflow-workflow-'));
   try {
-    const src = await extractTarZst(gcs, object, zstdPath, workDir);
-    const dir = workflowDestination(target, opts.projectPath ?? null, src);
+    const { src, treeRel } = unitFolderIn(await extractTarZst(gcs, object, zstdPath, workDir), target.identifier);
+    const dir = workflowDestination(target, opts.projectPath ?? null, src, treeRel);
     let restored = 0;
     let kept = 0;
     for (const rel of filesUnder(src)) {
@@ -1253,9 +1271,15 @@ async function restoreWorkflow(
  * (`workflow/<user>/tickets/<id>` or `workflow/<user>/<slug>`) comes from a
  * state.yaml that already names the unit — `create-worktree` copies the main
  * checkout's tree, so one usually does — else from the archived state.yaml's
- * type plus the only `workflow/<user>/` folder there is.
+ * type plus the only `workflow/<user>/` folder there is. A folder cut out of a
+ * whole-tree archive already knows its path (`treeRel`).
  */
-function workflowDestination(target: UnitTarget, projectPath: string | null, extracted: string): string {
+function workflowDestination(
+  target: UnitTarget,
+  projectPath: string | null,
+  extracted: string,
+  treeRel: string | null,
+): string {
   const roots = [
     target.worktreePath && existsSync(target.worktreePath) ? target.worktreePath : null,
     projectPath && existsSync(projectPath) ? projectPath : null,
@@ -1270,6 +1294,7 @@ function workflowDestination(target: UnitTarget, projectPath: string | null, ext
       }
     }
   }
+  if (treeRel) return join(base, 'workflow', treeRel);
 
   const users = safeDirents(join(base, 'workflow'))
     .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
@@ -1282,6 +1307,23 @@ function workflowDestination(target: UnitTarget, projectPath: string | null, ext
   }
   const type = parseStateYaml(join(extracted, 'state.yaml'))?.doc.type ?? 'ticket';
   return join(base, 'workflow', users[0], ...(type === 'ticket' ? ['tickets'] : []), basename(extracted));
+}
+
+/**
+ * The unit's own folder inside an extracted workflow archive. Normally that is
+ * the archive itself (its state.yaml at the top). Removal-time backups made
+ * before the fix in targetForWorktree tarred the worktree's WHOLE `workflow/`
+ * folder — every unit's tree — so find the state.yaml naming this unit and keep
+ * only its folder, with its path under `workflow/` (`treeRel`).
+ */
+function unitFolderIn(extracted: string, identifier: string): { src: string; treeRel: string | null } {
+  if (existsSync(join(extracted, 'state.yaml'))) return { src: extracted, treeRel: null };
+  for (const path of findStateYamls(extracted)) {
+    if (parseStateYaml(path)?.doc.identifier === identifier) {
+      return { src: dirname(path), treeRel: relative(extracted, dirname(path)) };
+    }
+  }
+  throw new Error(`the archive is a whole workflow/ tree with no folder for ${identifier} — nothing to restore`);
 }
 
 /** Every file under `dir`, relative to it. */

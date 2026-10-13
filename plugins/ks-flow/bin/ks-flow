@@ -10,6 +10,7 @@
 #   ks-flow set-project PATH  re-point the tracked project (rewrites project.conf)
 #   ks-flow archive PATH      archive one worktree's transcript+workflow to GCS
 #   ks-flow backfill-archive  archive all completed (worktree-removed) workflows
+#   ks-flow backup-enabled    exit 0 if cloud (GCS) backup is on in board settings, else 1
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -84,7 +85,10 @@ case "$cmd" in
       echo "Building board…" >&2
       mkdir -p "$WEB"
       # Sync source over the deployed copy (node_modules + .next are preserved;
-      # they live only in $WEB, never in the bundled source).
+      # they live only in $WEB, never in the bundled source). `cp -R` only adds,
+      # so clear the source dirs first: a route or component deleted upstream
+      # would otherwise stay in the build (as /api/linear-refresh did).
+      rm -rf "$WEB/app" "$WEB/components" "$WEB/lib"
       cp -R "$PLUGIN_ROOT/web/." "$WEB/"
       ( cd "$WEB" && npm install --no-audit --no-fund --cache "$DATA_DIR/.npm" && npm run build )
     fi
@@ -203,6 +207,13 @@ case "$cmd" in
     exec node "$DAEMON_DIR/dist/transcript-backup.js" --worktree "$2" ${3:+--identifier "$3"} --force
     ;;
 
+  backup-enabled)
+    # The one switch other tools (remove_worktree, ks-start-ticket) check before
+    # backing up to or restoring from the cloud: gcsArchive.enabled in this
+    # project's board-settings.json — the same flag the daemon and board read.
+    jq -e '.gcsArchive.enabled == true' "$DATA_DIR/board-settings.json" >/dev/null 2>&1
+    ;;
+
   backfill-archive)
     # Archive units whose worktree is GONE (completed work in the main checkout).
     # Same one uploader, different target selection.
@@ -262,7 +273,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]}" >&2
+    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]}" >&2
     exit 1
     ;;
 esac

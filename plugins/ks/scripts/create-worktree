@@ -149,6 +149,22 @@ if git -C "$MAIN_REPO_DIR" rev-parse --verify "$NEW_BRANCH_NAME" > /dev/null 2>&
     exit 1
 fi
 
+# Recreating a ticket's worktree (it was removed with `remove_worktree -D`):
+# when no base branch was given and the branch is still on origin, start from it
+# so the pushed work comes back, instead of a fresh branch off main.
+# ls-remote (not a local origin/<branch> ref) because that ref goes stale once
+# GitHub deletes a merged branch. No network → fall back to the base branch.
+TRACK_FLAG=""
+if [[ $# -lt 2 ]] && git -C "$MAIN_REPO_DIR" ls-remote --exit-code --heads origin "$NEW_BRANCH_NAME" > /dev/null 2>&1; then
+    if git -C "$MAIN_REPO_DIR" fetch --quiet origin "+refs/heads/${NEW_BRANCH_NAME}:refs/remotes/origin/${NEW_BRANCH_NAME}"; then
+        BASE_BRANCH="origin/${NEW_BRANCH_NAME}"
+        TRACK_FLAG="--track"
+        info "Branch '${NEW_BRANCH_NAME}' is on origin — recreating it from there"
+    else
+        warn "Branch '${NEW_BRANCH_NAME}' is on origin but could not be fetched — basing on ${BASE_BRANCH}"
+    fi
+fi
+
 info "Creating worktree..."
 info "  Name: ${WORKTREE_NAME}"
 info "  Path: ${WORKTREE_PATH}"
@@ -172,7 +188,7 @@ fi
 
 # Create the worktree with a new branch
 info "Creating git worktree with new branch..."
-if ! git -C "$MAIN_REPO_DIR" worktree add -b "$NEW_BRANCH_NAME" "$WORKTREE_PATH" "$BASE_BRANCH"; then
+if ! git -C "$MAIN_REPO_DIR" worktree add ${TRACK_FLAG} -b "$NEW_BRANCH_NAME" "$WORKTREE_PATH" "$BASE_BRANCH"; then
     error "Failed to create worktree"
     exit 1
 fi

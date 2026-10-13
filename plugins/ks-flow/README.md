@@ -36,6 +36,23 @@ Ingestion bookkeeping (byte offsets, inode) stays in a local `checkpoints.json` 
 
 **Log rotation.** The daemon rolls both its logs **daily**, keeping the **last 30 days**: the hook-appended `events.jsonl` → `events.<YYYY-MM-DD>.jsonl` and the daemon's own `daemon.log` → `daemon.<YYYY-MM-DD>.log` (all in `${CLAUDE_PLUGIN_DATA}`). The roll happens at the first tick past midnight (60s granularity) — `events.jsonl` is drained to EOF first so no event is lost, then its read offset resets; a same-day restart **appends** to the day's `daemon.log`, and a leftover file from a day the daemon was down is rolled out at startup. Older rolls past 30 are pruned.
 
+**One clock.** Every periodic job in the daemon runs off a single 15s clock (`src/lib/schedule.ts`, the same shape as the ks mod's). Each tick runs the jobs whose interval has passed since their last run (kept in memory). A job still running from an earlier tick is skipped rather than stacked, and after sleep each overdue job runs once on the first tick.
+
+| Job | Every | Gate |
+|---|---|---|
+| `stateYaml` | 15s (1 tick) | re-parse only `state.yaml` files whose mtime changed |
+| `reminders` | 30s (2 ticks) | stop-nudges + due custom reminders; a gap > 2 min means the Mac woke |
+| `worktrees` | 60s (4 ticks) | `git worktree list` vs the known set; on a change, recompute + kick `stateYaml` |
+| `backup` | 60s (4 ticks) | enabled → not tried today → no sweep running → not swept today → past the time (or > 24h) |
+| `rotateLogs` | 60s (4 ticks) | today's date differs from the open log's |
+| `linear` | 3 min (12 ticks) | the board's tickets only (live worktree, not finished); one `linear issue batch-get` call |
+
+**Live Linear fields.** A card's title, status, priority, estimate and Linear URL start as the `state.yaml` snapshot taken when the ticket was started. The `linear` job reads the current values for every ticket on the board in one call (the ks plugin's `linear issue batch-get`, one GraphQL query per team) and lays them over the snapshot in the daemon's memory, so the card, its column and its Done check follow Linear without anything rewriting `state.yaml`. A failed call keeps the last values and logs one line. Once Linear says a ticket is finished (by status name, or by Linear's `completed`/`canceled` state type, so custom names like "Shipped" count), the card leaves the board and stops being polled.
+
+Each card's header is a **status ribbon** in the colour Linear uses for that state (before the first sync, Linear's default colour for the status). Its **↻ refreshes the whole card** now: the board appends a `RefreshCard` event to `events.jsonl`, and the daemon runs the per-card form (`runFor`) of every clock job that has one, in table order — `worktrees` (the one `git worktree list`), `stateYaml` (re-parse this card's `state.yaml` copies, ignoring the mtime gate), `linear` (`batch-get` for this ticket alone) — then catches up the card's session transcripts and rewrites it with `cardRefreshedAt` (and `cardRefreshError` naming any step that failed). The board re-reads the backup status at the same time. `reminders`, the `backup` sweep and `rotateLogs` have no per-card form: they notify, upload or roll logs rather than read card data. The spinner stops when `cardRefreshedAt` moves; a failed step, or no answer in 60s, shows `!` with the reason in its tooltip.
+
+Event-driven work stays off the clock: the chokidar watchers, the session-upsert (1s) and project-recompute (0.7s) debounces, and PocketBase's respawn. At start-up, backfill scans `state.yaml` and a reminder pass runs after the stop-nudges are re-armed; the clock's first tick follows 15s later.
+
 ### Work-unit sourcing & I/O
 
 A ticket's `state.yaml` lives in its worktree while in progress; on completion the workflow is copied back to the main checkout and the worktree is deleted. The same unit can therefore appear in both places, so the daemon dedups per unit by **source precedence**: a **worktree copy always overrides the main-checkout copy**, and the main copy wins only once no worktree carries that unit (i.e. after cleanup).
@@ -103,6 +120,7 @@ firebase emulators:start --only firestore
 | `ks-flow daemon` | Run the ingester in the foreground (debug). |
 | `ks-flow set-project <path>` | Re-point the tracked project (rewrites `project.conf`, re-backfills). |
 | `ks-flow backup [target] [options]` | **The one uploader.** Targets: nothing = every live worktree; `--unit <id>`; `--worktree <path> [--identifier <id>]` (one worktree, live or about to be deleted); `--completed` (units whose worktree is gone). Options: `--since-hours <n>`, `--force`, `--dry-run`, `--json`, `--reindex` (upload nothing; rebuild the store's backup index from the bucket), `--runs` (upload nothing; print the run history), `--trigger <daily\|manual\|unit\|removal\|completed>` (recorded with the run; inferred from the target when left out). |
+| `ks-flow backup-enabled` | Exit 0 when cloud (GCS) backup is switched on in Settings, else 1. Checked by `remove_worktree` and `ks-start-ticket`. |
 | `ks-flow restore --unit <id> [--overwrite] [--workflow] [--overwrite-time-log] [--dry-run] [--json]` | Restore a unit's backed-up transcripts into `~/.claude/projects/<encoded>`, and merge its time log. Local files win unless `--overwrite`. Reads per-file objects, falling back to a legacy `transcript.tar.zst`. `--workflow` also unpacks the workflow folder; `--overwrite-time-log` replaces the local time log instead of merging. |
 | `ks-flow archive <worktree> [id]` | Familiar alias — forwards to `backup --worktree … --force`. |
 | `ks-flow backfill-archive [--dry-run] [--force]` | Familiar alias — forwards to `backup --completed`. |
@@ -364,9 +382,20 @@ Clicking the badge opens a confirmation dialog with one opt-in:
   checkout's when the worktree is gone. The folder's path comes from a
   `state.yaml` already naming the unit, else from the archived `state.yaml`'s
   type and the only `workflow/<user>/` folder there. Missing files only; files
-  on disk are kept unless `--overwrite`.
+  on disk are kept unless `--overwrite`. Some removal-time archives hold the
+  worktree's **whole** `workflow/` tree (the hook fell back to it for units whose
+  `state.yaml` had no `worktree_dir`; it now finds the unit's folder by
+  identifier, else the main checkout's copy, else archives no workflow). Restore
+  takes just the unit's own folder out of such an archive and puts it back at
+  the same path.
 
 The time log is always merged (see above).
+
+Outside the board, the same switch drives two terminal tools in the ks plugin:
+`ks-flow backup-enabled` exits 0 when `gcsArchive.enabled` is on, and then
+`remove_worktree` backs a worktree up before removing it (skipped when the
+board's Remove already did — it sets `KS_FLOW_BACKED_UP=1`), and `ks-start-ticket`
+offers to restore a reopened ticket's missing sessions and workflow files.
 
 Restored files keep their original mtime (from the object's source stamp, or
 the tarball), so the next sweep sees them as already backed up rather than
@@ -487,8 +516,12 @@ closed / canceled — **whose git worktree still exists**. These are cleanup
 candidates: the daemon nulls a card's `worktreeDir` once its worktree is gone,
 so a row here means the directory is still live.
 
-Each row has a **Remove** button:
+Each row has a **Remove** button. Board cards carry one too, for work that is
+not finished; their confirmation adds a red warning that the ticket is still
+open and unpushed commits go with the branch if your command deletes it.
 
+0. **Confirm.** A dialog names the worktree, says whether it is backed up first, and shows the exact command it will
+   run (placeholders filled in). Esc, the backdrop or Cancel back out.
 1. **Live-session gate.** Before doing anything it checks (via `lsof`, by working
    directory) whether any live process sits in the worktree — an open shell or a
    Claude Code session (`node`, classified via `ps`). If so, it asks you to
@@ -539,7 +572,7 @@ Three hooks fire a `terminal-notifier` notification the moment a session in the 
 
 ## Reminders
 
-Enabled by default; toggle + tune in `/settings`. **Enable reminders** is the master switch — turning it off silences **everything**: stop-nudges, per-card custom reminders, and Notes-page reminders. Reminder records live in the DB (`reminders` collection); the board's server writes them and the daemon (the scheduler — one ~30s tick, no OS scheduling) fires the notifications. "Remind on OS wake" is detected by a timer-gap on the daemon's tick, so no per-reminder OS jobs.
+Enabled by default; toggle + tune in `/settings`. **Enable reminders** is the master switch — turning it off silences **everything**: stop-nudges, per-card custom reminders, and Notes-page reminders. Reminder records live in the DB (`reminders` collection); the board's server writes them and the daemon (its `reminders` job on the one clock — every 30s, no OS scheduling) fires the notifications. "Remind on OS wake" is detected by a timer-gap on the daemon's tick, so no per-reminder OS jobs.
 
 - **Stop-nudge (auto).** When a session stops (end of turn → idle), the `Stop` hook records the event and the **daemon owns all notices** (the hook fires none): the first notice waits until the session has been **quiet for the debounce window** (default **60s**), then it repeats every **N min** (default 5) until the session **resumes**, **ends** (`SessionEnd`), or hits the **cap** (default 12 nudges). "Quiet" spans the session transcript, its worktree siblings, **and its teammates' subagent transcripts** (`<session>/subagents/*.jsonl`) — so a notice never misfires at a main-turn boundary while background teammates are still working. The gate is *time-since-last-activity* (not a stop-timestamp comparison), which sidesteps the `Stop` event's whole-second timestamp vs the transcript's millisecond timestamps. The daemon only nudges a session that **matches a tracked ticket/project** — an ad-hoc / main-checkout session (no work-unit) is silent rather than firing a generic notice — and it **drops the nudge once the work-unit is complete** (its terminal phase `implementation` COMPLETED, or a closed Linear status: Done / Canceled / Merged / Duplicate). Across a **daemon restart** the `events.jsonl` read offset is persisted (in `checkpoints.json`), so already-consumed Stops aren't replayed/duplicated; instead, startup **reconstructs** the nudge for any session still waiting (its last lifecycle event is a `Stop`, within maxAge — resumed/ended sessions stay quiet). To avoid an N-notice burst, those first post-restart notices are consolidated into **one grouped notice** (*"N sessions waiting on you"* with the identifiers in the body; a lone session gets its normal rich notice), after which each session resumes individual nudges. Each card shows an **▶ active / ⏸ paused** control — **Pause** mutes **all** of that card's notices (the stop-nudge **and** its per-card custom reminders, even a lapsed one) and hides the red overdue glow; it **auto-returns to Active** when the session resumes.
 - **Per-card custom reminder (manual).** The **⏰** control on a card sets a reminder — relative (`30m` / `2h` / `1d`) or an absolute datetime — with an optional note. It fires at due time, then **re-nags once a day** (and on OS-wake / daemon-start) until you stop it — **clear** it (✕), **reschedule** it (edit the due date — that's the snooze), or turn the master switch off. Notes-page reminders share this exact path (see **Notes** below).

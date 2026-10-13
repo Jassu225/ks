@@ -1,7 +1,9 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReminderDoc, SessionDoc, WorkUnitDoc } from '@/lib/types';
+import { RemoveWorktree } from '@/components/RemoveWorktree';
 import { TranscriptBackup } from '@/components/TranscriptBackup';
+import { useBackupStatus } from '@/lib/backupStatus';
 
 // A session counts as "active" (glowing border) if it wrote within this window.
 // Derived client-side off a ticking clock (passed down from the board) so the
@@ -157,18 +159,132 @@ const PRIORITY_COLOR: Record<string, string> = {
   Low: 'bg-slate-800 text-slate-400',
 };
 
+/**
+ * Linear's default colours by workflow state type, for a card the daemon has
+ * not read live yet (its state.yaml has only the status name). Once synced the
+ * card uses the exact colour Linear reports for that state.
+ */
+const STATUS_TYPE_COLOR: Record<string, string> = {
+  triage: '#fc7840',
+  backlog: '#bec2c8',
+  unstarted: '#e2e2e2',
+  started: '#f2c94c',
+  completed: '#5e6ad2',
+  canceled: '#95a2b3',
+};
+const STATUS_NAME_TYPE: Record<string, string> = {
+  triage: 'triage',
+  backlog: 'backlog',
+  todo: 'unstarted',
+  'in progress': 'started',
+  'in review': 'started',
+  done: 'completed',
+  canceled: 'canceled',
+  cancelled: 'canceled',
+  duplicate: 'canceled',
+};
+function statusColor(unit: WorkUnitDoc): string {
+  if (unit.linearStatusColor) return unit.linearStatusColor;
+  const type = unit.linearStatusType ?? STATUS_NAME_TYPE[(unit.linearStatus ?? '').trim().toLowerCase()];
+  return (type && STATUS_TYPE_COLOR[type]) || '#64748b';
+}
+
+/** How long a Refresh waits for the daemon's answer before giving up. */
+const CARD_REFRESH_TIMEOUT_MS = 60_000;
+
+/**
+ * The card's header ribbon: the ticket's Linear status in Linear's own colour,
+ * and a ↻ that refreshes the whole card now — the daemon re-checks the worktree
+ * list, re-reads the card's state.yaml, its Linear fields and its session
+ * transcripts (the per-card form of each clock job), and the board re-reads its
+ * backup status. The spinner stops when the card's cardRefreshedAt moves.
+ */
+function StatusRibbon({ unit }: { unit: WorkUnitDoc }) {
+  const { refresh: refreshBackups } = useBackupStatus();
+  const [askedAt, setAskedAt] = useState<string | null | undefined>(undefined); // cardRefreshedAt when clicked
+  const [timedOut, setTimedOut] = useState(false);
+  const refreshing = askedAt !== undefined;
+  const refreshedAt = unit.cardRefreshedAt ?? null;
+  const failed = timedOut || (!refreshing && !!unit.cardRefreshError);
+
+  useEffect(() => {
+    if (refreshing && refreshedAt !== askedAt) setAskedAt(undefined);
+  }, [refreshing, refreshedAt, askedAt]);
+  useEffect(() => {
+    if (!refreshing) return;
+    const t = setTimeout(() => {
+      setAskedAt(undefined);
+      setTimedOut(true);
+    }, CARD_REFRESH_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [refreshing]);
+
+  const refresh = async (e: React.MouseEvent): Promise<void> => {
+    e.stopPropagation();
+    if (refreshing) return;
+    setTimedOut(false);
+    setAskedAt(refreshedAt);
+    void refreshBackups();
+    const res = await fetch('/api/card-refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ unitId: unit.unitId }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      setAskedAt(undefined);
+      setTimedOut(true);
+    }
+  };
+
+  const color = statusColor(unit);
+  const synced = unit.linearSyncedAt ?? null;
+  const title = timedOut
+    ? 'The daemon did not answer — see its log (ks-flow status). Click to retry.'
+    : unit.cardRefreshError && !refreshing
+      ? `Last refresh hit a problem: ${unit.cardRefreshError}. Click to retry.`
+      : `Refresh this card: worktree, state.yaml, Linear, sessions, backup status` +
+        (synced ? ` (Linear last read ${relTime(synced)})` : ' (Linear not read live yet)');
+
+  return (
+    <div
+      className="-mx-3 -mt-3 mb-2 flex items-center justify-between gap-2 rounded-t-lg border-b px-3 py-1"
+      style={{ backgroundColor: `${color}26`, borderColor: `${color}55` }}
+    >
+      <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium" style={{ color }}>
+        <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+        <span className="truncate">{unit.linearStatus ?? 'No status'}</span>
+      </span>
+      <button
+        type="button"
+        onClick={refresh}
+        disabled={refreshing}
+        title={title}
+        aria-label="Refresh this card"
+        className={`shrink-0 rounded px-1 text-[11px] leading-4 hover:bg-black/30 ${
+          failed ? 'text-red-400' : 'text-slate-400 hover:text-slate-200'
+        }`}
+      >
+        <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`}>{failed ? '!' : '↻'}</span>
+      </button>
+    </div>
+  );
+}
+
 export function WorkUnitCard({
   unit,
   sessions,
   reminders,
   now,
   dimmed = false,
+  onRemoved,
 }: {
   unit: WorkUnitDoc;
   sessions: SessionDoc[];
   reminders: ReminderDoc[];
   now: number;
   dimmed?: boolean;
+  /** After its worktree is removed: refresh the board so the card goes. */
+  onRemoved?: () => void | Promise<void>;
 }) {
   const live = sessions.filter((s) => unit.sessionIds.includes(s.sessionId));
   // Recency-based, not the daemon's snapshot flag → glow self-expires.
@@ -216,6 +332,7 @@ export function WorkUnitCard({
         dimmed ? 'opacity-50' : ''
       }`}
     >
+      <StatusRibbon unit={unit} />
       <div className="flex items-start justify-between gap-2">
         <span className="font-mono text-xs font-semibold text-slate-400">
           {unit.identifier}
@@ -243,11 +360,6 @@ export function WorkUnitCard({
       </p>
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
-        {unit.linearStatus && (
-          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400">
-            {unit.linearStatus}
-          </span>
-        )}
         {unit.linearUrl && (
           <a
             href={unit.linearUrl}
@@ -302,6 +414,12 @@ export function WorkUnitCard({
         )}
         <TranscriptBackup unitId={unit.unitId} />
         <ReminderControls unitId={unit.unitId} reminders={reminders} />
+        {/* Board cards are open tickets: the dialog warns before removing. */}
+        <RemoveWorktree
+          unit={unit}
+          completed={false}
+          onRemoved={onRemoved}
+        />
       </div>
 
       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">

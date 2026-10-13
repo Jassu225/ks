@@ -180,6 +180,22 @@ while IFS= read -r candidate; do
     fi
 done < <(find "$WORKTREE_PATH/workflow" -name "state.yaml" 2>/dev/null)
 
+# Fallback: state.yamls written before worktree_dir existed have no such line.
+# Ticket worktrees are named <identifier>-<slug> (e.g. kar-11331-date-selector-…),
+# so match the state.yaml whose identifier is that ticket instead.
+if [[ -z "$STATE_FILE" ]]; then
+    TICKET_ID=$(basename "$WORKTREE_PATH" | grep -oE '^[A-Za-z]+-[0-9]+' | tr '[:lower:]' '[:upper:]')
+    if [[ -n "$TICKET_ID" ]]; then
+        while IFS= read -r candidate; do
+            if grep -qE "^[[:space:]]*identifier:[[:space:]]*[\"']?${TICKET_ID}[\"']?[[:space:]]*$" "$candidate" 2>/dev/null; then
+                STATE_FILE="$candidate"
+                warn "No worktree_dir in any state.yaml; matched ${TICKET_ID} by identifier"
+                break
+            fi
+        done < <(find "$WORKTREE_PATH/workflow" -ipath "*/tickets/${TICKET_ID}/state.yaml" 2>/dev/null)
+    fi
+fi
+
 if [[ -n "$STATE_FILE" ]]; then
     info "Found workflow state: ${STATE_FILE}"
 
@@ -212,13 +228,37 @@ if [[ -n "$STATE_FILE" ]]; then
         exit 1
     fi
 else
-    error "No state.yaml with matching worktree_dir found in ${WORKTREE_PATH}/workflow/"
+    error "No state.yaml with matching worktree_dir (or ticket identifier) found in ${WORKTREE_PATH}/workflow/"
     echo "Workflow data would be lost. Aborting removal."
     exit 1
 fi
 
 # Step 4: cd back to main project root before removal
 cd "$KS_PROJECT_ROOT"
+
+# Step 5: back up the worktree's sessions, workflow and time log to the cloud,
+# when ks-flow's cloud (GCS) backup is switched on — the same step the ks-flow
+# board runs before its Remove. The board sets KS_FLOW_BACKED_UP=1 once it has
+# done so, which skips a second upload. A failed backup aborts the removal.
+if [[ "${KS_FLOW_BACKED_UP:-}" == "1" ]]; then
+    info "Cloud backup already done by the ks-flow board"
+elif ! command -v ks-flow >/dev/null 2>&1; then
+    info "ks-flow not installed — skipping cloud backup"
+elif ! ks-flow backup-enabled; then
+    info "Cloud backup is off in ks-flow settings — skipping it"
+else
+    BACKUP_ID=""
+    if [[ "$PARENT_OF_PROJECT" == "tickets" ]]; then
+        BACKUP_ID=$(grep -m1 -E '^[[:space:]]+identifier:' "$STATE_FILE" | sed 's/.*identifier:[[:space:]]*//; s/^["'"'"']//; s/["'"'"'][[:space:]]*$//')
+    fi
+    info "Backing up sessions + workflow to the cloud${BACKUP_ID:+ (${BACKUP_ID})}..."
+    if ! ks-flow archive "$WORKTREE_PATH" ${BACKUP_ID:+"$BACKUP_ID"}; then
+        error "Cloud backup failed. Aborting removal (nothing was deleted)."
+        echo "Fix the GCS settings/credentials, or turn cloud backup off in the ks-flow board's Settings, then retry."
+        exit 1
+    fi
+    success "Backed up to the cloud"
+fi
 
 # ============================================================================
 # Remove the worktree

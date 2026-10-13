@@ -36,6 +36,16 @@ export interface WorkUnitDoc {
   identifier: string;
   title: string;
   linearStatus: string | null;
+  /** Linear's colour for the status (hex) and its workflow type (backlog,
+   * unstarted, started, completed, canceled, triage) — set once the daemon has
+   * read the ticket live from Linear; absent before that. */
+  linearStatusColor?: string | null;
+  linearStatusType?: string | null;
+  /** When the daemon last read this ticket from Linear (ISO); absent if never. */
+  linearSyncedAt?: string | null;
+  /** When the card's Refresh last finished (ISO), and what failed in it, if anything. */
+  cardRefreshedAt?: string | null;
+  cardRefreshError?: string | null;
   linearUrl: string | null;
   slackThreadUrl: string | null;
   priority: { value: number | null; name: string } | null;

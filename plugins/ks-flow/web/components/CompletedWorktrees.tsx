@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
-import { SeeLogs, useStreams } from '@/components/StreamPanel';
+import { useMemo, useState } from 'react';
+import { RemoveWorktree } from '@/components/RemoveWorktree';
 import { TranscriptBackup } from '@/components/TranscriptBackup';
 import type { WorkUnitDoc } from '@/lib/types';
 
@@ -16,27 +16,14 @@ function relTime(iso: string | null): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-interface BusyProc {
-  pid: number;
-  command: string;
-  isClaude: boolean;
-}
-
-// Each Remove is a stream (components/StreamPanel.tsx) under `remove:<unitId>`,
-// with its own bottom-right panel. Remove's two special cases are states of that
-// stream: `warn` for "no command configured", and `custom` for the "a live
-// process is still in this worktree" confirm prompt. Hidden, it comes back
-// through See logs beside the button.
-
 /**
  * Worktrees whose work is finished (Linear status done/merged/closed) but whose
  * git worktree still exists — cleanup candidates. The daemon nulls worktreeDir
  * for dead worktrees, so a non-null worktreeDir here means the dir is live.
  *
- * Each row's Remove button runs the user's configured removal command (set in
- * Settings) via /api/run-command, streaming its output into the bottom-right
- * panel. On success it optimistically hides the row and asks the board to
- * refresh; on failure the error stays in the panel.
+ * Each row's Remove (components/RemoveWorktree.tsx) confirms, then runs the
+ * user's configured removal command. On success it optimistically hides the row
+ * and asks the board to refresh; on failure the error stays in the panel.
  *
  * Done work leaves the board, so each row also carries the unit's backup and
  * Restore — the sessions most likely to have been pruned are exactly these.
@@ -48,151 +35,8 @@ export function CompletedWorktrees({
   units: WorkUnitDoc[];
   onRefresh?: () => void | Promise<void>;
 }) {
-  const [removeCommand, setRemoveCommand] = useState<string | null>(null);
   const [removed, setRemoved] = useState<Set<string>>(new Set()); // optimistic hide
-  // Each worktree's removal is its own stream: its checks, confirmation and
-  // output stay in its own panel, and survive a trip to another page.
-  const { get, show, run, dismiss } = useStreams();
-  const keyOf = (u: WorkUnitDoc): string => `remove:${u.unitId}`;
-  /** Running, or waiting on the kill-sessions confirmation. */
-  const isBusy = (u: WorkUnitDoc): boolean => {
-    const s = get(keyOf(u));
-    return Boolean(s && (s.isRunning || s.view.kind === 'custom'));
-  };
-
-  useEffect(() => {
-    fetch('/api/settings')
-      .then((r) => r.json())
-      .then((s: { removeCommand?: string }) => setRemoveCommand(s.removeCommand ?? ''))
-      .catch(() => setRemoveCommand(''));
-  }, []);
-
   const visible = useMemo(() => units.filter((u) => !removed.has(u.unitId)), [units, removed]);
-
-  // Stream the remove command, optionally killing live sessions in the worktree
-  // first (only after the user confirmed). Updates the panel live + on exit.
-  const doRemove = async (u: WorkUnitDoc, kill: boolean): Promise<void> => {
-    if (!u.worktreeDir) return;
-    const key = keyOf(u);
-    if (kill) {
-      show(key, { kind: 'running', title: u.identifier, output: 'killing sessions in worktree…\n' }, { isRunning: true });
-      const kRes = await fetch('/api/worktree-kill', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: u.worktreeDir }),
-      });
-      const k = await kRes.json().catch(() => ({ stillAlive: [] }));
-      if (Array.isArray(k.stillAlive) && k.stillAlive.length) {
-        show(key, {
-          kind: 'err',
-          title: u.identifier,
-          output: `could not kill pid(s) ${k.stillAlive.join(', ')} — remove aborted`,
-        });
-        return;
-      }
-    }
-
-    await run(key, {
-      title: u.identifier,
-      url: '/api/run-command',
-      body: { path: u.worktreeDir, identifier: u.identifier, title: u.title },
-      successNote: '✓ removed',
-      onSuccess: async () => {
-        setRemoved((prev) => new Set(prev).add(u.unitId)); // optimistic hide
-        await onRefresh?.(); // re-pull the board + this section
-      },
-      // The route answers with JSON (not NDJSON) when no removal command is
-      // configured; that deserves a link to Settings, not a raw error line.
-      mapEarlyError: (payload: unknown) =>
-        (payload as { needsConfig?: boolean; error?: string })?.needsConfig
-          ? {
-              kind: 'warn',
-              title: 'No remove command',
-              msg: (payload as { error?: string }).error ?? 'Set a removal command in Settings.',
-              settingsLink: true,
-            }
-          : undefined,
-    });
-  };
-
-  const onRemove = async (u: WorkUnitDoc): Promise<void> => {
-    if (!u.worktreeDir || isBusy(u)) return;
-    const key = keyOf(u);
-    if (removeCommand !== null && !removeCommand.trim()) {
-      show(key, {
-        kind: 'warn',
-        title: 'No remove command',
-        msg: 'Set a removal command in Settings before removing a worktree.',
-        settingsLink: true,
-      });
-      return;
-    }
-    show(key, { kind: 'running', title: u.identifier, output: 'checking for live sessions…' }, { isRunning: true });
-    try {
-      const busyRes = await fetch('/api/worktree-busy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: u.worktreeDir }),
-      });
-      const busy = await busyRes.json().catch(() => ({ busy: false, processes: [] }));
-      if (busyRes.ok && busy.busy) {
-        // Don't remove blindly — ask the user to approve killing the sessions.
-        const procs: BusyProc[] = busy.processes ?? [];
-        const claude = procs.some((p) => p.isClaude);
-        show(key, {
-          kind: 'custom',
-          title: u.identifier,
-          body: (
-            <>
-              <p className="mb-2">
-                {claude
-                  ? 'A Claude Code session is still live in this worktree. Killing it will lose its current turn.'
-                  : 'A process is still using this worktree.'}
-              </p>
-              <ul className="space-y-1 font-mono text-[11px] text-slate-400">
-                {procs.map((p) => (
-                  <li key={p.pid} className="truncate" title={p.command}>
-                    <span className={p.isClaude ? 'text-indigo-300' : 'text-slate-500'}>
-                      {p.isClaude ? 'claude' : 'proc'}
-                    </span>{' '}
-                    <span className="text-slate-600">pid {p.pid}</span> · {p.command}
-                  </li>
-                ))}
-              </ul>
-            </>
-          ),
-          actions: (
-            <>
-              <button
-                type="button"
-                onClick={() => dismiss(key)}
-                className="rounded bg-slate-800 px-3 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void doRemove(u, true)}
-                className="rounded bg-red-700 px-3 py-1 text-[11px] font-medium text-white hover:bg-red-600"
-              >
-                Kill sessions &amp; remove
-              </button>
-            </>
-          ),
-        });
-        return;
-      }
-    } catch {
-      show(key, {
-        kind: 'err',
-        title: u.identifier,
-        output: 'Could not check for live sessions — is the board server still running?',
-      });
-      return;
-    }
-    // worktree is clear — remove without killing.
-    await doRemove(u, false);
-  };
 
   if (visible.length === 0) return null;
 
@@ -277,15 +121,14 @@ export function CompletedWorktrees({
                   <td className="px-3 py-2 text-right">
                     <span className="inline-flex items-center gap-1">
                       <TranscriptBackup unitId={u.unitId} />
-                      <SeeLogs streamKey={keyOf(u)} />
-                      <button
-                        type="button"
-                        onClick={() => onRemove(u)}
-                        disabled={isBusy(u)}
-                        className="rounded bg-red-950/60 px-2 py-0.5 text-[11px] font-medium text-red-300 hover:bg-red-900/70 disabled:opacity-50"
-                      >
-                        {get(keyOf(u))?.isRunning ? 'removing…' : 'Remove'}
-                      </button>
+                      <RemoveWorktree
+                        unit={u}
+                        completed
+                        onRemoved={async () => {
+                          setRemoved((prev) => new Set(prev).add(u.unitId)); // optimistic hide
+                          await onRefresh?.(); // re-pull the board + this section
+                        }}
+                      />
                     </span>
                   </td>
                 </tr>

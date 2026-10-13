@@ -17,7 +17,9 @@
 // own Settings page, on their own machine, against a localhost single-user
 // board. It is intentionally arbitrary — the user is running their own command.
 // The placeholder values are ALSO exposed as env vars so the command can avoid
-// string interpolation (KS_WORKTREE / KS_IDENTIFIER / KS_TITLE).
+// string interpolation (KS_WORKTREE / KS_IDENTIFIER / KS_TITLE). KS_FLOW_BACKED_UP=1
+// is set when step 1 archived the worktree, so a command that backs up on its
+// own (remove_worktree) skips a second upload.
 import { spawn, type SpawnOptions } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -182,6 +184,8 @@ export async function POST(req: Request): Promise<Response> {
               KS_WORKTREE: worktree,
               KS_IDENTIFIER: identifier,
               KS_TITLE: title,
+              // Tells remove_worktree its own cloud backup already ran here.
+              ...(archiveEnabled ? { KS_FLOW_BACKED_UP: '1' } : {}),
             },
           },
           120_000,

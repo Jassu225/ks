@@ -48,6 +48,24 @@ branch. The session is announced and launches after 10s, or on ENTER. For
 (the worktree's copy when there is one — that is where phases advance) is kept
 and only the `ticket:` block is refreshed from Linear.
 
+When the worktree was **removed** (`remove_worktree -D` deletes the local
+branch), `create-worktree` recreates the branch from `origin/<branch>` when it
+is still on GitHub — so pushed work comes back — and otherwise branches off the
+current branch as before. Unpushed commits are not recoverable this way.
+
+**ks-flow cloud backup.** When ks-flow's cloud (GCS) backup is switched on
+(`ks-flow backup-enabled` exits 0 — the board's Settings toggle):
+
+- `ks-start-ticket` checks the bucket once the worktree exists and, if it holds
+  sessions or workflow files missing on this machine, asks `Restore? [Y/n]`
+  (`ks-flow restore --unit <id> --workflow`). Restored sessions land in the new
+  worktree's transcript folder, so `--resume` there lists them.
+- `remove_worktree` backs the worktree up (`ks-flow archive`) before removing
+  it, and aborts the removal if the backup fails. The board's Remove has already
+  backed up and sets `KS_FLOW_BACKED_UP=1`, which skips the second upload.
+
+With ks-flow absent or the backup off, both skip this silently.
+
 ## Scripts
 
 ### Linear CLI
@@ -88,6 +106,7 @@ npx tsx linear-cli.ts issue unrelate KAR-123 KAR-124
 # Move into a cycle and set manual (drag-and-drop) order
 npx tsx linear-cli.ts issue update KAR-123 --cycle next --position last
 npx tsx linear-cli.ts issue update KAR-123 --after KAR-124
+npx tsx linear-cli.ts issue batch-get KAR-1 KAR-2 KAR-3 --json    # read many issues in one query per team (state name/type/color, priority, estimate, url)
 npx tsx linear-cli.ts issue bulk-update KAR-1 KAR-2 KAR-3 --cycle next  # one issueBatchUpdate request, ≤50 issues, no sortOrder sent
 npx tsx linear-cli.ts issue create --title "Follow-up" --team KAR --related KAR-123 \
   --description-file desc.md   # file form keeps backticks off the command line ("-" = stdin)

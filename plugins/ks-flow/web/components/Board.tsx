@@ -27,6 +27,11 @@ const DONE_STATUSES = new Set([
   'closed',
   'archived',
 ]);
+/** Finished: a done status name, or Linear's completed/canceled state type once synced. */
+const isDone = (u: WorkUnitDoc): boolean =>
+  (!!u.linearStatus && DONE_STATUSES.has(u.linearStatus.trim().toLowerCase())) ||
+  u.linearStatusType === 'completed' ||
+  u.linearStatusType === 'canceled';
 
 
 /**
@@ -129,7 +134,7 @@ export function Board({ config }: { config: BoardConfig }) {
         (u) =>
           u.worktreeDir &&
           liveWorktrees.has(u.worktreeDir) &&
-          !(u.linearStatus && DONE_STATUSES.has(u.linearStatus.trim().toLowerCase())),
+          !isDone(u),
       ),
     [workUnits, liveWorktrees],
   );
@@ -143,8 +148,7 @@ export function Board({ config }: { config: BoardConfig }) {
           (u) =>
             u.worktreeDir &&
             liveWorktrees.has(u.worktreeDir) &&
-            u.linearStatus &&
-            DONE_STATUSES.has(u.linearStatus.trim().toLowerCase()),
+            isDone(u),
         )
         .sort((a, b) => (b.lastActivity ?? '').localeCompare(a.lastActivity ?? '')),
     [workUnits, liveWorktrees],
@@ -157,8 +161,7 @@ export function Board({ config }: { config: BoardConfig }) {
       workUnits
         .filter(
           (u) =>
-            u.linearStatus &&
-            DONE_STATUSES.has(u.linearStatus.trim().toLowerCase()) &&
+            isDone(u) &&
             !(u.worktreeDir && liveWorktrees.has(u.worktreeDir)),
         )
         .sort((a, b) => (b.lastActivity ?? '').localeCompare(a.lastActivity ?? '')),
@@ -329,6 +332,7 @@ export function Board({ config }: { config: BoardConfig }) {
                       sessions={latestSessions}
                       reminders={reminders}
                       now={now}
+                      onRefresh={onRefresh}
                     />
                   ))}
                 </div>

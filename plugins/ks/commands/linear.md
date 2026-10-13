@@ -53,6 +53,7 @@ linear issue update KAR-123 --after KAR-124                 # or --before KAR-12
 linear issue create --title "Follow-up" --team KAR --cycle current --position last
 
 # Bulk: the same fields on many issues in ONE request (issueBatchUpdate, at most 50 issues; one team for --cycle/--state)
+linear issue batch-get KAR-1 KAR-2 KAR-3 --json   # read many in one query per team: title, state {name,type,color}, priority, estimate, url
 linear issue bulk-update KAR-1 KAR-2 KAR-3 --cycle next --dry-run   # resolve and show, change nothing
 linear issue bulk-update KAR-1 KAR-2 KAR-3 --cycle next             # also --state, --assignee, --priority; sends no sortOrder
 

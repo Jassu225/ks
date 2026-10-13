@@ -511,7 +511,7 @@ ${chalk.cyan('Example:')}
     console.log(chalk.cyan(`\n  Workflow: ./${workflowRelPath}/`));
 
     // Create worktree and launch Claude-KS
-    await createWorktreeAndLaunchClaude(branchName, workflowRelPath, outputPath);
+    await createWorktreeAndLaunchClaude(branchName, workflowRelPath, outputPath, workflowState.ticket.identifier);
 
   } catch (error) {
     console.error(chalk.red(`\n✗ Error: ${error instanceof Error ? error.message : String(error)}`));

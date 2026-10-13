@@ -940,6 +940,64 @@ async function updateIssue(identifier: string, options: {
 /** Linear refuses an `issueBatchUpdate` over this many issues. */
 const BATCH_UPDATE_MAX = 50;
 
+/** One issue's card-facing fields, as `issue batch-get` prints them. */
+interface IssueFacts {
+  identifier: string;
+  title: string;
+  url: string;
+  priority: number;
+  priorityLabel: string;
+  estimate: number | null;
+  state: { name: string; type: string; color: string } | null;
+}
+
+/**
+ * Read many issues in one GraphQL query per team (50 per page), with their
+ * workflow state inline. The SDK's `issue.state` is a lazy fetch per issue, so
+ * this goes through rawRequest to keep it to one round trip per page. Prints
+ * the issues found; identifiers Linear doesn't know are listed under `missing`.
+ */
+async function batchGetIssues(identifiers: string[], options: { json?: boolean }): Promise<void> {
+  const client = getClient();
+  const wanted = [...new Set(identifiers.map(i => i.toUpperCase()))];
+  const malformed = wanted.filter(i => !/^[A-Z]+-\d+$/.test(i));
+  if (malformed.length > 0) {
+    console.error(chalk.red(`Not issue identifiers: ${malformed.join(', ')}`));
+    process.exit(1);
+  }
+
+  const byTeam = new Map<string, number[]>();
+  for (const id of wanted) {
+    const [teamKey, num] = id.split('-');
+    byTeam.set(teamKey, [...(byTeam.get(teamKey) ?? []), parseInt(num, 10)]);
+  }
+  const found: IssueFacts[] = [];
+  for (const [teamKey, numbers] of byTeam) {
+    for (let i = 0; i < numbers.length; i += BATCH_UPDATE_MAX) {
+      const chunk = numbers.slice(i, i + BATCH_UPDATE_MAX);
+      const res = await client.client.rawRequest<{ issues: { nodes: IssueFacts[] } }, Record<string, unknown>>(
+        `query IssueFacts($first: Int!, $filter: IssueFilter) {
+          issues(first: $first, filter: $filter) {
+            nodes { identifier title url priority priorityLabel estimate state { name type color } }
+          }
+        }`,
+        { first: chunk.length, filter: { team: { key: { eq: teamKey } }, number: { in: chunk } } }
+      );
+      found.push(...(res.data?.issues.nodes ?? []));
+    }
+  }
+  const missing = wanted.filter(id => !found.some(i => i.identifier === id));
+
+  if (options.json) {
+    output({ issues: found, missing }, true);
+    return;
+  }
+  for (const i of found) {
+    console.log(`${chalk.bold(i.identifier)}  ${i.state?.name ?? '—'}  ${i.priorityLabel}  ${i.title}`);
+  }
+  if (missing.length > 0) console.log(chalk.yellow(`Not found: ${missing.join(', ')}`));
+}
+
 /**
  * Set the same fields on many issues in ONE `issueBatchUpdate` request (not a
  * loop of updates). Sends no sortOrder: Linear decides where they land.
@@ -2071,6 +2129,12 @@ issueCmd
   .option('--before <identifier>', 'Manual order: place directly before this issue')
   .option('-j, --json', 'Output as JSON')
   .action(createIssue);
+
+issueCmd
+  .command('batch-get <identifiers...>')
+  .description('Read many issues in one query per team: title, state (name, type, color), priority, estimate, URL')
+  .option('-j, --json', 'Output as JSON')
+  .action((identifiers: string[], opts: { json?: boolean }) => batchGetIssues(identifiers, opts));
 
 issueCmd
   .command('bulk-update <identifiers...>')
