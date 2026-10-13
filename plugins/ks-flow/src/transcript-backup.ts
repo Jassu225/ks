@@ -195,6 +195,19 @@ async function recordFailure(error: string): Promise<void> {
   });
 }
 
+/**
+ * Write the final JSON line, THEN exit. On macOS stdout to a pipe is
+ * asynchronous, so a bare process.exit() after write() drops whatever has not
+ * drained — everything past the ~64 KB pipe buffer. That cut `--status` off
+ * mid-unit once the bucket held enough units: the board could not parse it and
+ * showed no Restore anywhere.
+ */
+function emitAndExit(payload: unknown, code: number): Promise<never> {
+  return new Promise<never>(() => {
+    process.stdout.write(JSON.stringify(payload) + '\n', () => process.exit(code));
+  });
+}
+
 /** Ends the process on a blocker, after closing the recorded run. */
 async function fail(args: Args, msg: string): Promise<never> {
   await recordFailure(msg);
@@ -216,8 +229,7 @@ async function main(): Promise<void> {
     if (!conf) return fail(args, 'no project.conf — run `ks-flow start` in the project first.');
     const runs = await listRuns(store, projectId).catch((e: Error) => e);
     if (runs instanceof Error) return fail(args, `could not read the backup history: the ks-flow store (PocketBase) is not reachable — is the daemon running? (${runs.message})`);
-    process.stdout.write(JSON.stringify({ ok: true, runs, lastSweepAt: lastSweepAt(runs) }) + '\n');
-    process.exit(0);
+    return emitAndExit({ ok: true, runs, lastSweepAt: lastSweepAt(runs) }, 0);
   }
 
   const settings = readArchiveSettings();
@@ -282,8 +294,7 @@ async function main(): Promise<void> {
   if (args.status) {
     const units = await unitStatuses(conf.projectPath, config, isStoreUp ? store : null, projectId);
     const swept = isStoreUp ? lastSweepAt(await store.getBackupRuns(projectId).catch(() => [])) : null;
-    process.stdout.write(JSON.stringify({ ok: true, units, lastSweepAt: swept }) + '\n');
-    process.exit(0);
+    return emitAndExit({ ok: true, units, lastSweepAt: swept }, 0);
   }
 
   // Recovery mode: the index is a cache of what the bucket holds, and uploads
@@ -291,8 +302,8 @@ async function main(): Promise<void> {
   // from), so the whole thing can be rebuilt from a listing. Uploads nothing.
   if (args.reindex) {
     const res = await reindexAll(conf.projectPath, config, args.json ? () => {} : log, store, projectId);
-    if (args.json) process.stdout.write(JSON.stringify({ ok: true, ...res }) + '\n');
-    else log(`reindexed ${res.recovered} unit(s)${res.skipped ? `, skipped ${res.skipped}` : ''}.`);
+    if (args.json) return emitAndExit({ ok: true, ...res }, 0);
+    log(`reindexed ${res.recovered} unit(s)${res.skipped ? `, skipped ${res.skipped}` : ''}.`);
     process.exit(0);
   }
 
@@ -349,7 +360,7 @@ async function main(): Promise<void> {
   }
 
   if (args.json) {
-    process.stdout.write(JSON.stringify({ ok: result.errorCount === 0, ...result }) + '\n');
+    return emitAndExit({ ok: result.errorCount === 0, ...result }, result.errorCount === 0 ? 0 : 1);
   } else {
     const changed = result.units.filter((u) => u.uploaded.length > 0).length;
     const current = result.units.filter((u) => u.upToDate).length;

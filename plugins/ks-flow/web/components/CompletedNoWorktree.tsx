@@ -1,4 +1,5 @@
 'use client';
+import { TranscriptBackup } from '@/components/TranscriptBackup';
 import type { WorkUnitDoc } from '@/lib/types';
 
 function relTime(iso: string | null): string {
@@ -14,7 +15,9 @@ function relTime(iso: string | null): string {
 
 /**
  * Finished work whose git worktree is already gone (removed/cleaned up) — the
- * archive tail of the board. Read-only: there's no worktree left to act on.
+ * archive tail of the board. No worktree left to clean up, but its sessions may
+ * still be in the bucket, so each row offers a Restore (only — the sweep backs
+ * up live worktrees, so there is nothing to back up from here).
  * Hidden by default; the board's "show completed" checkbox reveals it.
  */
 export function CompletedNoWorktree({ units }: { units: WorkUnitDoc[] }) {
@@ -42,6 +45,7 @@ export function CompletedNoWorktree({ units }: { units: WorkUnitDoc[] }) {
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium">PR</th>
                 <th className="px-3 py-2 font-medium">Last activity</th>
+                <th className="px-3 py-2 font-medium"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/70">
@@ -87,6 +91,9 @@ export function CompletedNoWorktree({ units }: { units: WorkUnitDoc[] }) {
                     )}
                   </td>
                   <td className="px-3 py-2 text-slate-500">{relTime(u.lastActivity)}</td>
+                  <td className="px-3 py-2 text-right">
+                    <TranscriptBackup unitId={u.unitId} restoreOnly />
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -39,16 +39,20 @@
 // again. They would simply reach 30 days and be pruned. A session update now
 // sweeps up everything that unit has, so resuming an old session finds it.
 import {
+  appendFileSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   realpathSync,
   renameSync,
   rmSync,
   statSync,
   unlinkSync,
+  utimesSync,
+  writeFileSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -77,6 +81,7 @@ import {
 import type { BackupStore, RunUpload } from './db/types.js';
 import { CLAUDE_PROJECTS_DIR, KS_TIME_DIR, encodeProjectDir } from './paths.js';
 import { parseStateYaml } from './stateyaml.js';
+import { mergeLogs, missingLines } from './time-log-merge.js';
 import { listWorktrees } from './worktree.js';
 
 /** A unit the sweep can act on: one git worktree of the tracked project. */
@@ -301,6 +306,37 @@ export function targetForWorktree(worktreePath: string, identifier?: string): Un
     workflowDir:
       own && existsSync(own) ? own : existsSync(fallbackWorkflow) ? fallbackWorkflow : null,
   };
+}
+
+/**
+ * The local time log merged with the bucket's copy, written to a temp file the
+ * caller uploads and deletes. `added` counts the cloud-only events kept.
+ */
+async function mergeWithCloudTimeLog(
+  gcs: GcsConfig,
+  zstdPath: string,
+  localFile: string,
+  object: string,
+): Promise<{ file: string; added: number }> {
+  const tmpZst = join(tmpdir(), `ksflow-sweep-time-${process.pid}-${randomUUID()}.zst`);
+  const tmpCloud = `${tmpZst}.jsonl`;
+  const out = join(tmpdir(), `ksflow-sweep-time-${process.pid}-${randomUUID()}.merged.jsonl`);
+  try {
+    await downloadObject(gcs, object, tmpZst);
+    await decompressFile(tmpZst, tmpCloud, zstdPath);
+    const local = readFileSync(localFile, 'utf8');
+    const cloud = readFileSync(tmpCloud, 'utf8');
+    writeFileSync(out, mergeLogs(local, cloud));
+    return { file: out, added: missingLines(local, cloud).length };
+  } finally {
+    for (const f of [tmpZst, tmpCloud]) {
+      try {
+        unlinkSync(f);
+      } catch {
+        // best-effort temp cleanup
+      }
+    }
+  }
 }
 
 /** Compress one session file, upload it with its source stamp, and return the
@@ -587,23 +623,40 @@ export async function sweep(opts: SweepOpts): Promise<SweepResult> {
         log(`would upload ${t.identifier} time log → gs://${gcs.bucket}/${timeLogObject}`);
         res.timeLog = true;
       } else {
+        let merged: { file: string; added: number } | null = null;
         try {
+          // Upload the UNION with the cloud copy, never the local file alone: a
+          // fresh local log (a short session on a new machine, before any
+          // restore) would otherwise replace the bucket's full history. The
+          // stamp stays the local file's, so change detection is unaffected.
+          if (remote.has(timeLogObject)) merged = await mergeWithCloudTimeLog(gcs, zstdPath, timeLogFile, timeLogObject);
           timeLog = await compressAndStamp({
             gcs,
             zstdPath,
-            file: timeLogFile,
+            file: merged?.file ?? timeLogFile,
             object: timeLogObject,
             size: timeLogStat.size,
             mtimeMs: timeLogStat.mtimeMs,
           });
           res.timeLog = true;
           res.uploads.push({ path: TIME_LOG_OBJECT, kind: 'time-log', size: timeLogStat.size, compressedSize: timeLog.compressedSize });
-          log(`uploaded ${t.identifier} time log (${timeLogStat.size} B)`);
+          log(
+            `uploaded ${t.identifier} time log (${timeLogStat.size} B)` +
+              (merged?.added ? `, keeping ${merged.added} cloud-only event(s)` : ''),
+          );
         } catch (e) {
           const msg = (e as Error)?.message ?? String(e);
           res.errors.push(`time log: ${msg}`);
           errorCount++;
           log(`FAILED ${t.identifier} time log — ${msg}`);
+        } finally {
+          if (merged) {
+            try {
+              unlinkSync(merged.file);
+            } catch {
+              // best-effort temp cleanup
+            }
+          }
         }
       }
     }
@@ -953,23 +1006,43 @@ export interface RestoreOpts {
   target: UnitTarget;
   gcs: GcsConfig;
   zstdPath: string;
-  /** Overwrite a local session file that already exists (default: never). */
+  /** Overwrite a local session file (or workflow file) that already exists (default: never). */
   overwrite?: boolean;
+  /** The time log: 'merge' (default) adds the cloud events the local log lacks;
+   * 'overwrite' replaces the local log with the cloud copy. */
+  timeLog?: 'merge' | 'overwrite';
+  /** Also unpack workflow.tar.zst into the unit's workflow folder. */
+  workflow?: boolean;
+  /** The main checkout — where the workflow folder goes when the worktree is gone. */
+  projectPath?: string | null;
   dryRun?: boolean;
   log: (msg: string) => void;
 }
 
 export interface RestoreResult {
   restored: string[];
-  /** The unit's time log came back (it was missing locally). */
-  timeLogRestored?: boolean;
   keptLocal: string[]; // present locally, left alone — local always wins
+  /** What happened to the time log; null when the bucket has none. */
+  timeLog: { action: 'restored' | 'merged' | 'overwritten' | 'current'; added: number } | null;
+  /** Where the workflow folder went and how many files came back; null when not asked for or not archived. */
+  workflow: { dir: string; restored: number; kept: number } | null;
   errors: string[];
   workflowObject: string | null;
 }
 
 /**
- * Pull a unit's session objects back into ~/.claude/projects/<encoded>.
+ * Give a restored file its source's mtime, so the next sweep sees it as already
+ * backed up instead of changed (it compares size and floor(mtimeMs) with the
+ * stamp). Set to mid-millisecond so float rounding can never land it in the
+ * millisecond before.
+ */
+function setMtime(file: string, mtimeMs: number): void {
+  utimesSync(file, new Date(), (Math.floor(mtimeMs) + 0.5) / 1000);
+}
+
+/**
+ * Pull a unit's session objects back into ~/.claude/projects/<encoded>, then its
+ * time log and (when asked) its workflow folder.
  *
  * Local files win by default: a transcript on disk is the live one the CLI may
  * be appending to, and clobbering it with an older cloud copy would lose the
@@ -985,7 +1058,14 @@ export async function restoreUnit(opts: RestoreOpts): Promise<RestoreResult> {
   const unitRoot = unitPrefix(gcs, target.identifier);
   const prefix = `${unitRoot}transcript/`;
   const objects = await listObjects(gcs, prefix);
-  const out: RestoreResult = { restored: [], keptLocal: [], errors: [], workflowObject: null };
+  const out: RestoreResult = {
+    restored: [],
+    keptLocal: [],
+    timeLog: null,
+    workflow: null,
+    errors: [],
+    workflowObject: null,
+  };
 
   if (objects.length === 0) {
     // Nothing in the per-file layout. Units archived by the removal hook before
@@ -996,10 +1076,10 @@ export async function restoreUnit(opts: RestoreOpts): Promise<RestoreResult> {
     const legacy = await listObjects(gcs, `${unitRoot}transcript.tar.zst`);
     if (legacy.length > 0) {
       log(`no per-file objects — restoring from the legacy ${legacy[0].name}`);
-      return restoreFromTarball(legacy[0].name, { ...opts, unitRoot });
+      await restoreFromTarball(legacy[0].name, opts, out);
+    } else {
+      log(`no cloud transcript objects under gs://${gcs.bucket}/${prefix}`);
     }
-    log(`no cloud transcript objects under gs://${gcs.bucket}/${prefix}`);
-    return out;
   }
 
   for (const obj of objects) {
@@ -1022,6 +1102,7 @@ export async function restoreUnit(opts: RestoreOpts): Promise<RestoreResult> {
       await decompressFile(tmpZst, tmpOut, zstdPath);
       mkdirSync(dirname(dest), { recursive: true });
       renameSync(tmpOut, dest); // same filesystem ($TMPDIR is on /) — atomic
+      if (obj.srcMtimeMs !== undefined) setMtime(dest, obj.srcMtimeMs);
       out.restored.push(rel);
       log(`restored ${rel}`);
     } catch (e) {
@@ -1039,41 +1120,82 @@ export async function restoreUnit(opts: RestoreOpts): Promise<RestoreResult> {
     }
   }
 
-  out.timeLogRestored = await restoreTimeLog(opts, unitRoot);
+  // Both transcript layouts share the rest: a legacy unit can still have a time
+  // log (it goes up on its own clock) and a workflow archive.
+  try {
+    out.timeLog = await restoreTimeLog(opts, unitRoot);
+  } catch (e) {
+    const msg = (e as Error)?.message ?? String(e);
+    out.errors.push(`time log: ${msg}`);
+    log(`FAILED time log restore — ${msg}`);
+  }
 
-  const wf = await listObjects(gcs, `${unitPrefix(gcs, target.identifier)}workflow.tar.zst`);
+  const wf = await listObjects(gcs, `${unitRoot}workflow.tar.zst`);
   out.workflowObject = wf.length > 0 ? `gs://${gcs.bucket}/${wf[0].name}` : null;
+  if (opts.workflow) {
+    if (!wf[0]) {
+      log('no workflow archive in the bucket — nothing to restore there');
+    } else {
+      try {
+        out.workflow = await restoreWorkflow(opts, wf[0].name);
+      } catch (e) {
+        const msg = (e as Error)?.message ?? String(e);
+        out.errors.push(`workflow: ${msg}`);
+        log(`FAILED workflow restore — ${msg}`);
+      }
+    }
+  }
   return out;
 }
 
 /**
- * Bring the unit's time log back when it is missing locally (a new machine, a
- * cleared ~/.claude/ks-time). Same rule as a session file: a local log is the
- * live one the hook appends to, so it is never overwritten unless asked.
+ * Bring the unit's time log back from the bucket.
+ *
+ * Missing locally (a new machine, a cleared ~/.claude/ks-time): the cloud copy is
+ * written as is. Present locally: by default the cloud events the local log
+ * lacks are APPENDED — not a rewrite, because the hook may be appending to this
+ * file right now and a rewrite would drop whatever it wrote in between; ks-time
+ * sorts by `ts`, so order on disk does not matter. 'overwrite' replaces the
+ * local log with the cloud copy, discarding local-only events.
  */
-async function restoreTimeLog(opts: RestoreOpts, unitRoot: string): Promise<boolean> {
-  const { target, gcs, zstdPath, overwrite = false, dryRun = false, log } = opts;
-  const dest = timeLogPath(target.identifier);
-  if (existsSync(dest) && !overwrite) return false;
+async function restoreTimeLog(opts: RestoreOpts, unitRoot: string): Promise<RestoreResult['timeLog']> {
+  const { target, gcs, zstdPath, timeLog: mode = 'merge', dryRun = false, log } = opts;
   const object = `${unitRoot}${TIME_LOG_OBJECT}`;
-  if ((await listObjects(gcs, object)).length === 0) return false;
-  if (dryRun) {
-    log(`would restore the time log → ${dest}`);
-    return true;
+  if ((await listObjects(gcs, object)).length === 0) {
+    log('no time log in the bucket');
+    return null;
   }
+  const dest = timeLogPath(target.identifier);
+  const hasLocal = existsSync(dest);
+  const action = !hasLocal ? 'restored' : mode === 'overwrite' ? 'overwritten' : 'merged';
+  if (dryRun) {
+    log(`would ${action === 'restored' ? 'restore' : action === 'overwritten' ? 'overwrite' : 'merge into'} the time log → ${dest}`);
+    return { action, added: 0 };
+  }
+
   const tmpZst = join(tmpdir(), `ksflow-restore-time-${process.pid}.zst`);
   const tmpOut = `${tmpZst}.jsonl`;
   try {
     await downloadObject(gcs, object, tmpZst);
     await decompressFile(tmpZst, tmpOut, zstdPath);
+    const cloud = readFileSync(tmpOut, 'utf8');
     mkdirSync(dirname(dest), { recursive: true });
-    // Not a rename: ~/.claude may sit on another volume than $TMPDIR.
-    copyFileSync(tmpOut, dest);
-    log('restored the time log');
-    return true;
-  } catch (e) {
-    log(`FAILED time log restore — ${(e as Error)?.message ?? e}`);
-    return false;
+    if (action !== 'merged') {
+      // Not a rename: ~/.claude may sit on another volume than $TMPDIR.
+      copyFileSync(tmpOut, dest);
+      log(action === 'restored' ? 'restored the time log' : 'overwrote the local time log with the cloud copy');
+      return { action, added: missingLines('', cloud).length };
+    }
+    const local = readFileSync(dest, 'utf8');
+    const add = missingLines(local, cloud);
+    if (add.length === 0) {
+      log('time log: the local copy already has every cloud event');
+      return { action: 'current', added: 0 };
+    }
+    const sep = local && !local.endsWith('\n') ? '\n' : '';
+    appendFileSync(dest, sep + add.join('\n') + '\n');
+    log(`time log: merged ${add.length} cloud-only event(s) into the local copy`);
+    return { action: 'merged', added: add.length };
   } finally {
     for (const f of [tmpZst, tmpOut]) {
       try {
@@ -1086,12 +1208,118 @@ async function restoreTimeLog(opts: RestoreOpts, unitRoot: string): Promise<bool
 }
 
 /**
- * Download and unpack a legacy `transcript.tar.zst` into `workDir`, returning the
- * directory the tarball produced.
+ * Unpack the unit's workflow.tar.zst into its workflow folder: the live
+ * worktree's when the worktree exists, else the main checkout's. Like a
+ * transcript, a file already on disk is the one being edited, so only MISSING
+ * files are written unless `overwrite`. Each file keeps the mtime tar recorded.
+ */
+async function restoreWorkflow(
+  opts: RestoreOpts,
+  object: string,
+): Promise<NonNullable<RestoreResult['workflow']>> {
+  const { target, gcs, zstdPath, overwrite = false, dryRun = false, log } = opts;
+  const workDir = mkdtempSync(join(tmpdir(), 'ksflow-workflow-'));
+  try {
+    const src = await extractTarZst(gcs, object, zstdPath, workDir);
+    const dir = workflowDestination(target, opts.projectPath ?? null, src);
+    let restored = 0;
+    let kept = 0;
+    for (const rel of filesUnder(src)) {
+      const dest = join(dir, rel);
+      if (existsSync(dest) && !overwrite) {
+        kept++;
+        continue;
+      }
+      if (dryRun) {
+        log(`would restore workflow ${rel} → ${dest}`);
+        restored++;
+        continue;
+      }
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(join(src, rel), dest);
+      setMtime(dest, statSync(join(src, rel)).mtimeMs);
+      restored++;
+    }
+    log(`${dryRun ? '[dry run] ' : ''}workflow → ${dir}: restored ${restored} file(s), kept ${kept} local`);
+    return { dir, restored, kept };
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Where a restored workflow folder goes. The root is the live worktree when it
+ * exists, else the main checkout. The folder's path under that root
+ * (`workflow/<user>/tickets/<id>` or `workflow/<user>/<slug>`) comes from a
+ * state.yaml that already names the unit — `create-worktree` copies the main
+ * checkout's tree, so one usually does — else from the archived state.yaml's
+ * type plus the only `workflow/<user>/` folder there is.
+ */
+function workflowDestination(target: UnitTarget, projectPath: string | null, extracted: string): string {
+  const roots = [
+    target.worktreePath && existsSync(target.worktreePath) ? target.worktreePath : null,
+    projectPath && existsSync(projectPath) ? projectPath : null,
+  ].filter((r): r is string => Boolean(r));
+  if (roots.length === 0) throw new Error('neither the worktree nor the main checkout exists — nowhere to put it');
+  const base = roots[0];
+
+  for (const root of roots) {
+    for (const path of findStateYamls(join(root, 'workflow'))) {
+      if (parseStateYaml(path)?.doc.identifier === target.identifier) {
+        return join(base, relative(root, dirname(path)));
+      }
+    }
+  }
+
+  const users = safeDirents(join(base, 'workflow'))
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+    .map((e) => e.name);
+  if (users.length !== 1) {
+    throw new Error(
+      `cannot tell which workflow/<user>/ folder ${target.identifier} belongs in ` +
+        `(found ${users.length ? users.join(', ') : 'none'} under ${base}/workflow)`,
+    );
+  }
+  const type = parseStateYaml(join(extracted, 'state.yaml'))?.doc.type ?? 'ticket';
+  return join(base, 'workflow', users[0], ...(type === 'ticket' ? ['tickets'] : []), basename(extracted));
+}
+
+/** Every file under `dir`, relative to it. */
+function filesUnder(dir: string, rel = ''): string[] {
+  const out: string[] = [];
+  for (const e of safeDirents(join(dir, rel))) {
+    const r = join(rel, e.name);
+    if (e.isDirectory()) out.push(...filesUnder(dir, r));
+    else if (e.isFile()) out.push(r);
+  }
+  return out;
+}
+
+/**
+ * Download and unpack a `.tar.zst` object into `workDir`, returning the
+ * directory it produced.
  *
- * The archive was built as `tar -C <parent> -- <encodedDirName>`, so its entries
- * are nested one level down under a name we do not want to assume — take whatever
- * directory actually appeared. tar preserves each file's mtime, which is what
+ * Archives are built as `tar -C <parent> -- <name>`, so entries are nested one
+ * level down under a name we do not want to assume — take whatever directory
+ * actually appeared. tar preserves each file's mtime.
+ */
+async function extractTarZst(gcs: GcsConfig, object: string, zstdPath: string, workDir: string): Promise<string> {
+  const zst = join(workDir, 'archive.tar.zst');
+  const tar = join(workDir, 'archive.tar');
+  await downloadObject(gcs, object, zst);
+  await decompressFile(zst, tar, zstdPath);
+  const untar = spawnSync('/usr/bin/tar', ['-xf', tar, '-C', workDir], { encoding: 'utf8' });
+  if (untar.status !== 0) throw new Error(`tar -xf: ${(untar.stderr || '').trim()}`);
+  const roots = readdirSync(workDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => join(workDir, e.name));
+  if (!roots[0]) throw new Error('archive contained no directory');
+  return roots[0];
+}
+
+/**
+ * Download and unpack a legacy `transcript.tar.zst` into `workDir`, returning the
+ * directory the tarball produced. tar preserves each file's mtime, which is what
  * makes a converted object's source stamp match what a local sweep would compute.
  */
 export async function extractLegacyTarball(
@@ -1100,17 +1328,7 @@ export async function extractLegacyTarball(
   zstdPath: string,
   workDir: string,
 ): Promise<string> {
-  const zst = join(workDir, 'transcript.tar.zst');
-  const tar = join(workDir, 'transcript.tar');
-  await downloadObject(gcs, object, zst);
-  await decompressFile(zst, tar, zstdPath);
-  const untar = spawnSync('/usr/bin/tar', ['-xf', tar, '-C', workDir], { encoding: 'utf8' });
-  if (untar.status !== 0) throw new Error(`tar -xf: ${(untar.stderr || '').trim()}`);
-  const roots = readdirSync(workDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => join(workDir, e.name));
-  if (!roots[0]) throw new Error('tarball contained no directory');
-  return roots[0];
+  return extractTarZst(gcs, object, zstdPath, workDir);
 }
 
 /**
@@ -1119,18 +1337,10 @@ export async function extractLegacyTarball(
  * Unpacks to a temp dir and copies in only the sessions MISSING locally, same
  * rule as the per-file path — a tarball is a snapshot of the directory as it was
  * at archive time, so blindly overwriting could replace a live transcript with
- * an older copy of itself.
- *
- * The tarball was built as `tar -C <parent> -- <encodedDirName>`, so its entries
- * are nested one level under that directory name.
+ * an older copy of itself. Fills `out`; the time log and workflow are restoreUnit's.
  */
-async function restoreFromTarball(
-  object: string,
-  opts: RestoreOpts & { unitRoot: string },
-): Promise<RestoreResult> {
-  const { target, gcs, zstdPath, overwrite = false, dryRun = false, log, unitRoot } = opts;
-  const out: RestoreResult = { restored: [], keptLocal: [], errors: [], workflowObject: null };
-
+async function restoreFromTarball(object: string, opts: RestoreOpts, out: RestoreResult): Promise<void> {
+  const { target, gcs, zstdPath, overwrite = false, dryRun = false, log } = opts;
   const workDir = mkdtempSync(join(tmpdir(), 'ksflow-legacy-'));
   try {
     const src = await extractLegacyTarball(gcs, object, zstdPath, workDir);
@@ -1148,6 +1358,7 @@ async function restoreFromTarball(
       }
       mkdirSync(dirname(dest), { recursive: true });
       copyFileSync(join(src, rel), dest);
+      setMtime(dest, statSync(join(src, rel)).mtimeMs);
       out.restored.push(rel);
       log(`restored ${rel} (legacy tarball)`);
     }
@@ -1158,8 +1369,4 @@ async function restoreFromTarball(
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
-
-  const wf = await listObjects(gcs, `${unitRoot}workflow.tar.zst`);
-  out.workflowObject = wf.length > 0 ? `gs://${gcs.bucket}/${wf[0].name}` : null;
-  return out;
 }

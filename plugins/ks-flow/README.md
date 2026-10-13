@@ -103,7 +103,7 @@ firebase emulators:start --only firestore
 | `ks-flow daemon` | Run the ingester in the foreground (debug). |
 | `ks-flow set-project <path>` | Re-point the tracked project (rewrites `project.conf`, re-backfills). |
 | `ks-flow backup [target] [options]` | **The one uploader.** Targets: nothing = every live worktree; `--unit <id>`; `--worktree <path> [--identifier <id>]` (one worktree, live or about to be deleted); `--completed` (units whose worktree is gone). Options: `--since-hours <n>`, `--force`, `--dry-run`, `--json`, `--reindex` (upload nothing; rebuild the store's backup index from the bucket), `--runs` (upload nothing; print the run history), `--trigger <daily\|manual\|unit\|removal\|completed>` (recorded with the run; inferred from the target when left out). |
-| `ks-flow restore --unit <id> [--overwrite] [--dry-run] [--json]` | Restore a unit's backed-up transcripts into `~/.claude/projects/<encoded>`. Local files win unless `--overwrite`. Reads per-file objects, falling back to a legacy `transcript.tar.zst`. |
+| `ks-flow restore --unit <id> [--overwrite] [--workflow] [--overwrite-time-log] [--dry-run] [--json]` | Restore a unit's backed-up transcripts into `~/.claude/projects/<encoded>`, and merge its time log. Local files win unless `--overwrite`. Reads per-file objects, falling back to a legacy `transcript.tar.zst`. `--workflow` also unpacks the workflow folder; `--overwrite-time-log` replaces the local time log instead of merging. |
 | `ks-flow archive <worktree> [id]` | Familiar alias — forwards to `backup --worktree … --force`. |
 | `ks-flow backfill-archive [--dry-run] [--force]` | Familiar alias — forwards to `backup --completed`. |
 | `ks-flow migrate-archives [--dry-run] [--unit <id>] [--backup-prefix <p>] [--delete-legacy] [--force]` | Convert legacy `transcript.tar.zst` archives to the per-file layout, after server-side copying every affected object to a safety prefix. |
@@ -285,8 +285,19 @@ gs://<bucket>/<prefix>/<identifier>/time-log.jsonl.zst
 `~/.claude/ks-time/<identifier>.jsonl`, the events its `time-log.sh` hook
 records, which `ks-time` turns into time spent (see the ks scripts README). It
 goes up whenever it changed, on its own: every turn grows it, and it does not
-wait for a session file to trigger the unit. A restore brings it back when it is
-missing locally, never over a local one.
+wait for a session file to trigger the unit.
+
+Two copies of one log are **merged, never replaced** (`src/lib/time-log-merge.ts`:
+every line once, ordered by `ts`). The sweep uploads the union of the local log
+and the bucket's copy, so a fresh local log — a short session on a new machine,
+before any restore — cannot overwrite the full history in the bucket. A restore
+writes the cloud copy when there is no local log, and otherwise appends the
+cloud events the local one lacks (appends, so an event the hook writes at that
+moment is not lost). Because every backup uploads the union, the cloud copy
+already holds each backed-up local event, so replacing the local log could only
+drop events logged since the last backup — the Restore dialog therefore offers no
+choice. `--overwrite-time-log` on the CLI remains as an escape hatch for a
+corrupted local log.
 
 This layout is the whole point, not an implementation detail. Re-tarring the
 transcript *directory* would eventually destroy the thing being protected: once
@@ -345,6 +356,31 @@ pass `--overwrite` on the CLI. Restore returns the **conversation, not the
 worktree**: if the worktree is gone, the encoded transcript path matches no live
 directory and `--resume` will not list the session until that worktree exists
 again.
+
+Clicking the badge opens a confirmation dialog with one opt-in:
+
+- **Also restore the workflow folder** (`--workflow`) — unpacks `workflow.tar.zst`
+  into the unit's folder under the live worktree's `workflow/`, or the main
+  checkout's when the worktree is gone. The folder's path comes from a
+  `state.yaml` already naming the unit, else from the archived `state.yaml`'s
+  type and the only `workflow/<user>/` folder there. Missing files only; files
+  on disk are kept unless `--overwrite`.
+
+The time log is always merged (see above).
+
+Restored files keep their original mtime (from the object's source stamp, or
+the tarball), so the next sweep sees them as already backed up rather than
+re-uploading them. Old-format units (`transcript.tar.zst` only) get the same
+time-log and workflow handling as per-file ones.
+
+Done tickets leave the board, and they are the ones old enough to have been
+pruned, so the badge follows them: each row of *Completed worktrees · not
+removed* carries the same `☁ backup` / `⤓ restore N` pair, and each row of
+*Completed · worktree removed* (behind **show completed**) carries the restore
+alone — the sweep only backs up live worktrees. The restore CLI resolves where a
+unit's transcripts belong exactly as the status does (live worktree, then the
+completed-unit record, then the location stamped on its objects, then the backup
+index), so a badge the board shows is one the restore can act on.
 
 **Manual triggers.** The header `☁` backs up everything changed in the last 24h
 without waiting for the schedule (useful before shutting down, or before leaving

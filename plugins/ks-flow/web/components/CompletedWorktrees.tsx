@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { SeeLogs, useStreams } from '@/components/StreamPanel';
+import { TranscriptBackup } from '@/components/TranscriptBackup';
 import type { WorkUnitDoc } from '@/lib/types';
 
 function relTime(iso: string | null): string {
@@ -36,6 +37,9 @@ interface BusyProc {
  * Settings) via /api/run-command, streaming its output into the bottom-right
  * panel. On success it optimistically hides the row and asks the board to
  * refresh; on failure the error stays in the panel.
+ *
+ * Done work leaves the board, so each row also carries the unit's backup and
+ * Restore — the sessions most likely to have been pruned are exactly these.
  */
 export function CompletedWorktrees({
   units,
@@ -272,6 +276,7 @@ export function CompletedWorktrees({
                   <td className="px-3 py-2 text-slate-500">{relTime(u.lastActivity)}</td>
                   <td className="px-3 py-2 text-right">
                     <span className="inline-flex items-center gap-1">
+                      <TranscriptBackup unitId={u.unitId} />
                       <SeeLogs streamKey={keyOf(u)} />
                       <button
                         type="button"
