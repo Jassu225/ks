@@ -139,8 +139,10 @@ Approved?: No
 When user explicitly approves, create a Linear document and attach it to the project:
 
 ```bash
-linear document create --title "Technical Approach Document (TAD)" --content "<approved TAD markdown from resources/tad.md>" --project <project-id> --icon ":page_facing_up:"
+linear document create --title "Technical Approach Document (TAD)" --content-file {project-directory-path}/resources/tad.md --project <project-id> --icon ":page_facing_up:"
 ```
+
+Pass the file, not an inline `--content`: a TAD's code spans and fences break the inline form (`listen EPERM`). For a ticket workflow, attach the document to the ticket with `--issue KAR-XXX` instead of `--project`.
 
 ### 9. Confirm Success
 

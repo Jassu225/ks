@@ -118,7 +118,9 @@ npx tsx linear-cli.ts issue attachments KAR-123 --json
 # Teams, users, documents, etc.
 npx tsx linear-cli.ts team list
 npx tsx linear-cli.ts user me
-npx tsx linear-cli.ts document list --project <id>
+npx tsx linear-cli.ts document list --project <id>       # or --issue KAR-123
+npx tsx linear-cli.ts document create --title "TAD" --content-file tad.md --issue KAR-123   # or --project <id>
+npx tsx linear-cli.ts document update <id> --content-file tad.md
 
 # Document comments (separate from issue comments — see note below)
 npx tsx linear-cli.ts document comment list <document-id-or-slug>
@@ -139,6 +141,13 @@ Replies nest under `replies[]` in `--json`, and inline comments carry the
 a comment id, which Linear keeps global, so `comment update` and
 `document comment update` hit the same `commentUpdate` mutation and either works
 on any comment.
+
+**A document has one parent.** It belongs to a project *or* an issue: passing
+both `--project` and `--issue` is refused, and `document update --issue` takes
+the document off its project (the CLI says so). `--issue` goes through the live
+API's `issueId` / `issue` filter, which the pinned `@linear/sdk` 29 types don't
+list. Use `--content-file` for markdown with backticks, as with
+`--description-file`.
 
 ### Grain CLI
 

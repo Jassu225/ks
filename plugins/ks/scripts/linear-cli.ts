@@ -1259,12 +1259,15 @@ async function getMe(options: { json?: boolean }): Promise<void> {
 // Document Commands
 // ============================================================================
 
-async function listDocuments(options: { project?: string; limit?: number; json?: boolean }): Promise<void> {
+async function listDocuments(options: { project?: string; issue?: string; limit?: number; json?: boolean }): Promise<void> {
   const client = getClient();
 
   const filter: Record<string, unknown> = {};
   if (options.project) {
     filter.project = { id: { eq: options.project } };
+  }
+  if (options.issue) {
+    filter.issue = { id: { eq: (await requireIssue(client, options.issue)).id } };
   }
 
   const documents = await client.documents({
@@ -1343,18 +1346,25 @@ async function getDocument(idOrSlug: string, options: { json?: boolean }): Promi
 async function createDocument(options: {
   title: string;
   content?: string;
+  contentFile?: string;
   project?: string;
+  issue?: string;
   icon?: string;
   color?: string;
   json?: boolean;
 }): Promise<void> {
   const client = getClient();
+  rejectProjectAndIssue(options);
+  // Inline content keeps its literal "\n" → newline expansion; file content is taken as-is
+  const content = readTextOption(options.content?.replace(/\\n/g, '\n'), options.contentFile, 'content');
+  const issue = options.issue ? await requireIssue(client, options.issue) : undefined;
 
   const input: Record<string, unknown> = {
     title: options.title,
   };
-  if (options.content) input.content = options.content.replace(/\\n/g, '\n');
+  if (content) input.content = content;
   if (options.project) input.projectId = options.project;
+  if (issue) input.issueId = issue.id;
   if (options.icon) input.icon = options.icon;
   if (options.color) input.color = options.color;
 
@@ -1388,6 +1398,7 @@ async function createDocument(options: {
     slugId: document.slugId,
     url: document.url,
     project: project ? { id: project.id, name: project.name } : null,
+    issue: issue ? { id: issue.id, identifier: issue.identifier, title: issue.title } : null,
     createdAt: document.createdAt,
   };
 
@@ -1399,6 +1410,9 @@ async function createDocument(options: {
     if (data.project) {
       console.log(`  Project: ${data.project.name}`);
     }
+    if (data.issue) {
+      console.log(`  Issue: ${data.issue.identifier}`);
+    }
     console.log(`  URL: ${data.url}`);
   }
 }
@@ -1406,13 +1420,16 @@ async function createDocument(options: {
 async function updateDocument(idOrSlug: string, options: {
   title?: string;
   content?: string;
+  contentFile?: string;
   project?: string;
+  issue?: string;
   icon?: string;
   color?: string;
   json?: boolean;
 }): Promise<void> {
   const client = getClient();
 
+  rejectProjectAndIssue(options);
   let document: Document | undefined;
   try {
     document = await client.document(idOrSlug);
@@ -1420,11 +1437,15 @@ async function updateDocument(idOrSlug: string, options: {
     console.error(chalk.red(`Document not found: ${idOrSlug}`));
     process.exit(1);
   }
+  const previousProject = options.issue ? await document.project : undefined;
+
+  const content = readTextOption(options.content?.replace(/\\n/g, '\n'), options.contentFile, 'content');
 
   const updateInput: Record<string, unknown> = {};
   if (options.title) updateInput.title = options.title;
-  if (options.content) updateInput.content = options.content.replace(/\\n/g, '\n');
+  if (content) updateInput.content = content;
   if (options.project) updateInput.projectId = options.project;
+  if (options.issue) updateInput.issueId = (await requireIssue(client, options.issue)).id;
   if (options.icon) updateInput.icon = options.icon;
   if (options.color) updateInput.color = options.color;
 
@@ -1452,6 +1473,17 @@ async function updateDocument(idOrSlug: string, options: {
   } else {
     console.log(chalk.green(`✓ Updated document: ${document.title}`));
     console.log(`  URL: ${document.url}`);
+    if (previousProject) {
+      console.log(chalk.yellow(`  Moved off project ${previousProject.name} (a document has one parent: a project or an issue)`));
+    }
+  }
+}
+
+// Linear gives a document one parent: setting an issue clears its project and vice versa
+function rejectProjectAndIssue(options: { project?: string; issue?: string }): void {
+  if (options.project && options.issue) {
+    console.error(chalk.red('Use either --project or --issue, not both: a document belongs to one or the other'));
+    process.exit(1);
   }
 }
 
@@ -1850,6 +1882,15 @@ async function findIssueByIdentifier(client: LinearClient, identifier: string): 
   return undefined;
 }
 
+async function requireIssue(client: LinearClient, identifier: string): Promise<Issue> {
+  const issue = await findIssueByIdentifier(client, identifier);
+  if (!issue) {
+    console.error(chalk.red(`Issue not found: ${identifier}`));
+    process.exit(1);
+  }
+  return issue;
+}
+
 async function listComments(issueIdentifier: string, options: { json?: boolean }): Promise<void> {
   const client = getClient();
 
@@ -2228,6 +2269,7 @@ docCmd
   .command('list')
   .description('List documents')
   .option('-p, --project <id>', 'Filter by project ID')
+  .option('-i, --issue <identifier>', 'Filter by issue (e.g., KAR-123)')
   .option('-l, --limit <number>', 'Limit results', '50')
   .option('-j, --json', 'Output as JSON')
   .action((opts) => listDocuments({ ...opts, limit: parseInt(opts.limit) }));
@@ -2243,7 +2285,9 @@ docCmd
   .description('Create a new document')
   .requiredOption('--title <title>', 'Document title')
   .option('--content <content>', 'Document content (markdown)')
+  .option('--content-file <path>', 'Read the content from a file ("-" for stdin)')
   .option('--project <id>', 'Project ID to associate with')
+  .option('--issue <identifier>', 'Issue to attach the document to, instead of a project (e.g., KAR-123)')
   .option('--icon <icon>', 'Document icon')
   .option('--color <color>', 'Icon color')
   .option('-j, --json', 'Output as JSON')
@@ -2254,7 +2298,9 @@ docCmd
   .description('Update a document')
   .option('--title <title>', 'New title')
   .option('--content <content>', 'New content (markdown)')
+  .option('--content-file <path>', 'Read the new content from a file ("-" for stdin)')
   .option('--project <id>', 'New project ID')
+  .option('--issue <identifier>', 'Move the document onto this issue; this takes it off its project (e.g., KAR-123)')
   .option('--icon <icon>', 'New icon')
   .option('--color <color>', 'New icon color')
   .option('-j, --json', 'Output as JSON')

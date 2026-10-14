@@ -146,17 +146,20 @@ document comments too.
 ### Documents
 
 ```bash
-# List documents (optionally by project)
+# List documents (optionally by project or by issue)
 linear document list --project <project-id>
+linear document list --issue KAR-123
 
 # Get a specific document
 linear document get <document-id>
 
-# Create a document
+# Create a document (on a project, or on an issue with --issue)
 linear document create --title "Doc Title" --content "Markdown content" --project <project-id>
+linear document create --title "Doc Title" --content-file /path/to/doc.md --issue KAR-123
 
-# Update a document
+# Update a document (--content-file for markdown with backticks)
 linear document update <document-id> --title "New Title" --content "Updated content"
+linear document update <document-id> --content-file /path/to/doc.md
 
 # Delete (trash) a document
 linear document delete <document-id>
@@ -213,7 +216,7 @@ When the user asks to interact with Linear:
 7. **Linking issues**: Use `linear issue relate KAR-A KAR-B --type related|blocks|blocked-by|duplicate`, or `--related` on `issue create`, rather than only mentioning the other ticket in the description
 8. **Editing projects**: Use `linear project edit <id>` with `--description` (summary) or `--content` (full description)
 9. **Commenting**: Use `linear comment create KAR-XXX "body"` — supports markdown. To change a comment already posted, `linear comment update <comment-id> "full body"` rather than posting a correction or a duplicate
-10. **Managing documents**: Create with `linear document create`, update with `linear document update`, delete with `linear document delete`
+10. **Managing documents**: Create with `linear document create`, update with `linear document update`, delete with `linear document delete`. A document belongs to a project (`--project <id>`) or to an issue (`--issue KAR-XXX`), never both: `document update --issue` takes it off its project. For a ticket's own doc use `--issue` rather than parking it in the project and linking it. Pass markdown with backticks through `--content-file`, for the same `listen EPERM` reason as `--description-file`
 11. **Attachments**: Use `linear attachment create KAR-XXX --title "..." --url "..."` to link resources to issues. Use `--attachments` on `linear project update` to embed links in project status updates
 
 ## Notes
