@@ -70,7 +70,7 @@ All three resolve their changed-file set through `quality-files.sh`, which honou
 
 #### Session name
 
-A `SessionStart` hook (`scripts/session-title.sh`, on startup, resume and clear) names the session after the checkout's workflow unit: the ticket id (`KAR-13147`), or for a project its workflow folder name. `sessionTitle` sets the session's name, which is also the peer name `ListAgents` prints and `SendMessage` takes, so it is kept short and space-free; the statusline's ticket pill carries the ticket. Outside a workflow checkout the name is left alone. The lookup is `scripts/workflow-unit`, which the shell statusline uses too. (The session's UUID can't be set this way; only `claude --session-id <uuid>` chooses it.)
+A `SessionStart` hook (`scripts/session-title.sh`, on startup, resume and clear) names the session after the checkout's workflow unit: the ticket id (`KAR-13147`), or for a project its workflow folder name. The name is also the peer name `ListAgents` prints and `SendMessage` takes, so it is kept short and space-free; the statusline's ticket pill carries the ticket. The hook's `sessionTitle` only reaches the transcript: the live peer name is fixed at startup, before hooks run, so a new session would keep its derived `<folder>-<xx>` name until resumed. `claude-ks` therefore also launches with `--name <title>` (from `session-title.sh --print`), unless you pass `--name`, `--resume` or `--continue` yourself. Outside a workflow checkout the name is left alone. The lookup is `scripts/workflow-unit`, which the shell statusline uses too. (The session's UUID can't be set this way; only `claude --session-id <uuid>` chooses it.)
 
 #### Statusline (split: script + function-hook module)
 

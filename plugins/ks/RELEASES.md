@@ -1,5 +1,9 @@
 # Releases
 
+## 2026-10-14
+
+- **Session name at launch**: `claude-ks` now starts a workflow checkout's session with `--name KAR-123` (or the project's workflow folder), from `scripts/session-title.sh --print`. The `SessionStart` hook's `sessionTitle` only reached the transcript: the peer name `ListAgents` prints and `SendMessage` takes is fixed at startup, so a new session answered to its derived `<folder>-<xx>` name until resumed. Skipped when you pass `--name`, `--resume` or `--continue` (a resumed session keeps its saved name). Only the name changes; the session ID is untouched.
+
 ## 2026-10-08
 
 - **statusline — Linear link**: in a ks workflow checkout the statusline shows the ticket id (or `project`) as a clickable link to Linear, read from the `state.yaml` whose `worktree_dir` is the checkout.

@@ -60,4 +60,21 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-exec claude "${PLUGIN_DIRS[@]}" --append-system-prompt-file "$PLUGIN_DIR/rules/ks-rules.md" "${PASSTHROUGH_ARGS[@]}"
+# Name the session after the checkout's workflow unit (KAR-123, or a project's
+# folder name). The SessionStart hook's sessionTitle only reaches the
+# transcript; the peer name ListAgents prints and SendMessage takes is fixed at
+# startup, so only --name sets it for a new session. Skipped when the caller
+# names the session, or resumes one (it keeps its saved name).
+NAME_ARGS=()
+NAMED=
+for arg in "${PASSTHROUGH_ARGS[@]}"; do
+  case "$arg" in
+    -n|--name|--name=*|-r|--resume|--resume=*|-c|--continue) NAMED=1 ;;
+  esac
+done
+if [ -z "$NAMED" ]; then
+  SESSION_NAME=$("$SCRIPT_DIR/session-title.sh" --print 2>/dev/null)
+  [ -n "$SESSION_NAME" ] && NAME_ARGS=("--name" "$SESSION_NAME")
+fi
+
+exec claude "${PLUGIN_DIRS[@]}" --append-system-prompt-file "$PLUGIN_DIR/rules/ks-rules.md" "${NAME_ARGS[@]}" "${PASSTHROUGH_ARGS[@]}"
