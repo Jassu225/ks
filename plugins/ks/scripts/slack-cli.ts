@@ -15,9 +15,10 @@ import { createReadStream, readFileSync, readdirSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
-import { loadEnv } from './lib/env.js';
+import { loadEnv, restoreCallerCwd } from './lib/env.js';
 
 loadEnv();
+restoreCallerCwd();
 
 // ============================================================================
 // Client Initialization

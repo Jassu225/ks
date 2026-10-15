@@ -67,7 +67,7 @@ Example invocation:
 
 8. **Update Linear Project**
    - The updated `resources/prd.md` now contains both the problem statement (Phase 3) and the product requirements, so it fully replaces the Linear project description.
-   - Run `linear project edit <project-id> --content "<full content of resources/prd.md>"`
+   - Run `linear project edit <project-id> --content-file <workflow-dir>/resources/prd.md`. Pass the file, never the PRD inline: its quotes and backticks break the command under the sandbox
 
 ## Error Handling
 

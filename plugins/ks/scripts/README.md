@@ -121,6 +121,7 @@ npx tsx linear-cli.ts user me
 npx tsx linear-cli.ts document list --project <id>       # or --issue KAR-123
 npx tsx linear-cli.ts document create --title "TAD" --content-file tad.md --issue KAR-123   # or --project <id>
 npx tsx linear-cli.ts document update <id> --content-file tad.md
+npx tsx linear-cli.ts project edit <id> --content-file prd.md   # or --description-file
 
 # Document comments (separate from issue comments — see note below)
 npx tsx linear-cli.ts document comment list <document-id-or-slug>
@@ -148,6 +149,12 @@ the document off its project (the CLI says so). `--issue` goes through the live
 API's `issueId` / `issue` filter, which the pinned `@linear/sdk` 29 types don't
 list. Use `--content-file` for markdown with backticks, as with
 `--description-file`.
+
+**Relative paths are the caller's.** The `linear`, `slack` and `grain` wrappers
+`cd` into `scripts/` so `npx tsx` resolves, and export the caller's directory as
+`KS_ORIGINAL_DIR`; each CLI changes back to it on startup (`restoreCallerCwd` in
+`lib/env.ts`), so `--content-file doc.md`, `slack … -f shot.png` and
+`grain … -o out.mp4` resolve where you ran them.
 
 ### Grain CLI
 

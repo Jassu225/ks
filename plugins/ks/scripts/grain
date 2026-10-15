@@ -3,6 +3,9 @@
 # Usage: ./grain <command> [options]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Relative paths in arguments are resolved against the caller's directory
+# (restoreCallerCwd in lib/env.ts), not scripts/.
+export KS_ORIGINAL_DIR="$PWD"
 cd "$SCRIPT_DIR"
 
 npx tsx grain-cli.ts "$@"

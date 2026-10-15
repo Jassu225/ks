@@ -1,5 +1,11 @@
 # Releases
 
+## 2026-10-15
+
+- **Linear CLI — `project edit --content-file` / `--description-file`** (`-` = stdin), so a project description with quotes or backticks no longer goes inline. `/ks:add-product-requirements` now publishes `prd.md` this way.
+- **Relative paths resolve from your directory**: the `linear`, `slack` and `grain` wrappers `cd` into `scripts/`, so a relative `--content-file`, `-f` or `-o` used to resolve there (ENOENT, or `grain` output landing in `scripts/`). They now pass `KS_ORIGINAL_DIR` and each CLI changes back to it on startup.
+- **`document update --json`** returns the updated title (and now the `url`); it used to report the document as read before the update.
+
 ## 2026-10-14
 
 - **Session name at launch**: `claude-ks` now starts a workflow checkout's session with `--name KAR-123` (or the project's workflow folder), from `scripts/session-title.sh --print`. The `SessionStart` hook's `sessionTitle` only reached the transcript: the peer name `ListAgents` prints and `SendMessage` takes is fixed at startup, so a new session answered to its derived `<folder>-<xx>` name until resumed. Skipped when you pass `--name`, `--resume` or `--continue` (a resumed session keeps its saved name). Only the name changes; the session ID is untouched.

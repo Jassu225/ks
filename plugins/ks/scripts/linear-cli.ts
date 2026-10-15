@@ -13,11 +13,12 @@ import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import { readFileSync } from 'node:fs';
 
-import { loadEnv } from './lib/env.js';
+import { loadEnv, restoreCallerCwd } from './lib/env.js';
 import { getLinearClient } from './lib/linear-client.js';
 import { ISSUE_SORTS, issueSort, type IssueSort } from './lib/issue-sort.js';
 
 loadEnv();
+restoreCallerCwd();
 
 // Mimics @linear/sdk ProjectUpdateHealthType - SDK only exports as type, not runtime value
 enum ProjectUpdateHealthType {
@@ -337,7 +338,9 @@ async function createProjectUpdate(projectIdOrSlug: string, options: {
 async function editProject(projectIdOrSlug: string, options: {
   name?: string;
   description?: string;
+  descriptionFile?: string;
   content?: string;
+  contentFile?: string;
   lead?: string;
   priority?: number;
   startDate?: string;
@@ -346,6 +349,8 @@ async function editProject(projectIdOrSlug: string, options: {
   icon?: string;
   json?: boolean;
 }): Promise<void> {
+  const description = readTextOption(options.description?.replace(/\\n/g, '\n'), options.descriptionFile, 'description');
+  const content = readTextOption(options.content?.replace(/\\n/g, '\n'), options.contentFile, 'content');
   const client = getClient();
 
   let projectId: string;
@@ -358,8 +363,8 @@ async function editProject(projectIdOrSlug: string, options: {
 
   const updateInput: Record<string, unknown> = {};
   if (options.name) updateInput.name = options.name;
-  if (options.description !== undefined) updateInput.description = options.description.replace(/\\n/g, '\n');
-  if (options.content !== undefined) updateInput.content = options.content.replace(/\\n/g, '\n');
+  if (description !== undefined) updateInput.description = description;
+  if (content !== undefined) updateInput.content = content;
   if (options.priority !== undefined) updateInput.priority = options.priority;
   if (options.startDate) updateInput.startDate = options.startDate;
   if (options.targetDate) updateInput.targetDate = options.targetDate;
@@ -1454,8 +1459,10 @@ async function updateDocument(idOrSlug: string, options: {
     process.exit(1);
   }
 
+  let updated: Document | undefined;
   try {
-    await client.updateDocument(document.id, updateInput as Parameters<typeof client.updateDocument>[1]);
+    const payload = await client.updateDocument(document.id, updateInput as Parameters<typeof client.updateDocument>[1]);
+    updated = await payload.document;
   } catch (e: unknown) {
     const err = e as Error & { errors?: Array<{ message: string }> };
     console.error(chalk.red('Failed to update document:'));
@@ -1468,11 +1475,13 @@ async function updateDocument(idOrSlug: string, options: {
     process.exit(1);
   }
 
+  // Report the document as it is now: `document` was read before the update
+  const result = updated ?? document;
   if (options.json) {
-    output({ success: true, id: document.id, title: document.title }, true);
+    output({ success: true, id: result.id, title: result.title, url: result.url }, true);
   } else {
-    console.log(chalk.green(`✓ Updated document: ${document.title}`));
-    console.log(`  URL: ${document.url}`);
+    console.log(chalk.green(`✓ Updated document: ${result.title}`));
+    console.log(`  URL: ${result.url}`);
     if (previousProject) {
       console.log(chalk.yellow(`  Moved off project ${previousProject.name} (a document has one parent: a project or an issue)`));
     }
@@ -2116,7 +2125,9 @@ projectCmd
   .description('Edit project properties (accepts ID, slug, or URL)')
   .option('--name <name>', 'New project name')
   .option('--description <text>', 'Short summary shown under project title')
+  .option('--description-file <path>', 'Read the summary from a file ("-" for stdin)')
   .option('--content <text>', 'Full project description in markdown (the "Description" section)')
+  .option('--content-file <path>', 'Read the full description from a file ("-" for stdin)')
   .option('--lead <id>', 'Project lead (user ID, "me", or "none")')
   .option('--priority <number>', 'Priority (0=None, 1=Urgent, 2=High, 3=Normal, 4=Low)')
   .option('--start-date <date>', 'Start date (YYYY-MM-DD)')

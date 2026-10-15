@@ -29,3 +29,19 @@ export function loadEnv(): void {
     quiet: true,
   });
 }
+
+/**
+ * Return to the directory the CLI was invoked from. The `linear`, `slack` and
+ * `grain` wrappers cd into scripts/ so `npx tsx` resolves, and pass the caller's
+ * directory as KS_ORIGINAL_DIR; without this, relative paths (`--content-file
+ * doc.md`, `-f shot.png`, `-o out.mp4`) resolved against scripts/ instead.
+ */
+export function restoreCallerCwd(): void {
+  const dir = process.env.KS_ORIGINAL_DIR;
+  if (!dir) return;
+  try {
+    process.chdir(dir);
+  } catch {
+    // The caller's directory is gone; relative paths fall back to scripts/.
+  }
+}

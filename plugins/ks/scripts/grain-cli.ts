@@ -24,9 +24,10 @@ import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, rmSync, st
 import { homedir } from 'os';
 import { basename, join } from 'path';
 
-import { loadEnv } from './lib/env.js';
+import { loadEnv, restoreCallerCwd } from './lib/env.js';
 
 loadEnv();
+restoreCallerCwd();
 
 // ============================================================================
 // Constants

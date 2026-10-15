@@ -80,6 +80,7 @@ linear project list --team KAR --limit 10
 # Edit project properties (accepts ID, slug, or URL)
 linear project edit <id-or-slug-or-url> --description "Short summary"
 linear project edit <id-or-slug-or-url> --content "Full markdown description"
+linear project edit <id-or-slug-or-url> --content-file prd.md   # or --description-file; "-" = stdin
 linear project edit <id-or-slug-or-url> --name "New Name" --lead me --priority 2
 linear project edit <id-or-slug-or-url> --start-date 2026-03-01 --target-date 2026-06-01
 
@@ -214,7 +215,7 @@ When the user asks to interact with Linear:
 5. **Updating issues**: Use `linear issue update KAR-XXX` with the fields to change. For a description that holds markdown with backticks, write it to a file and pass `--description-file`: backticks in an inline `--description` make the command miss the sandbox exclusion and fail with `listen EPERM`
 6. **Cycles and ordering**: `--cycle` on `issue create`/`update` moves an issue into a cycle. `--position first|last` (relative to the issues in its cycle, else project, else team), `--after KAR-Y` or `--before KAR-Y` set its manual order. Apply them in the order the user wants the issues to end up
 7. **Linking issues**: Use `linear issue relate KAR-A KAR-B --type related|blocks|blocked-by|duplicate`, or `--related` on `issue create`, rather than only mentioning the other ticket in the description
-8. **Editing projects**: Use `linear project edit <id>` with `--description` (summary) or `--content` (full description)
+8. **Editing projects**: Use `linear project edit <id>` with `--description` (summary) or `--content` (full description). For markdown with quotes or backticks pass `--content-file` / `--description-file` (see rule 5)
 9. **Commenting**: Use `linear comment create KAR-XXX "body"` — supports markdown. To change a comment already posted, `linear comment update <comment-id> "full body"` rather than posting a correction or a duplicate
 10. **Managing documents**: Create with `linear document create`, update with `linear document update`, delete with `linear document delete`. A document belongs to a project (`--project <id>`) or to an issue (`--issue KAR-XXX`), never both: `document update --issue` takes it off its project. For a ticket's own doc use `--issue` rather than parking it in the project and linking it. Pass markdown with backticks through `--content-file`, for the same `listen EPERM` reason as `--description-file`
 11. **Attachments**: Use `linear attachment create KAR-XXX --title "..." --url "..."` to link resources to issues. Use `--attachments` on `linear project update` to embed links in project status updates
