@@ -45,6 +45,7 @@ When this command is invoked with a project directory path:
 ### Step 2: Spawn parallel sub-agent tasks for comprehensive research
 
 - Create multiple Task agents to research different aspects concurrently
+- **Maximum 4 sub-agents** running simultaneously. If more research tasks are needed, run them in batches of up to 4
 - We now have specialized agents that know how to do specific research tasks:
 
   **For codebase research:**
@@ -67,7 +68,7 @@ When this command is invoked with a project directory path:
   The key is to use these agents intelligently:
   - Start with locator agents to find what exists
   - Then use analyzer agents on the most promising findings to document how they work
-  - Run multiple agents in parallel when they're searching for different things
+  - Run multiple agents in parallel when they're searching for different things (max 4 at a time)
   - Each agent knows its job - just tell it what you're looking for
   - Don't write detailed prompts about HOW to search - the agents already know
   - Remind agents they are documenting, not evaluating or improving

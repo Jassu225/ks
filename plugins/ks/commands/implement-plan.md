@@ -167,8 +167,8 @@ For each phase:
 #### 2a. Identify Parallel Groups
 
 From the task list, identify which tasks in the current phase can run in parallel (they touch different files and have no data dependencies). Group them into batches:
-- **Maximum 5 subagents** running simultaneously
-- If a phase has more than 5 parallelizable tasks, split into batches of up to 5
+- **Maximum 4 subagents** running simultaneously
+- If a phase has more than 4 parallelizable tasks, split into batches of up to 4
 - Tasks that modify the same file or depend on another task's output must run sequentially (use `addBlockedBy`)
 
 #### 2b. Spawn Subagents
@@ -313,7 +313,7 @@ If any of the following occur, flag to the user for review:
 3. **Full task list before any code** - Every task from the analysis MUST be created via `TaskCreate` before spawning a single implementation subagent. No partial task lists, no "create as you go". The task list is the contract.
 4. **Follow the plan** - The plan has been approved, don't deviate without explicit user approval
 5. **One phase at a time** - Complete and verify each phase before moving on. Phases are sequential.
-6. **Parallel within phases** - Non-colliding tasks within a phase run in parallel via subagents (max 5)
+6. **Parallel within phases** - Non-colliding tasks within a phase run in parallel via subagents (max 4)
 7. **Human verification per phase** - Pause for manual testing after each phase completes (unless told otherwise)
 8. **Subagents don't commit** - Only the orchestrator (you) commits, after user verifies the phase
 9. **Communicate clearly** - When stuck, explain what you tried and what went wrong
