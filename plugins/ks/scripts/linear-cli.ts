@@ -2204,7 +2204,7 @@ issueCmd
 
 issueCmd
   .command('update <identifier>')
-  .description('Update an issue')
+  .description('Update an issue (the same --cycle/--state/--assignee/--priority on many issues: use bulk-update)')
   .option('--title <title>', 'New title')
   .option('--description <desc>', 'New description')
   .option('--description-file <path>', 'Read the new description from a file ("-" for stdin)')
