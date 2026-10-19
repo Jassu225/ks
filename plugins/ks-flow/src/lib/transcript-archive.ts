@@ -1031,6 +1031,12 @@ export interface RestoreOpts {
   timeLog?: 'merge' | 'overwrite';
   /** Also unpack workflow.tar.zst into the unit's workflow folder. */
   workflow?: boolean;
+  /** Restore the session transcripts and the time log (default: true). False
+   * with `workflow` restores only the workflow folder. */
+  sessions?: boolean;
+  /** Where the workflow folder goes, overriding workflowDestination(). For a
+   * caller that knows it, e.g. ks-start-ticket before it writes state.yaml. */
+  workflowDir?: string;
   /** The main checkout — where the workflow folder goes when the worktree is gone. */
   projectPath?: string | null;
   dryRun?: boolean;
@@ -1073,9 +1079,10 @@ function setMtime(file: string, mtimeMs: number): void {
  */
 export async function restoreUnit(opts: RestoreOpts): Promise<RestoreResult> {
   const { target, gcs, zstdPath, overwrite = false, dryRun = false, log } = opts;
+  const sessions = opts.sessions ?? true;
   const unitRoot = unitPrefix(gcs, target.identifier);
   const prefix = `${unitRoot}transcript/`;
-  const objects = await listObjects(gcs, prefix);
+  const objects = sessions ? await listObjects(gcs, prefix) : [];
   const out: RestoreResult = {
     restored: [],
     keptLocal: [],
@@ -1085,7 +1092,7 @@ export async function restoreUnit(opts: RestoreOpts): Promise<RestoreResult> {
     workflowObject: null,
   };
 
-  if (objects.length === 0) {
+  if (sessions && objects.length === 0) {
     // Nothing in the per-file layout. Units archived by the removal hook before
     // this feature existed (and by backfill-archive) hold a single
     // transcript.tar.zst instead — 35 of them in the first bucket this ran
@@ -1141,7 +1148,7 @@ export async function restoreUnit(opts: RestoreOpts): Promise<RestoreResult> {
   // Both transcript layouts share the rest: a legacy unit can still have a time
   // log (it goes up on its own clock) and a workflow archive.
   try {
-    out.timeLog = await restoreTimeLog(opts, unitRoot);
+    if (sessions) out.timeLog = await restoreTimeLog(opts, unitRoot);
   } catch (e) {
     const msg = (e as Error)?.message ?? String(e);
     out.errors.push(`time log: ${msg}`);
@@ -1239,7 +1246,7 @@ async function restoreWorkflow(
   const workDir = mkdtempSync(join(tmpdir(), 'ksflow-workflow-'));
   try {
     const { src, treeRel } = unitFolderIn(await extractTarZst(gcs, object, zstdPath, workDir), target.identifier);
-    const dir = workflowDestination(target, opts.projectPath ?? null, src, treeRel);
+    const dir = opts.workflowDir ?? workflowDestination(target, opts.projectPath ?? null, src, treeRel);
     let restored = 0;
     let kept = 0;
     for (const rel of filesUnder(src)) {

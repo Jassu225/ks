@@ -5,6 +5,7 @@
 - **Slack CLI — `--no-unfurl`** on `message send` and `message reply` posts without link or media previews (`unfurl_links`/`unfurl_media: false`). Fixed at send: Slack can't turn a preview on later. Refused with `--file`, whose upload API takes no unfurl flags.
 - **PR review requests post without previews**: the `pr-review-request` template now sends with `--no-unfurl` unless you ask for previews. A message with files can't skip previews, so the agent says so and sends with previews on your confirmation.
 - **PR review requests post in two parts**, like release announcements: the main message (title, PR link, project thread) in #engineering, then the `Changes:` bullets as a reply in its thread. Each part is shown for confirmation before posting; `review_thread` records the main message.
+- **`ks-start-ticket` restores before it writes**: with ks-flow's cloud backup on, the restore offer now runs before `state.yaml` is read or written. Restore only fills in missing files, so the fresh `state.yaml` the script wrote first used to shadow the backed-up one on a machine without the ticket's folder: its phases, PRs and `time_spent` were dropped, and the next backup uploaded the fresh file over them. One `Restore?` question still covers both; the workflow folder comes back first (new `ks-flow restore --workflow-only --workflow-dir`), the sessions and time log once the worktree exists.
 
 ## 2026-10-15
 

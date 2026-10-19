@@ -234,7 +234,8 @@ case "$cmd" in
     # Pull a unit's backed-up transcripts back into ~/.claude/projects/<encoded>.
     # Local files win unless --overwrite. Restores the conversation, NOT the
     # git worktree. The time log is merged (--overwrite-time-log replaces it);
-    # --workflow also unpacks the workflow folder.
+    # --workflow also unpacks the workflow folder; --workflow-only unpacks just
+    # that, and --workflow-dir <path> says where.
     shift
     exec node "$DAEMON_DIR/dist/transcript-restore.js" "$@"
     ;;

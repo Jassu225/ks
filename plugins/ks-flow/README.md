@@ -121,7 +121,7 @@ firebase emulators:start --only firestore
 | `ks-flow set-project <path>` | Re-point the tracked project (rewrites `project.conf`, re-backfills). |
 | `ks-flow backup [target] [options]` | **The one uploader.** Targets: nothing = every live worktree; `--unit <id>`; `--worktree <path> [--identifier <id>]` (one worktree, live or about to be deleted); `--completed` (units whose worktree is gone). Options: `--since-hours <n>`, `--force`, `--dry-run`, `--json`, `--reindex` (upload nothing; rebuild the store's backup index from the bucket), `--runs` (upload nothing; print the run history), `--trigger <daily\|manual\|unit\|removal\|completed>` (recorded with the run; inferred from the target when left out). |
 | `ks-flow backup-enabled` | Exit 0 when cloud (GCS) backup is switched on in Settings, else 1. Checked by `remove_worktree` and `ks-start-ticket`. |
-| `ks-flow restore --unit <id> [--overwrite] [--workflow] [--overwrite-time-log] [--dry-run] [--json]` | Restore a unit's backed-up transcripts into `~/.claude/projects/<encoded>`, and merge its time log. Local files win unless `--overwrite`. Reads per-file objects, falling back to a legacy `transcript.tar.zst`. `--workflow` also unpacks the workflow folder; `--overwrite-time-log` replaces the local time log instead of merging. |
+| `ks-flow restore --unit <id> [--overwrite] [--workflow] [--workflow-only] [--workflow-dir <path>] [--overwrite-time-log] [--dry-run] [--json]` | Restore a unit's backed-up transcripts into `~/.claude/projects/<encoded>`, and merge its time log. Local files win unless `--overwrite`. Reads per-file objects, falling back to a legacy `transcript.tar.zst`. `--workflow` also unpacks the workflow folder; `--workflow-only` unpacks just that (no sessions, no time log); `--workflow-dir` says where it goes instead of working it out; `--overwrite-time-log` replaces the local time log instead of merging. |
 | `ks-flow archive <worktree> [id]` | Familiar alias — forwards to `backup --worktree … --force`. |
 | `ks-flow backfill-archive [--dry-run] [--force]` | Familiar alias — forwards to `backup --completed`. |
 | `ks-flow migrate-archives [--dry-run] [--unit <id>] [--backup-prefix <p>] [--delete-legacy] [--force]` | Convert legacy `transcript.tar.zst` archives to the per-file layout, after server-side copying every affected object to a safety prefix. |
@@ -395,7 +395,10 @@ Outside the board, the same switch drives two terminal tools in the ks plugin:
 `ks-flow backup-enabled` exits 0 when `gcsArchive.enabled` is on, and then
 `remove_worktree` backs a worktree up before removing it (skipped when the
 board's Remove already did — it sets `KS_FLOW_BACKED_UP=1`), and `ks-start-ticket`
-offers to restore a reopened ticket's missing sessions and workflow files.
+offers to restore a reopened ticket's missing sessions and workflow files: the
+workflow folder before it writes `state.yaml` (`--workflow-only --workflow-dir`),
+so the backed-up one is refreshed rather than shadowed, and the sessions and time
+log once the worktree exists (one `Restore?` answer covers both).
 
 Restored files keep their original mtime (from the object's source stamp, or
 the tarball), so the next sweep sees them as already backed up rather than

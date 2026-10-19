@@ -3,6 +3,7 @@
 //
 //   node dist/transcript-restore.js --unit <identifier> [--dry-run] [--json]
 //                                  [--overwrite] [--workflow] [--overwrite-time-log]
+//                                  [--workflow-only] [--workflow-dir <path>]
 //
 // The counterpart to transcript-backup.ts, invoked by the board's Restore
 // button. LOCAL FILES WIN by default: only sessions missing from
@@ -17,7 +18,10 @@
 // logged since the last backup.
 // `--workflow` also unpacks workflow.tar.zst into the unit's workflow folder —
 // the live worktree's, else the main checkout's — filling in missing files only
-// unless `--overwrite`.
+// unless `--overwrite`. `--workflow-only` restores just that folder (no
+// sessions, no time log) and `--workflow-dir` names where it goes: ks-start-ticket
+// restores the folder before it writes state.yaml, and the sessions only once
+// the worktree they belong to exists.
 //
 // Restores the CONVERSATION, not the worktree. If the worktree is gone, the
 // encoded transcript path matches no live directory and `--resume` still won't
@@ -51,7 +55,10 @@ async function main(): Promise<void> {
   const dryRun = argv.includes('--dry-run');
   const overwrite = argv.includes('--overwrite');
   const overwriteTimeLog = argv.includes('--overwrite-time-log');
-  const workflow = argv.includes('--workflow');
+  const workflowOnly = argv.includes('--workflow-only');
+  const workflow = workflowOnly || argv.includes('--workflow');
+  const workflowDirAt = argv.indexOf('--workflow-dir');
+  const workflowDir = workflowDirAt >= 0 ? argv[workflowDirAt + 1] : undefined;
   const json = argv.includes('--json');
   const fail = (msg: string, code = 1): never => {
     if (json) process.stdout.write(JSON.stringify({ ok: false, error: msg }) + '\n');
@@ -60,6 +67,7 @@ async function main(): Promise<void> {
   };
 
   if (!unit || unit.startsWith('--')) fail('usage: transcript-restore --unit <identifier>', 2);
+  if (workflowDirAt >= 0 && (!workflowDir || workflowDir.startsWith('--'))) fail('--workflow-dir needs a path', 2);
 
   loadEnvFile(join(dataDir(), '.env'));
   const settings = readArchiveSettings();
@@ -126,6 +134,8 @@ async function main(): Promise<void> {
     overwrite,
     timeLog: overwriteTimeLog ? 'overwrite' : 'merge',
     workflow,
+    sessions: !workflowOnly,
+    workflowDir,
     projectPath: conf?.projectPath ?? null,
     dryRun,
     log: json ? () => {} : log,
@@ -140,7 +150,8 @@ async function main(): Promise<void> {
         ...res,
       }) + '\n',
     );
-  } else {
+  } else if (!workflowOnly) {
+    // --workflow-only: restoreWorkflow already logged the one line there is.
     log(
       `${dryRun ? '[dry run] ' : ''}restored ${res.restored.length}, kept ${res.keptLocal.length} ` +
         `local${res.errors.length ? `, ${res.errors.length} error(s)` : ''} → ${target!.transcriptDir}`,

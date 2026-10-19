@@ -56,10 +56,15 @@ current branch as before. Unpushed commits are not recoverable this way.
 **ks-flow cloud backup.** When ks-flow's cloud (GCS) backup is switched on
 (`ks-flow backup-enabled` exits 0 — the board's Settings toggle):
 
-- `ks-start-ticket` checks the bucket once the worktree exists and, if it holds
-  sessions or workflow files missing on this machine, asks `Restore? [Y/n]`
-  (`ks-flow restore --unit <id> --workflow`). Restored sessions land in the new
-  worktree's transcript folder, so `--resume` there lists them.
+- `ks-start-ticket` checks the bucket **before it reads or writes
+  `state.yaml`** and, if it holds sessions or workflow files missing on this
+  machine, asks `Restore? [Y/n]` once. The workflow folder comes back first
+  (`ks-flow restore --unit <id> --workflow-only --workflow-dir <dir>`), so the
+  backed-up `state.yaml` (phases, PRs, `time_spent`) is the one refreshed from
+  Linear. Restore only fills in missing files, so writing first would have
+  shadowed it. The sessions and the time log come back once the worktree
+  exists (`ks-flow restore --unit <id>`, no second question), so the sessions
+  land in its transcript folder and `--resume` there lists them.
 - `remove_worktree` backs the worktree up (`ks-flow archive`) before removing
   it, and aborts the removal if the backup fails. The board's Remove has already
   backed up and sets `KS_FLOW_BACKED_UP=1`, which skips the second upload.

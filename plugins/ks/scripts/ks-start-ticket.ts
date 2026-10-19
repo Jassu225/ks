@@ -28,7 +28,7 @@ import { loadEnv } from './lib/env.js';
 import { getLinearClient, getPriorityName } from './lib/linear-client.js';
 import type { SlackThread, Phase, PrEntry, TimeSpent } from './lib/workflow-types.js';
 import { parseSlackMessageUrl } from './lib/slack.js';
-import { createWorktreeAndLaunchClaude, findExistingWorktree } from './lib/worktree.js';
+import { createWorktreeAndLaunchClaude, findExistingWorktree, offerCloudRestore } from './lib/worktree.js';
 
 loadEnv();
 
@@ -461,6 +461,15 @@ ${chalk.cyan('Example:')}
       ? path.join(existingWorktree, workflowRelPath, 'state.yaml')
       : null;
 
+    // Restore from ks-flow's cloud backup (when it is on) before state.yaml is
+    // read or written: restore only fills in missing files, so writing first
+    // would shadow the backed-up state.yaml and lose its phases, PRs and
+    // time_spent. The restored copy is then refreshed below like any other.
+    const restoreSessions = await offerCloudRestore(
+      issue.identifier,
+      worktreeStatePath ? path.dirname(worktreeStatePath) : path.dirname(outputPath),
+    );
+
     const worktreeState = worktreeStatePath ? loadExistingState(worktreeStatePath) : null;
     const existingState = worktreeState ?? loadExistingState(outputPath);
     if (existingState) {
@@ -511,7 +520,12 @@ ${chalk.cyan('Example:')}
     console.log(chalk.cyan(`\n  Workflow: ./${workflowRelPath}/`));
 
     // Create worktree and launch Claude-KS
-    await createWorktreeAndLaunchClaude(branchName, workflowRelPath, outputPath, workflowState.ticket.identifier);
+    await createWorktreeAndLaunchClaude(
+      branchName,
+      workflowRelPath,
+      outputPath,
+      restoreSessions ? issue.identifier : undefined,
+    );
 
   } catch (error) {
     console.error(chalk.red(`\n✗ Error: ${error instanceof Error ? error.message : String(error)}`));
