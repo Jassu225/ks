@@ -1,5 +1,11 @@
 # Releases
 
+## 2026-10-19
+
+- **Slack CLI — `--no-unfurl`** on `message send` and `message reply` posts without link or media previews (`unfurl_links`/`unfurl_media: false`). Fixed at send: Slack can't turn a preview on later. Refused with `--file`, whose upload API takes no unfurl flags.
+- **PR review requests post without previews**: the `pr-review-request` template now sends with `--no-unfurl` unless you ask for previews. A message with files can't skip previews, so the agent says so and sends with previews on your confirmation.
+- **PR review requests post in two parts**, like release announcements: the main message (title, PR link, project thread) in #engineering, then the `Changes:` bullets as a reply in its thread. Each part is shown for confirmation before posting; `review_thread` records the main message.
+
 ## 2026-10-15
 
 - **Linear CLI — `project edit --content-file` / `--description-file`** (`-` = stdin), so a project description with quotes or backticks no longer goes inline. `/ks:add-product-requirements` now publishes `prd.md` this way.

@@ -75,7 +75,15 @@ slack message send general "@engineers PR is ready, cc @username"
 
 # Keep handles as literal text (nobody gets pinged)
 slack message send general "mention @username in your reply" --no-resolve-mentions
+
+# No link/media previews on this message (send and reply; not with --file)
+slack message send general "PR: https://github.com/org/repo/pull/1" --no-unfurl
+slack message reply general 1234567890.123456 "see https://example.com" --no-unfurl
 ```
+
+`--no-unfurl` is fixed when the message is posted: Slack has no way to turn a preview on afterwards (only to remove one), so repost to get previews back. `message update` can't change unfurling.
+
+**Unfurling can't be turned off on a message with files.** Slack's file upload takes no unfurl option, so the CLI refuses `--file` with `--no-unfurl`. When a message that should go out with `--no-unfurl` also has attachments, tell the user its links will show previews, and on their confirmation send it with `--file` and without `--no-unfurl`.
 
 Mention encoding skips email addresses and mentions you already encoded yourself, and leaves unknown handles untouched. It does **not** touch `--blocks` JSON — encode mentions inline there.
 
@@ -217,7 +225,7 @@ When the user asks to interact with Slack:
 2. **Reading messages**: Use `slack channel history <channel>` to get recent messages
 3. **Sending messages**:
    - First, run `slack template list` to check for a relevant template
-   - If a matching template exists, run `slack template view <filename>` to get its content, then fill in the template variables with the actual values from context. If the template frontmatter includes a `channel_id`, use that as the target channel for sending. If it includes a `tone` property (e.g., `tone: non-technical, product-focused`), write the message in that style.
+   - If a matching template exists, run `slack template view <filename>` to get its content, then fill in the template variables with the actual values from context. If the template frontmatter includes a `channel_id`, use that as the target channel for sending. If it includes a `tone` property (e.g., `tone: non-technical, product-focused`), write the message in that style. Follow any send flags the template prescribes (e.g. `pr-review-request` sends with `--no-unfurl`) unless the user says otherwise.
    - If no template matches, compose the message from scratch
    - **Mentioning users**: If the message should mention or address someone (e.g., the user says "ask John…", "tell Sarah…", "ping @username…"), resolve the person's name to a Slack user ID first by running `slack user info <name> --json` and extracting the `id` field. If the lookup fails (user not found), the name may be misspelled — run `slack user list --json` and find the closest match by comparing real names and display names. Then use `<@USER_ID>` in the message text so the person gets a proper Slack mention/notification. For example, if the user says "ask Jas about the deploy", resolve "Jas" → `U01ABCDEF`, then compose the message with `<@U01ABCDEF>` in the text.
    - **Always show the user the target channel and full message content, then ask for explicit confirmation before sending.**

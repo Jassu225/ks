@@ -669,12 +669,17 @@ async function setChannelPurpose(channel: string, purpose: string, options: { js
 // Message Commands
 // ============================================================================
 
-async function sendMessage(channel: string, text: string, options: { threadTs?: string; blocks?: string; file?: string[]; resolveMentions?: boolean; json?: boolean }): Promise<void> {
+async function sendMessage(channel: string, text: string, options: { threadTs?: string; blocks?: string; file?: string[]; resolveMentions?: boolean; unfurl?: boolean; json?: boolean }): Promise<void> {
   const client = getClient();
 
   try {
-    const channelId = await resolveChannel(client, channel);
     const files = options.file ?? [];
+    // files.uploadV2 takes no unfurl flags, so --no-unfurl can't be honoured on an attachment send.
+    if (files.length > 0 && options.unfurl === false) {
+      console.error(chalk.red('--no-unfurl cannot be combined with --file (file uploads take no unfurl flags)'));
+      process.exit(1);
+    }
+    const channelId = await resolveChannel(client, channel);
     // --no-resolve-mentions sets this false; --blocks content is never rewritten.
     const body = options.resolveMentions === false ? text : await resolveMentions(client, text);
 
@@ -714,6 +719,12 @@ async function sendMessage(channel: string, text: string, options: { threadTs?: 
 
     if (options.threadTs) {
       params.thread_ts = options.threadTs;
+    }
+
+    // --no-unfurl sets this false: no link or media previews on this message.
+    if (options.unfurl === false) {
+      params.unfurl_links = false;
+      params.unfurl_media = false;
     }
 
     if (options.blocks) {
@@ -894,7 +905,7 @@ async function getThread(channel: string, ts: string, options: { limit?: number;
   }
 }
 
-async function replyToMessage(channel: string, ts: string, text: string, options: { resolveMentions?: boolean; json?: boolean }): Promise<void> {
+async function replyToMessage(channel: string, ts: string, text: string, options: { resolveMentions?: boolean; unfurl?: boolean; json?: boolean }): Promise<void> {
   const client = getClient();
 
   try {
@@ -904,6 +915,7 @@ async function replyToMessage(channel: string, ts: string, text: string, options
       channel: channelId,
       text: body,
       thread_ts: ts,
+      ...(options.unfurl === false ? { unfurl_links: false, unfurl_media: false } : {}),
     });
 
     const data = {
@@ -2045,6 +2057,7 @@ messageCmd
   .option('--blocks <json>', 'Block Kit blocks as JSON string')
   .option('-f, --file <path>', 'Attach a file (repeatable for multiple attachments)', (v: string, acc: string[]) => acc.concat([v]), [] as string[])
   .option('--no-resolve-mentions', 'Leave @handles as literal text (no notification)')
+  .option('--no-unfurl', 'No link or media previews on this message (fixed at send; cannot be combined with --file)')
   .option('-j, --json', 'Output as JSON')
   .action(sendMessage);
 
@@ -2065,6 +2078,7 @@ messageCmd
   .command('reply <channel> <ts> <text>')
   .description('Reply to a message in a thread')
   .option('--no-resolve-mentions', 'Leave @handles as literal text (no notification)')
+  .option('--no-unfurl', 'No link or media previews on this reply (fixed at send)')
   .option('-j, --json', 'Output as JSON')
   .action(replyToMessage);
 
