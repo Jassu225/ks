@@ -260,6 +260,23 @@ Use it only for files that are *already* failing on the main branch — otherwis
 - **`workflow-unit`**: prints the ks workflow unit that owns the current checkout, tab-separated: `<state.yaml path>  <ticket|project>  <identifier or ->  <linear url>  <name>`. It matches the `state.yaml` under `workflow/` whose `worktree_dir` is the git root, else (older states) the ticket id in the branch name. Exits 1 outside a workflow checkout. The statusline and `session-title.sh` use it; the plugin's hooks do the same lookup in-process.
 - **`session-title.sh`**: a `SessionStart` hook (startup, resume, clear) that sets `sessionTitle` to the ticket id (`KAR-123`), or a project's workflow folder name. It stays short and space-free because it is also the peer name `ListAgents` prints and `SendMessage` takes. That peer name is fixed at startup, before hooks run, so the hook alone only renames the transcript; `claude-ks` passes `--name "$(session-title.sh --print)"` at launch (skipped when you pass `--name`, `--resume` or `--continue`) so a new session answers to `KAR-123` from the start.
 
+### Remote Control relaunch (`claude-ks-rc`, `claude-ks-rc-restart`)
+
+Remote Control can be switched on only at launch (`claude --remote-control`) or by you typing `/remote-control`; an agent can do neither from inside its session. These two scripts let it swap itself for a fresh session that has Remote Control on.
+
+- **`claude-ks-rc <dir> [--prompt <text>] [--name <name>] [--pane <tmux-pane>] [-- <claude-ks args>]`** starts `claude-ks --remote-control <name> [prompt]` in `<dir>`. The Remote Control name defaults to the checkout's unit (`KAR-123`), else the folder name.
+  - It runs in the `--pane` tmux pane, replacing what runs there (`respawn-pane -k`), if that pane still exists.
+  - Otherwise it opens a new tmux window when tmux is running, or runs in this terminal.
+  - In tmux, the pane drops to a login shell when Claude exits.
+- **`claude-ks-rc-restart [<ticket>] [--dry-run]`** replaces a ticket's session. The ticket defaults to this checkout's unit (`workflow-unit`).
+  - It asks ks-flow which Claude process works the ticket's worktree (`ks-flow session <ticket> --json`; the daemon matches `~/.claude/sessions/<pid>.json` to cards by cwd). It picks the calling session when `$CLAUDE_PID` is one of them, else the newest.
+  - It re-checks the pid's start time and command with `ps` before signalling it.
+  - It hands the rest to the tmux server (`tmux run-shell -b`), because a session's own child dies with it. After 2 s, so the agent sees the output, it SIGTERMs the session (SIGKILL after 10 s). Then it runs `claude-ks-rc` in the same pane.
+  - The new session is a **fresh** conversation whose first message is `/ks:project-manager Let's work on ./<workflow dir>/ project`, the same one `ks-start-ticket` sends. It reads the latest handoff and resumes. The old conversation stays in `/resume`.
+  - Log: `~/Library/Logs/claude-ks-rc.log`.
+
+Both scripts run `tmux`, `ps` and `kill`, which the Bash sandbox blocks. For an agent to use them, list them in the sandbox's `excludedCommands` (`"claude-ks-rc *"`, `"claude-ks-rc-restart *"`) and call them as the first word of the command.
+
 ### Time tracking (`time-log.sh`, `ks-time`)
 
 How long a ticket took, from hooks rather than a timer you remember to start.

@@ -2,8 +2,9 @@
 // badge + activity recency onto the card.
 //
 // The card's COLUMN comes from the phase layer (currentPhase); this layer only
-// decorates the card with "waiting on you" and lastActivity from its sessions.
-import type { SessionDoc, WaitingState, WorkUnitDoc } from './db/types.js';
+// decorates the card with "waiting on you" and lastActivity from its sessions,
+// and with the Claude processes live in its worktree right now.
+import type { LiveSession, SessionDoc, WaitingState, WorkUnitDoc } from './db/types.js';
 
 function sameOrUnder(child: string | null, parent: string | null): boolean {
   if (!child || !parent) return false;
@@ -27,11 +28,17 @@ function maxIso(a: string | null, b: string | null): string | null {
 }
 
 /**
- * Recompute a unit's joined session ids, aggregated waiting state, and
- * lastActivity from the given sessions. Returns a new WorkUnitDoc (pure).
+ * Recompute a unit's joined session ids, aggregated waiting state,
+ * lastActivity, and live processes (`live` is newest first, as
+ * readLiveSessions returns it). Returns a new WorkUnitDoc (pure).
  */
-export function joinUnit(unit: WorkUnitDoc, sessions: SessionDoc[]): WorkUnitDoc {
+export function joinUnit(
+  unit: WorkUnitDoc,
+  sessions: SessionDoc[],
+  live: LiveSession[] = [],
+): WorkUnitDoc {
   const matched = sessions.filter((s) => s.inProject && sessionMatchesUnit(s, unit));
+  const liveSessions = live.filter((p) => sameOrUnder(p.cwd, unit.worktreeDir));
 
   let waiting: WaitingState | null = null;
   let lastActivity = unit.lastActivity;
@@ -55,5 +62,7 @@ export function joinUnit(unit: WorkUnitDoc, sessions: SessionDoc[]): WorkUnitDoc
     sessionIds: matched.map((s) => s.sessionId),
     waiting,
     lastActivity,
+    liveSessions,
+    activeSession: liveSessions[0] ?? null,
   };
 }

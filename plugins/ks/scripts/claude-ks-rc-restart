@@ -1,0 +1,108 @@
+#!/bin/bash
+# claude-ks-rc-restart — replace a ticket's Claude session with a fresh one that
+# has Remote Control on, so the work can carry on from claude.ai/code or the app.
+#
+#   claude-ks-rc-restart [<ticket>] [--dry-run]
+#
+# <ticket> defaults to this checkout's workflow unit. ks-flow (`ks-flow session`)
+# says which Claude process works the ticket's worktree and in which tmux pane;
+# when this runs inside one of those sessions ($CLAUDE_PID), that one is the
+# target. The pid is checked against `ps` before it is signalled.
+#
+# The kill and relaunch run inside the tmux server (`tmux run-shell -b`), since
+# a session's own child dies with it: it waits 2 s so the calling agent gets
+# this script's output, SIGTERMs the session (SIGKILL after 10 s), then runs
+# claude-ks-rc in the same pane with the project-manager prompt, which reads
+# the latest handoff and carries on. Log: ~/Library/Logs/claude-ks-rc.log.
+#
+# Runs ps, tmux and kill, so a sandboxed agent needs it in the sandbox's
+# excludedCommands.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SELF="$SCRIPT_DIR/$(basename "$0")"
+KS_FLOW="$SCRIPT_DIR/../../ks-flow/bin/ks-flow"
+LOG="$HOME/Library/Logs/claude-ks-rc.log"
+
+squash() { tr -s ' ' <<<"$1" | sed 's/^ //; s/ $//'; }
+
+# ── stage 2, inside the tmux server: claude-ks-rc-restart --apply … ──────────
+if [ "${1-}" = "--apply" ]; then
+  PID="$2" DIR="$3" PROMPT="$4" PANE="$5"
+  echo "$(date '+%F %T') restart: pid $PID → $DIR (pane ${PANE:--})"
+  sleep 2
+  kill -TERM "$PID" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    kill -0 "$PID" 2>/dev/null || break
+    sleep 0.5
+  done
+  if kill -0 "$PID" 2>/dev/null; then
+    echo "pid $PID ignored SIGTERM for 10 s; sending SIGKILL"
+    kill -KILL "$PID" 2>/dev/null || true
+    sleep 0.5
+  fi
+  exec "$SCRIPT_DIR/claude-ks-rc" "$DIR" --prompt "$PROMPT" ${PANE:+--pane "$PANE"}
+fi
+
+# ── stage 1: work out what to replace ───────────────────────────────────────
+TICKET="" DRY=""
+for a in "$@"; do
+  case "$a" in
+    --dry-run) DRY=1 ;;
+    -*) echo "usage: claude-ks-rc-restart [<ticket>] [--dry-run]" >&2; exit 2 ;;
+    *) TICKET="$a" ;;
+  esac
+done
+if [ -z "$TICKET" ]; then
+  TICKET="$("$SCRIPT_DIR/workflow-unit" 2>/dev/null | cut -f3 || true)"
+  [ -n "$TICKET" ] && [ "$TICKET" != "-" ] || {
+    echo "claude-ks-rc-restart: not in a ticket checkout; name the ticket" >&2
+    exit 2
+  }
+fi
+
+INFO="$("$KS_FLOW" session "$TICKET" --json)" || [ -n "${INFO:-}" ] || exit 1
+DIR="$(jq -r '.worktreeDir // empty' <<<"$INFO")"
+WF="$(jq -r '.workflowDir' <<<"$INFO")"
+[ -n "$DIR" ] || { echo "claude-ks-rc-restart: $TICKET has no live worktree" >&2; exit 1; }
+
+# The calling session if it is one of the ticket's, else the newest one.
+TARGET="$(jq -c --arg me "${CLAUDE_PID:-}" '
+  (.liveSessions | map(select((.pid | tostring) == $me)) | first) // .activeSession' <<<"$INFO")"
+[ "$TARGET" != "null" ] || { echo "claude-ks-rc-restart: no live Claude session for $TICKET" >&2; exit 1; }
+PID="$(jq -r .pid <<<"$TARGET")"
+PANE="$(jq -r '.tmuxPane // empty' <<<"$TARGET")"
+LIVE_COUNT="$(jq '.liveSessions | length' <<<"$INFO")"
+
+# ks-flow's record trails by up to a daemon tick: make sure the pid is still
+# that Claude process, not a newer process that reused the number. Claude
+# writes procStart in UTC; ps prints lstart in the local zone.
+STARTED="$(TZ=UTC ps -p "$PID" -o lstart= 2>/dev/null || true)"
+COMMAND="$(ps -p "$PID" -o command= 2>/dev/null || true)"
+if [ -z "$STARTED" ] && ! ps -p 1 >/dev/null 2>&1; then
+  echo "claude-ks-rc-restart: can't run ps here — sandboxed. Run claude-ks-rc-restart as the first word of the command, nothing chained." >&2
+  exit 1
+fi
+if [ "$(squash "$STARTED")" != "$(jq -r .procStart <<<"$TARGET")" ] || [[ "$COMMAND" != *claude* ]]; then
+  echo "claude-ks-rc-restart: pid $PID is no longer $TICKET's session (ks-flow catches up within 15 s)" >&2
+  exit 1
+fi
+if [ -z "$PANE" ] && ! tmux has-session 2>/dev/null; then
+  echo "claude-ks-rc-restart: the session isn't in tmux and no tmux server is running to reopen it in" >&2
+  exit 1
+fi
+
+REL="${WF#"$DIR"/}"
+[ "$REL" = "$WF" ] || REL="./$REL"
+PROMPT="/ks:project-manager Let's work on $REL/ project"
+
+echo "$TICKET: replacing session pid $PID (tmux ${PANE:-new window}) with a Remote Control session in $DIR"
+echo "First message: $PROMPT"
+[ "$LIVE_COUNT" -le 1 ] || echo "Note: $LIVE_COUNT sessions are live in this worktree; only pid $PID is replaced."
+[ -z "$DRY" ] || { echo "(dry run: nothing killed)"; exit 0; }
+
+mkdir -p "$(dirname "$LOG")"
+# The tmux server's PATH is launchd's bare one (no Homebrew tmux, no node), so
+# stage 2 carries this shell's.
+tmux run-shell -b "PATH=$(printf '%q' "$PATH") $(printf '%q ' "$SELF" --apply "$PID" "$DIR" "$PROMPT" "$PANE") >>$(printf '%q' "$LOG") 2>&1"
+echo "Restart scheduled: this session ends in ~2 s."

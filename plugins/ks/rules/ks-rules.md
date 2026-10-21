@@ -119,3 +119,12 @@ When creating a new view or modifying an existing one, **do not edit `database_v
 1. Inngest functions in `apps/www/src/inngest/`
 2. Consider retry logic
 3. Monitor execution
+
+## Remote Control (continue from claude.ai/code or the app)
+
+You can't switch on Remote Control from inside a session. When the user asks for it (e.g. "turn on remote control", "restart with RC", "I'm stepping away, make this reachable from my phone"), make sure the workflow's handoff is current, then run `claude-ks-rc-restart` (on `$PATH`; no argument = this checkout's ticket):
+
+- Run it as its own Bash command, first word, nothing chained (no `cd …&&`, `;`, pipes or `2>&1`). The sandbox exempts it only then; anything else runs it sandboxed and its `ps`/`tmux`/`kill` calls fail.
+- Run `claude-ks-rc-restart --dry-run` first and show the user which pid and tmux pane will be replaced.
+- The real run ends **this** session about 2 s later. In the same tmux pane it starts a fresh session with Remote Control on, whose first message is `/ks:project-manager Let's work on ./<workflow dir>/ project`, so it resumes from the latest handoff. Nothing after the command runs, so say what's happening before you call it.
+- `claude-ks-rc <dir> [--prompt <text>]` starts a Remote Control session in any directory without killing anything.

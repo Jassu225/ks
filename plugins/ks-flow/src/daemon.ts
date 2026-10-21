@@ -20,7 +20,13 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { loadConfig, readProjectConf } from './lib/config.js';
 import { createProvider } from './lib/db/index.js';
-import type { ReminderDoc, SessionDoc, SessionWriter, WorkUnitDoc } from './lib/db/types.js';
+import type {
+  LiveSession,
+  ReminderDoc,
+  SessionDoc,
+  SessionWriter,
+  WorkUnitDoc,
+} from './lib/db/types.js';
 import { backupSettings, reminderSettings } from './lib/boardsettings.js';
 import { isFullSweep, listRuns, type BackupRun } from './lib/backup-runs.js';
 import { notify, terminalNotifierAvailable } from './lib/notify.js';
@@ -41,6 +47,7 @@ import {
   unitCompleted,
 } from './lib/phasemodel.js';
 import { joinUnit, sessionMatchesUnit } from './lib/join.js';
+import { CLAUDE_SESSIONS_DIR, readLiveSessions } from './lib/claude-sessions.js';
 import { parseStateYaml } from './lib/stateyaml.js';
 import {
   CLAUDE_PROJECTS_DIR,
@@ -121,6 +128,7 @@ let clock: Scheduler | null = null; // the one clock (startWatchers)
 const worktreePathCache = new Map<string, string | null>(); // cwd → toplevel
 const pendingOverlays = new Map<string, Array<{ id: string; kind: string; since: string }>>();
 let knownWorktrees: string[] = conf.worktreePaths ?? [];
+let liveSessions: LiveSession[] = []; // Claude processes running now (lib/claude-sessions)
 let eventsOffset = 0;
 let pbHandle: PbHandle | null = null;
 
@@ -388,7 +396,7 @@ async function recomputeProject(): Promise<void> {
   const deduped = [...best.values()];
   const phaseModel = derivePhaseModel(deduped);
   // join sessions onto each card
-  const joined = deduped.map((u) => joinUnit(u, sessions));
+  const joined = deduped.map((u) => joinUnit(u, sessions, liveSessions));
   lastJoined.clear();
   for (const u of joined) lastJoined.set(u.unitId, u);
   boardTickets = joined
@@ -429,6 +437,13 @@ async function recomputeProject(): Promise<void> {
     lastUnitSig.set(u.unitId, sig);
     await writer.upsertWorkUnit(projectId, { ...doc, updatedAt: nowIso() });
   }
+}
+
+/** Re-read the running Claude processes; recompute the cards if the set changed. */
+function rescanLiveSessions(): void {
+  const before = JSON.stringify(liveSessions);
+  liveSessions = readLiveSessions();
+  if (JSON.stringify(liveSessions) !== before) scheduleProjectRecompute();
 }
 
 // ── state.yaml ingestion ────────────────────────────────────────────────────
@@ -942,6 +957,18 @@ function startWatchers(): void {
   eventsWatcher.on('change', ingestEvents);
   eventsWatcher.on('error', (e) => log('events watcher error (continuing):', (e as Error)?.message));
 
+  // Claude writes ~/.claude/sessions/<pid>.json when a session starts and
+  // deletes it on exit. Its 'change' events are busy/idle flips, which the
+  // cards don't carry, so only add/unlink rescan; the clock catches crashes.
+  const procWatcher = chokidar.watch(CLAUDE_SESSIONS_DIR, {
+    ignoreInitial: true,
+    usePolling: usePoll,
+    depth: 0,
+  });
+  procWatcher.on('add', rescanLiveSessions);
+  procWatcher.on('unlink', rescanLiveSessions);
+  procWatcher.on('error', (e) => log('sessions watcher error (continuing):', (e as Error)?.message));
+
   // Every periodic job runs off one clock (lib/schedule): a tick every TICK_MS
   // runs the jobs whose interval has passed, never one still running from the
   // last tick. A wake from sleep runs each overdue job once on the first tick.
@@ -962,12 +989,16 @@ function startWatchers(): void {
   };
 
   // Table order is also the order a card's Refresh runs the per-card forms
-  // (runFor): worktrees, then state.yaml, then Linear.
+  // (runFor): worktrees, live Claude processes, state.yaml, then Linear.
   clock = scheduler(
     {
       // One `git worktree list`; per card it is the same call — whether the
       // card's worktree is still live is a property of the whole list.
       worktrees: { every: 60_000, run: rescanWorktrees, runFor: rescanWorktrees },
+
+      // Live Claude processes per card: a crashed session leaves its pid file
+      // behind, so liveness is re-checked here, not only on watcher events.
+      liveSessions: { every: TICK_MS, run: rescanLiveSessions, runFor: rescanLiveSessions },
 
       // state.yaml: a recursive chokidar `**` glob over the workflow tree opens an
       // FSWatcher per directory and blows the FD limit (EMFILE) on a big tree.
@@ -1116,6 +1147,7 @@ async function main(): Promise<void> {
   // → roll it out now that we've drained it, so today starts a fresh file.
   const evDay = fileDay(EVENTS_PATH);
   if (evDay && evDay !== activeDay) rotateEvents(evDay);
+  liveSessions = readLiveSessions(); // before backfill's first recompute
   await backfill();
   // Backfill-only mode: ingest once, flush, exit (deterministic verification /
   // one-shot debug). No watchers, no live tailing.

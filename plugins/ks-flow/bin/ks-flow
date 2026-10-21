@@ -11,6 +11,7 @@
 #   ks-flow archive PATH      archive one worktree's transcript+workflow to GCS
 #   ks-flow backfill-archive  archive all completed (worktree-removed) workflows
 #   ks-flow backup-enabled    exit 0 if cloud (GCS) backup is on in board settings, else 1
+#   ks-flow session [UNIT]    the Claude process (pid, tmux pane) live in a unit's worktree; --json
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -214,6 +215,14 @@ case "$cmd" in
     jq -e '.gcsArchive.enabled == true' "$DATA_DIR/board-settings.json" >/dev/null 2>&1
     ;;
 
+  session)
+    # Which Claude Code process is working a unit's worktree now: pid, session
+    # id, tmux pane — the daemon matches ~/.claude/sessions/<pid>.json to cards
+    # by cwd. claude-ks-rc-restart reads it to find the session to replace.
+    shift
+    exec node "$DAEMON_DIR/dist/session-info.js" "$@"
+    ;;
+
   backfill-archive)
     # Archive units whose worktree is GONE (completed work in the main checkout).
     # Same one uploader, different target selection.
@@ -274,7 +283,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]}" >&2
+    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]}" >&2
     exit 1
     ;;
 esac

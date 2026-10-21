@@ -81,11 +81,30 @@ export interface WorkUnitDoc {
   waiting: WaitingState | null; // aggregated from joined sessions
   sessionIds: string[];
   lastActivity: string | null;
+  /** Claude Code processes running in this unit's worktree right now, newest
+   * first — from Claude's own ~/.claude/sessions/<pid>.json, matched by cwd. */
+  liveSessions?: LiveSession[];
+  /** The newest of liveSessions: the one `ks-flow session` hands to scripts. */
+  activeSession?: LiveSession | null;
   /** The entire parsed state.yaml, verbatim — so the board can surface any
    * field without new plumbing. The typed fields above are extracted from it
    * for convenient rendering. */
   state: Record<string, unknown> | null;
   updatedAt: string;
+}
+
+/** A live interactive Claude Code process. Only the fields that stay fixed for
+ * the process's life are kept, so its busy/idle flips don't rewrite the card. */
+export interface LiveSession {
+  pid: number;
+  sessionId: string;
+  cwd: string;
+  /** Process start time (`ps lstart` format, UTC) — tells it apart from a later process reusing the pid. */
+  procStart: string;
+  startedAt: string; // ISO
+  /** tmux pane id (`%42`) the session runs in, if it runs in tmux. */
+  tmuxPane: string | null;
+  name: string | null;
 }
 
 export interface OpenAsk {

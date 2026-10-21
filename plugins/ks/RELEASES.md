@@ -1,5 +1,10 @@
 # Releases
 
+## 2026-10-20
+
+- **Relaunch a session with Remote Control**: `scripts/claude-ks-rc <dir>` starts `claude-ks --remote-control` in a directory: in a given tmux pane, a new tmux window, or this terminal. `scripts/claude-ks-rc-restart [<ticket>]` lets an agent swap its session for one with Remote Control on. It gets the ticket's live session (pid, tmux pane) from ks-flow, checks the pid with `ps`, kills the session from inside the tmux server, and starts a fresh session in the same pane. Its first message is the project-manager prompt, which picks up from the latest handoff. Both need `excludedCommands` entries to run from a sandboxed agent.
+- **ks-flow knows each card's live session**: the daemon matches Claude's `~/.claude/sessions/<pid>.json` to cards by cwd and stores `liveSessions` / `activeSession` (pid, session id, tmux pane) on the work unit. A pid counts only while alive with its recorded start time. `ks-flow session <unit> --json` reads it back.
+
 ## 2026-10-19
 
 - **Slack CLI — `--no-unfurl`** on `message send` and `message reply` posts without link or media previews (`unfurl_links`/`unfurl_media: false`). Fixed at send: Slack can't turn a preview on later. Refused with `--file`, whose upload API takes no unfurl flags.

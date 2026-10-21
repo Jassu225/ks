@@ -1,0 +1,66 @@
+#!/bin/bash
+# claude-ks-rc — start a claude-ks session with Remote Control on, in a directory.
+#
+#   claude-ks-rc <dir> [--prompt <text>] [--name <name>] [--pane <tmux-pane>] [-- <claude-ks args>]
+#
+#   --prompt  the session's first message
+#   --name    its Remote Control name (claude.ai/code); default: the checkout's
+#             workflow unit (KAR-123), else the directory's name
+#   --pane    tmux pane (%42) to run it in, replacing whatever runs there now
+#
+# Where it opens: the --pane pane if it still exists; else a new tmux window
+# when tmux is running; else this terminal. In tmux the pane drops to a login
+# shell when Claude exits, so it stays usable. claude-ks-rc-restart uses this
+# to swap a ticket's session for a Remote Control one.
+#
+# Runs tmux, so a sandboxed agent needs it in the sandbox's excludedCommands.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+usage() {
+  echo "usage: claude-ks-rc <dir> [--prompt <text>] [--name <name>] [--pane <tmux-pane>] [-- <claude-ks args>]" >&2
+  exit 2
+}
+
+DIR="" PROMPT="" NAME="" PANE=""
+EXTRA=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --prompt) PROMPT="${2-}"; shift 2 || usage ;;
+    --name) NAME="${2-}"; shift 2 || usage ;;
+    --pane) PANE="${2-}"; shift 2 || usage ;;
+    --) shift; EXTRA=("$@"); break ;;
+    -*) usage ;;
+    *) [ -z "$DIR" ] || usage; DIR="$1"; shift ;;
+  esac
+done
+[ -n "$DIR" ] || usage
+DIR="$(cd "$DIR" 2>/dev/null && pwd)" || { echo "claude-ks-rc: no such directory: $DIR" >&2; exit 1; }
+
+if [ -z "$NAME" ]; then
+  NAME="$(cd "$DIR" && "$SCRIPT_DIR/session-title.sh" --print 2>/dev/null || true)"
+  [ -n "$NAME" ] || NAME="$(basename "$DIR")"
+fi
+
+# `--remote-control [name]` takes the next word as its name, so the name is
+# always given and the prompt comes after it.
+ARGS=("$SCRIPT_DIR/claude-ks" --remote-control "$NAME")
+[ -z "$PROMPT" ] || ARGS+=("$PROMPT")
+[ ${#EXTRA[@]} -eq 0 ] || ARGS+=("${EXTRA[@]}")
+
+SH="${SHELL:-/bin/zsh}"
+INNER="cd $(printf '%q' "$DIR") && $(printf '%q ' "${ARGS[@]}"); exec $(printf '%q' "$SH") -l"
+
+if [ -n "$PANE" ] && tmux display-message -p -t "$PANE" '#{pane_id}' >/dev/null 2>&1; then
+  tmux respawn-pane -k -t "$PANE" -c "$DIR" "$SH" -lc "$INNER"
+  echo "claude-ks-rc: started $NAME in tmux pane $PANE ($DIR)"
+elif [ -n "${TMUX:-}" ] || tmux has-session 2>/dev/null; then
+  tmux new-window -c "$DIR" -n "$NAME" "$SH" -lc "$INNER"
+  echo "claude-ks-rc: started $NAME in a new tmux window ($DIR)"
+elif [ -t 0 ] && [ -t 1 ]; then
+  cd "$DIR"
+  exec "${ARGS[@]}"
+else
+  echo "claude-ks-rc: no tmux and no terminal here to start the session in" >&2
+  exit 1
+fi
