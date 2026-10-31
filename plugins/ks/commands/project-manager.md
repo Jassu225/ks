@@ -56,21 +56,27 @@ Show the update body to the user and ask for confirmation before posting. Use th
 - **Phase 6:** "Completed PRD with product requirements. Please review"
 - **Phase 7:** "Created draft TAD. Please review"
 
+**Starting the fresh session (after phases 1, 2 in a ticket workflow, 8, 9):** You *can* start it. Write the handoff first if the phase's pattern calls for one. Then tell the user "{next phase} starts a fresh session. Want me to switch this session over to it now?" On yes:
+1. Run `claude-ks-rc-restart --dry-run`, on its own and with nothing chained. It shows which session (pid, tmux pane) gets replaced.
+2. If that succeeds, say in one line that this session ends now and the next one starts in the same pane, then run `claude-ks-rc-restart` the same way. The new session opens with `/ks:project-manager Let's work on ./{project-directory-path}/ project` and has Remote Control on.
+
+If the user says no, or the dry run fails (not in tmux, or ks-flow not running), give the manual command instead: `cd {cwd} && claude-ks "/ks:project-manager Let's work on ./{project-directory-path}/ project"`. Rules: ks-rules.md, "New sessions and Remote Control".
+
 #### Phase 1: Context Creation
-- **Post-completion:** Tell the user: "Phase 2 (Codebase Research) starts a fresh session. Please start a new session with: `cd {cwd} && claude-ks \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
+- **Post-completion:** Phase 2 (Codebase Research) starts a fresh session — see **Starting the fresh session** above.
 
 #### Phase 2: Codebase Research
 - **Post-completion (project workflow):** Ask user: "Ready to proceed to Phase 3 (Initial PRD Draft)?"
-- **Post-completion (ticket workflow):** Tell the user: "Phase 9 (Implementation Plan Creation) starts a fresh session. Please start a new session with: `cd {cwd} && claude-ks \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
+- **Post-completion (ticket workflow):** Phase 9 (Implementation Plan Creation) starts a fresh session — see **Starting the fresh session** above.
 
 #### Phase 8: Linear Tickets Creation
 - **This phase is optional** — offer to skip if user prefers manual ticket creation
-- **Post-completion:** Tell the user: "Phase 9 (Implementation Plan Creation) starts a fresh session. Please start a new session with: `cd {cwd} && claude-ks \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
+- **Post-completion:** Phase 9 (Implementation Plan Creation) starts a fresh session — see **Starting the fresh session** above.
 
 #### Phase 9: Implementation Plan
 - Runs in **plan mode** — do NOT create tasks or start implementation. See `/ks:create_plan` for the full list of restrictions.
 - Supports **iteration** — see Phase 9-10 Iteration below
-- **Post-completion:** Tell the user: "Phase 10 (Implementation) starts a fresh session. Please start a new session with: `cd {cwd} && claude-ks \"/ks:project-manager Let's work on ./{project-directory-path}/ project\"`"
+- **Post-completion:** Phase 10 (Implementation) starts a fresh session — see **Starting the fresh session** above.
 
 #### Phase 10: Implementation
 - Supports **iteration** — see Phase 9-10 Iteration below

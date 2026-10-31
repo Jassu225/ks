@@ -262,7 +262,7 @@ Use it only for files that are *already* failing on the main branch — otherwis
 
 ### Remote Control relaunch (`claude-ks-rc`, `claude-ks-rc-restart`)
 
-Remote Control can be switched on only at launch (`claude --remote-control`) or by you typing `/remote-control`; an agent can do neither from inside its session. These two scripts let it swap itself for a fresh session that has Remote Control on.
+Remote Control can be switched on only at launch (`claude --remote-control`) or by you typing `/remote-control`; an agent can do neither from inside its session. These two scripts let it swap itself for a fresh session that has Remote Control on. Agents also use the restart when you ask for a new session and at `/ks:project-manager` phase boundaries (`rules/ks-rules.md`, "New sessions and Remote Control").
 
 - **`claude-ks-rc <dir> [--prompt <text>] [--name <name>] [--pane <tmux-pane>] [-- <claude-ks args>]`** starts `claude-ks --remote-control <name> [prompt]` in `<dir>`. The Remote Control name defaults to the checkout's unit (`KAR-123`), else the folder name.
   - It runs in the `--pane` tmux pane, replacing what runs there (`respawn-pane -k`), if that pane still exists.
@@ -276,6 +276,13 @@ Remote Control can be switched on only at launch (`claude --remote-control`) or 
   - Log: `~/Library/Logs/claude-ks-rc.log`.
 
 Both scripts run `tmux`, `ps` and `kill`, which the Bash sandbox blocks. For an agent to use them, list them in the sandbox's `excludedCommands` (`"claude-ks-rc *"`, `"claude-ks-rc-restart *"`) and call them as the first word of the command.
+
+### Machine helpers (`quit-chrome`, `mem-info`)
+
+Small macOS scripts for things the Bash sandbox blocks (`osascript`, the process list, `sysctl`). An agent can run them only when they're in the sandbox's `excludedCommands` (`"quit-chrome"`, `"quit-chrome *"`, `"mem-info"`, `"mem-info *"`) and called as the first word of the command.
+
+- **`quit-chrome`** quits Google Chrome cleanly (the same as Cmd+Q) and waits up to 10 s for it to exit. It prints `Chrome not running`, `Chrome quit`, or exits 1 when Chrome is still running (a dialog may be holding it open). Add it to `permissions.ask` as well, so every quit asks you first. `pgrep -x "Google Chrome"` (also excluded) confirms it on its own.
+- **`mem-info [N]`** shows memory pressure (`Normal`/`Warning`/`Critical`, from `kern.memorystatus_vm_pressure_level`) and the free percentage. It breaks usage down the way Activity Monitor counts it: app, wired, compressed (with the compression ratio), cached and free. It also shows swap, and the top `N` processes by memory (default 10). Read-only.
 
 ### Time tracking (`time-log.sh`, `ks-time`)
 

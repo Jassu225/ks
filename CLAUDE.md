@@ -88,6 +88,10 @@ plugins/ks/scripts/ks-time KAR-123          # or no argument: this checkout's un
 # project-manager prompt first); claude-ks-rc <dir> is the bare launcher
 plugins/ks/scripts/claude-ks-rc-restart [KAR-123] [--dry-run]
 
+# Machine helpers (sandbox-excluded; see plugins/ks/scripts/README.md, "Machine helpers")
+plugins/ks/scripts/quit-chrome              # quit Chrome cleanly, verify it exited
+plugins/ks/scripts/mem-info [N]             # memory pressure, usage breakdown, swap, top N processes
+
 # Initialize a project workflow from Linear
 npx tsx plugins/ks/scripts/ks-start-project.ts <linear-project-url> [output-path]
 

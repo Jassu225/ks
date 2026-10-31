@@ -1,0 +1,29 @@
+#!/bin/bash
+# quit-chrome — quit Google Chrome cleanly (same as Cmd+Q), so it restores its
+# tabs on next launch. Waits up to 10s for it to exit and says whether it did
+# (exit 1 when it's still running).
+#
+#   quit-chrome
+#
+# Sends an Apple Event, so a sandboxed agent needs it in the sandbox's
+# excludedCommands. It closes the user's browser, so settings.json also lists
+# it under permissions.ask: every run asks first.
+set -euo pipefail
+
+if ! pgrep -xq "Google Chrome"; then
+  echo "Chrome not running"
+  exit 0
+fi
+
+osascript -e 'tell application "Google Chrome" to quit'
+
+for _ in {1..20}; do
+  if ! pgrep -xq "Google Chrome"; then
+    echo "Chrome quit"
+    exit 0
+  fi
+  sleep 0.5
+done
+
+echo "Chrome still running (a dialog may be holding it open)" >&2
+exit 1

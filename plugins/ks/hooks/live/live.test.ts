@@ -152,12 +152,16 @@ const ticketDoc = {
 
 const LINEAR_JSON = JSON.stringify({ identifier: 'KAR-13147', state: { name: 'In Review', type: 'started', color: '#0f783c' } })
 
-/** `mcp` answers list_deployments (given its arguments); 'missing' fails as an engine without the vercel plugin does. */
+/**
+ * `mcp` answers list_deployments (given its arguments); 'missing' fails as an engine without the vercel plugin does.
+ * `server` is the name the Vercel server answers under; every other name fails as the engine does.
+ */
 function checkout(
   on: On,
   mcp: ((args: Record<string, unknown>) => string) | 'missing',
   timeLog: () => string = () => '',
   doc: typeof ticketDoc = ticketDoc,
+  server = 'plugin:vercel:vercel',
 ): { mcpCalls: () => number; aliasCalls: () => number; listed: Record<string, unknown>[] } {
   let calls = 0
   const listed: Record<string, unknown>[] = []
@@ -203,6 +207,7 @@ function checkout(
       calls++
       throw new Error('no MCP server named plugin:vercel:vercel')
     }
+    if (e.server !== server) throw new Error(`$.mcp.call: no connected MCP tool "${e.tool}" on a server named "${e.server}"`)
     if (e.tool === 'list_deployment_aliases') {
       aliasCalls++
       return { value: { content: [{ type: 'text' as const, text: aliases(ALIAS) }], isError: false } }
@@ -289,7 +294,7 @@ test('the statusline toggles the pane; the pane shows Linear live and each PR it
   await hint.unmount()
 })
 
-test('without the vercel plugin the PRs show no preview, and it stops asking', async ($, on) => {
+test('without the vercel plugin the PRs show no preview, and it asks only at the idle interval', async ($, on) => {
   const clock = mock.clock(on)
   const vercel = checkout(on, 'missing')
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
@@ -299,14 +304,61 @@ test('without the vercel plugin the PRs show no preview, and it stops asking', a
   expect(await hint.find({ type: 'Link', text: 'KAR-13147 ↗' })).toBeDefined()
   await hint.press({ key: 'open-project' })
   await clock.advance(5_000)
+  // Once under each name the server goes by.
   const asked = vercel.mcpCalls()
-  expect(asked).toBe(1)
-  await clock.advance(300_000)
+  expect(asked).toBe(2)
+  // A missing server looks like one between connections: asked again, but every 2 minutes.
+  await clock.advance(60_000)
   expect(vercel.mcpCalls()).toBe(asked)
+  await clock.advance(60_000)
+  expect(vercel.mcpCalls()).toBe(asked + 2)
 
   const pane = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...PANE })
   expect(await pane.find({ type: 'Link', text: 'GitHub ↗' })).toBeDefined()
   expect(JSON.stringify(await pane.drawn())).not.toContain('▲')
+  await pane.unmount()
+  await hint.unmount()
+})
+
+test('a failed call keeps the last preview, and the next poll that gets through updates it', async ($, on) => {
+  const clock = mock.clock(on)
+  let isDown = false
+  let build = { ref: BRANCH, state: 'READY', created: 1 }
+  checkout(on, () => {
+    // As the engine answers while the server reconnects (after sleep, an auth refresh).
+    if (isDown) throw new Error('MCP server plugin:vercel:vercel is not connected')
+    return deployments(build)
+  })
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await clock.advance(5_000)
+  const hint = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...HINT })
+  await hint.press({ key: 'open-project' })
+  const pane = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...PANE })
+  expect(JSON.stringify(await pane.drawn())).toContain('▲ PREVIEW')
+
+  isDown = true
+  await clock.advance(120_000)
+  expect(JSON.stringify(await pane.drawn())).toContain('▲ PREVIEW')
+
+  isDown = false
+  build = { ref: BRANCH, state: 'BUILDING', created: 2 }
+  await clock.advance(120_000)
+  expect(JSON.stringify(await pane.drawn())).toContain('▲ DEPLOYING')
+  await pane.unmount()
+  await hint.unmount()
+})
+
+test('a project\'s own `vercel` server stands in for the plugin\'s: the PRs show their previews', async ($, on) => {
+  const clock = mock.clock(on)
+  // The engine keeps a project's entry for the same URL and drops the plugin's.
+  checkout(on, () => deployments({ ref: BRANCH, state: 'READY', created: 1 }), undefined, undefined, 'vercel')
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await clock.advance(5_000)
+  const hint = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...HINT })
+  await hint.press({ key: 'open-project' })
+  const pane = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...PANE })
+  expect(JSON.stringify(await pane.drawn())).toContain('▲ PREVIEW')
+  expect(await pane.find({ type: 'Link', text: 'open preview ↗' })).toBeDefined()
   await pane.unmount()
   await hint.unmount()
 })

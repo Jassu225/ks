@@ -1,0 +1,61 @@
+#!/bin/bash
+# mem-info — memory pressure, usage breakdown (as Activity Monitor counts it),
+# swap, and the processes holding the most memory.
+#
+#   mem-info [N]     N = how many top processes to list (default 10)
+#
+# Reads sysctl and the process list, which the sandbox blocks, so a sandboxed
+# agent needs it in the sandbox's excludedCommands. Read-only.
+set -euo pipefail
+
+TOP_N="${1:-10}"
+
+PAGE=$(sysctl -n hw.pagesize)
+TOTAL=$(sysctl -n hw.memsize)
+
+case "$(sysctl -n kern.memorystatus_vm_pressure_level)" in
+  1) LEVEL="Normal (green)" ;;
+  2) LEVEL="Warning (yellow)" ;;
+  4) LEVEL="Critical (red)" ;;
+  *) LEVEL="Unknown" ;;
+esac
+FREE_PCT=$(memory_pressure -Q | awk -F': ' '/free percentage/ {print $2}')
+
+echo "Memory pressure: $LEVEL — $FREE_PCT available"
+echo
+
+vm_stat | awk -v page="$PAGE" -v total="$TOTAL" '
+  function gb(pages) { return pages * page / 1073741824 }
+  {
+    key = $0; sub(/:.*/, "", key)
+    val = $NF; sub(/\./, "", val)
+    v[key] = val
+  }
+  END {
+    app        = v["Anonymous pages"] - v["Pages purgeable"]
+    wired      = v["Pages wired down"]
+    compressed = v["Pages occupied by compressor"]
+    stored     = v["Pages stored in compressor"]
+    cached     = v["File-backed pages"] + v["Pages purgeable"]
+    free       = v["Pages free"] + v["Pages speculative"]
+    used       = app + wired + compressed
+
+    printf "%-26s %6.1f GB\n", "Physical memory", total / 1073741824
+    printf "%-26s %6.1f GB\n", "Used", gb(used)
+    printf "  %-24s %6.1f GB\n", "App memory", gb(app)
+    printf "  %-24s %6.1f GB\n", "Wired", gb(wired)
+    printf "  %-24s %6.1f GB", "Compressed", gb(compressed)
+    if (compressed > 0) printf "   (%.1f GB of data, %.1f:1)", gb(stored), stored / compressed
+    printf "\n"
+    printf "%-26s %6.1f GB\n", "Cached files", gb(cached)
+    printf "%-26s %6.1f GB\n", "Free", gb(free)
+  }'
+
+# "total = 2048.00M  used = 1024.00M  free = 1024.00M  (encrypted)"
+sysctl -n vm.swapusage | awk '
+  function gb(s) { n = s + 0; if (s ~ /M$/) n /= 1024; return n }
+  { printf "%-26s %6.1f GB   (of %.1f GB allocated)\n", "Swap used", gb($6), gb($3) }'
+
+echo
+echo "Top $TOP_N processes by memory:"
+top -l 1 -o mem -n "$TOP_N" -stats pid,mem,command | awk '/^PID/ {show = 1} show'

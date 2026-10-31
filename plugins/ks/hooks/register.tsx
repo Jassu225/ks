@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Elements, EngineInterface, Register, RenderChildren, RenderSurface, TextProps } from 'claude-code'
+import type { Elements, EngineInterface, McpToolResult, Register, RenderChildren, RenderSurface, TextProps } from 'claude-code'
 
 import type { PreviewDeploy, ProjectInfo, StatusFacts, WorkflowUnit } from '../types'
 import { linearStatus, textOn } from './live/linear'
@@ -58,8 +58,12 @@ const SWEEP_LIMIT = 20
 /** How far before the last poll the next one reaches: Vercel's clock is not this machine's. */
 const SWEEP_SKEW_MS = 60_000
 
-/** The Vercel MCP server, as the vercel plugin registers it. */
-const VERCEL_SERVER = 'plugin:vercel:vercel'
+/**
+ * The Vercel MCP server's names: the vercel plugin's, then `vercel`, a project's
+ * own entry for the same URL (karmasuite has one), which the engine keeps in the
+ * plugin's place.
+ */
+const VERCEL_SERVERS = ['plugin:vercel:vercel', 'vercel']
 
 // Nerd Font glyphs: the rounded ends of a pill.
 const CAP_LEFT = ''
@@ -312,8 +316,10 @@ const branchUrls = new Map<string, string>()
 const previews = new Map<string, PreviewDeploy | null>()
 /** When the last poll began: the next one asks only for deployments made since. Null: look every branch up. */
 let sweptAt: number | null = null
-/** Set once `$.mcp.call` cannot reach the Vercel server: the deploy job stops and the PRs show no preview. */
-let vercelMissing = false
+/** Why the last preview poll failed, as last logged; null once one gets through. */
+let previewFault: string | null = null
+/** The name the Vercel server last answered under; tried first. */
+let vercelServer = VERCEL_SERVERS[0]!
 
 /** The ticket's Linear state, through the ks linear CLI (its source, run by tsx). */
 async function loadLinear($: EngineInterface): Promise<void> {
@@ -350,10 +356,13 @@ async function loadPreviews($: EngineInterface): Promise<void> {
   const checkedMinute = Math.floor(startedAt / 60000)
   /** One `list_deployments` call; the deployments it lists. */
   const list = async (args: Record<string, unknown>): Promise<Deployment[]> => {
-    const result = await $.mcp.call(VERCEL_SERVER, 'list_deployments', { slug: repo.org, ...args })
+    const result = await callVercel($, 'list_deployments', { slug: repo.org, ...args })
+    const text = result.content.map(c => ('text' in c ? String(c.text) : '')).join('')
     // The server answered but refused (auth, scope): show no previews, try again next interval.
-    if (result.isError) throw new Error('refused')
-    return listedDeployments(result.content.map(c => ('text' in c ? String(c.text) : '')).join('')) ?? []
+    if (result.isError) throw new Error(`refused: ${text.slice(0, 200)}`)
+    const listed = listedDeployments(text)
+    if (!listed) throw new Error(`unreadable answer: ${text.slice(0, 200)}`)
+    return listed
   }
   /** Each branch's newest deployment, asked one by one: a branch's last build can be weeks old. */
   const seed = (todo: string[]) =>
@@ -388,13 +397,19 @@ async function loadPreviews($: EngineInterface): Promise<void> {
         if (d && !d.branchUrl) previews.set(branch, { ...d, branchUrl: await previewAlias($, d.id, branch, repo.org) })
       }),
     )
-  } catch (error) {
-    // No such server or tool (the vercel plugin is not installed): stop asking.
-    if (!(error instanceof Error && error.message === 'refused')) vercelMissing = true
-    await forgetPreviews($)
+  } catch (err) {
+    // Refused (auth), not connected (still connecting, reconnecting after sleep) or not
+    // installed: keep the last previews and ask again at the idle interval. Nothing here
+    // tells a missing server from one between connections, so nothing stops for good.
+    // The reason goes to the transcript once, so a pane without previews says why.
+    const reason = err instanceof Error ? err.message : String(err)
+    if (reason !== previewFault) $.ui.log(`ks: PR previews unavailable, retrying every 2 min: ${reason}`)
+    previewFault = reason
+    deployActive = false
     return
   }
   sweptAt = startedAt
+  previewFault = null
 
   const deploys = Object.fromEntries(branches.flatMap(b => {
     const d = previews.get(b)
@@ -403,6 +418,25 @@ async function loadPreviews($: EngineInterface): Promise<void> {
   deployActive = Object.values(deploys).some(d => ACTIVE_STATES.has(d.state))
   const was = await read($, deployAtom)
   if (JSON.stringify(was) !== JSON.stringify(deploys)) await update($, deployAtom, () => deploys)
+}
+
+/**
+ * Calls `tool` on the Vercel server under whichever name it answers: the one
+ * that last did, then the others. Throws the first name's error when none does.
+ */
+async function callVercel($: EngineInterface, tool: string, args: Record<string, unknown>): Promise<McpToolResult> {
+  try {
+    return await $.mcp.call(vercelServer, tool, args)
+  } catch (err) {
+    for (const server of VERCEL_SERVERS.filter(s => s !== vercelServer)) {
+      const result = await $.mcp.call(server, tool, args).catch(() => null)
+      if (result) {
+        vercelServer = server
+        return result
+      }
+    }
+    throw err
+  }
 }
 
 /** Drops what is known of the previews: the next poll looks each branch up again. */
@@ -454,7 +488,7 @@ async function loadPhaseTime($: EngineInterface): Promise<void> {
 async function previewAlias($: EngineInterface, deploymentId: string, branch: string, org: string): Promise<string | null> {
   const known = branchUrls.get(branch)
   if (known) return known
-  const result = await $.mcp.call(VERCEL_SERVER, 'list_deployment_aliases', { id: deploymentId, slug: org }).catch(() => null)
+  const result = await callVercel($, 'list_deployment_aliases', { id: deploymentId, slug: org }).catch(() => null)
   if (!result || result.isError) return null
   const alias = branchAlias(result.content.map(c => ('text' in c ? String(c.text) : '')).join(''))
   if (alias) branchUrls.set(branch, alias)
@@ -470,7 +504,7 @@ function makeJobs($: EngineInterface): Scheduler {
     phaseTime: { every: () => (paneIsOpen ? PHASE_TIME_MS : null), run: () => loadPhaseTime($) },
     previewDeploys: {
       every: now => {
-        if (vercelMissing || !statePath || !paneIsOpen) return null
+        if (!statePath || !paneIsOpen) return null
         // A push moments ago polls as if deploying.
         const isRecentPush = now - pushedAt < PUSH_WINDOW_MS
         return deployActive || isRecentPush ? DEPLOY_ACTIVE_MS : DEPLOY_IDLE_MS
