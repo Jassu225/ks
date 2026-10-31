@@ -8,15 +8,14 @@ import { useBoard } from '@/lib/useBoard';
 import { useNow } from '@/lib/useNow';
 import type { BoardConfig, SessionDoc, WorkUnitDoc } from '@/lib/types';
 import { Column } from './Column';
-import { CompletedNoWorktree } from './CompletedNoWorktree';
-import { CompletedWorktrees } from './CompletedWorktrees';
 
 // Ticket workflow runs only a subset of phases (init + context/research +
 // plan/implement), so the ticket lane shows just these columns. Mirrors
 // TICKET_TEMPLATE in src/lib/phasemodel.ts.
 const TICKET_PHASES = new Set([0, 1, 2, 9, 10]);
 
-// Linear statuses treated as "done" → hidden from the board.
+// Linear statuses treated as "done" → the Done column, whatever phase the unit
+// reached.
 const DONE_STATUSES = new Set([
   'done',
   'completed',
@@ -78,7 +77,7 @@ function BackupNowButton() {
 export function Board({ config }: { config: BoardConfig }) {
   const { project, workUnits, sessions, reminders, connected, refresh } = useBoard(config);
   const [swimlanes, setSwimlanes] = useState(true);
-  const [showCompleted, setShowCompleted] = useState(false);
+  const [showRemoved, setShowRemoved] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const now = useNow(30_000); // one shared clock → recency-based glow self-expires
 
@@ -129,9 +128,9 @@ export function Board({ config }: { config: BoardConfig }) {
     [project?.inboxUrl, project?.inboxRunning],
   );
 
-  // Hide the stale backlog: a card shows only if its worktree is a CURRENT git
-  // worktree (PocketBase keeps old records forever, so worktreeDir alone isn't
-  // enough) and it isn't in a done state.
+  // Hide the stale backlog: an open card shows only if its worktree is a CURRENT
+  // git worktree (PocketBase keeps old records forever, so worktreeDir alone
+  // isn't enough).
   const liveWorktrees = useMemo(() => new Set(project?.worktreePaths ?? []), [project]);
   const visibleUnits = useMemo(
     () =>
@@ -144,33 +143,18 @@ export function Board({ config }: { config: BoardConfig }) {
     [workUnits, liveWorktrees],
   );
 
-  // Finished work whose git worktree still exists — the inverse of the board's
-  // done-exclusion, restricted to live worktrees. Cleanup candidates.
-  const completedWorktrees = useMemo(
+  // The Done column, newest first: finished work whose worktree still exists
+  // (cleanup candidates, with Remove), plus — behind "show removed" — finished
+  // work whose worktree is gone. Those get worktreeDir nulled so the card dims
+  // and offers only Restore: a stale path must not reach Remove or Copy path.
+  const doneUnits = useMemo(
     () =>
       workUnits
-        .filter(
-          (u) =>
-            u.worktreeDir &&
-            liveWorktrees.has(u.worktreeDir) &&
-            isDone(u),
-        )
+        .filter(isDone)
+        .map((u) => (u.worktreeDir && liveWorktrees.has(u.worktreeDir) ? u : { ...u, worktreeDir: null }))
+        .filter((u) => showRemoved || u.worktreeDir)
         .sort((a, b) => (b.lastActivity ?? '').localeCompare(a.lastActivity ?? '')),
-    [workUnits, liveWorktrees],
-  );
-
-  // Finished work whose git worktree is already gone — the archive tail. Done
-  // status AND no live worktree. Hidden behind the "show completed" checkbox.
-  const completedNoWorktree = useMemo(
-    () =>
-      workUnits
-        .filter(
-          (u) =>
-            isDone(u) &&
-            !(u.worktreeDir && liveWorktrees.has(u.worktreeDir)),
-        )
-        .sort((a, b) => (b.lastActivity ?? '').localeCompare(a.lastActivity ?? '')),
-    [workUnits, liveWorktrees],
+    [workUnits, liveWorktrees, showRemoved],
   );
 
   const byPhase = useMemo(() => {
@@ -229,14 +213,17 @@ export function Board({ config }: { config: BoardConfig }) {
             />
             swimlanes
           </label>
-          <label className="flex items-center gap-1.5 text-slate-400" title="Show completed work whose worktree is already removed">
+          <label
+            className="flex items-center gap-1.5 text-slate-400"
+            title="Also show, in the Done column, finished work whose worktree is already removed"
+          >
             <input
               type="checkbox"
-              checked={showCompleted}
-              onChange={(e) => setShowCompleted(e.target.checked)}
+              checked={showRemoved}
+              onChange={(e) => setShowRemoved(e.target.checked)}
               className="accent-indigo-500"
             />
-            show completed
+            show removed
           </label>
           <span
             className={`flex items-center gap-1 ${connected ? 'text-emerald-400' : 'text-slate-500'}`}
@@ -252,7 +239,7 @@ export function Board({ config }: { config: BoardConfig }) {
             type="button"
             onClick={onRefresh}
             disabled={refreshing}
-            title="Refresh the board + completed worktrees from the store"
+            title="Refresh the board from the store"
             className="rounded px-2 py-0.5 text-slate-400 hover:text-slate-200 disabled:opacity-50"
           >
             <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`}>↻</span>
@@ -313,9 +300,10 @@ export function Board({ config }: { config: BoardConfig }) {
         ) : (
           types.map((t) => {
             const unitsForLane = t ? visibleUnits.filter((u) => u.type === t) : visibleUnits;
+            const doneForLane = t ? doneUnits.filter((u) => u.type === t) : doneUnits;
             // Hide an empty lane so a ticket-only (or project-only) repo doesn't
             // render a wide band of empty columns for the other type.
-            if (t && unitsForLane.length === 0) return null;
+            if (t && unitsForLane.length === 0 && doneForLane.length === 0) return null;
             const laneSet = new Set(unitsForLane.map((u) => u.unitId));
             // Ticket lane shows only ticket phases; project lane (and the
             // combined view) shows the full phase model.
@@ -332,7 +320,8 @@ export function Board({ config }: { config: BoardConfig }) {
                   {laneColumns.map((c) => (
                     <Column
                       key={c.number}
-                      phase={c}
+                      number={c.number}
+                      name={c.name}
                       units={(byPhase.get(c.number) ?? []).filter((u) => laneSet.has(u.unitId))}
                       sessions={latestSessions}
                       reminders={reminders}
@@ -341,13 +330,22 @@ export function Board({ config }: { config: BoardConfig }) {
                       onRefresh={onRefresh}
                     />
                   ))}
+                  {/* After the last phase: finished work, in the same card form. */}
+                  <Column
+                    name="Done"
+                    done
+                    units={doneForLane}
+                    sessions={latestSessions}
+                    reminders={reminders}
+                    now={now}
+                    inbox={inboxAddress}
+                    onRefresh={onRefresh}
+                  />
                 </div>
               </section>
             );
           })
         )}
-        <CompletedWorktrees units={completedWorktrees} onRefresh={onRefresh} />
-        {showCompleted && <CompletedNoWorktree units={completedNoWorktree} />}
       </main>
     </div>
     </BackupStatusProvider>

@@ -296,14 +296,6 @@ function scheduleProjectRecompute(): void {
 }
 
 // ── live Linear fields ───────────────────────────────────────────────────────
-// Statuses the board treats as finished (mirrors DONE_STATUSES in
-// web/components/Board.tsx), plus Linear's own completed/canceled state types.
-const BOARD_DONE_STATUSES = new Set(['done', 'completed', 'complete', 'canceled', 'cancelled', 'merged', 'closed', 'archived']);
-const isDoneOnBoard = (u: WorkUnitDoc): boolean =>
-  (!!u.linearStatus && BOARD_DONE_STATUSES.has(u.linearStatus.trim().toLowerCase())) ||
-  u.linearStatusType === 'completed' ||
-  u.linearStatusType === 'canceled';
-
 /** A unit with the values last read from Linear laid over its state.yaml snapshot. */
 function withLinear(u: WorkUnitDoc): WorkUnitDoc {
   const live = u.type === 'ticket' ? linearLive.get(u.identifier) : undefined;
@@ -479,8 +471,10 @@ async function recomputeProject(): Promise<void> {
   const joined = deduped.map((u) => attachInbox(joinUnit(u, sessions, liveSessions), inboxThreads));
   lastJoined.clear();
   for (const u of joined) lastJoined.set(u.unitId, u);
+  // Every ticket with a live worktree, Done ones included: they sit in the Done
+  // column until removed, and a reopened ticket must move back to its phase.
   boardTickets = joined
-    .filter((u) => u.type === 'ticket' && /^[A-Z]+-\d+$/.test(u.identifier) && isLive(u.worktreeDir) && !isDoneOnBoard(u))
+    .filter((u) => u.type === 'ticket' && /^[A-Z]+-\d+$/.test(u.identifier) && isLive(u.worktreeDir))
     .map((u) => u.identifier);
 
   // Write gate: only upsert docs that actually changed. recomputeProject runs on

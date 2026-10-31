@@ -2,6 +2,7 @@
 
 ## 2026-10-31
 
+- **ks-flow: Done is a board column**: finished tickets now move to a **Done** column, the last column of their lane, as ordinary cards. They used to drop into two tables below the board ("Completed worktrees · not removed" and, behind **show completed**, "Completed · worktree removed"). Those tables showed no Inbox state, so a question from a Done ticket's session reached you only in the Inbox and as a notice. Done cards now show the **NEEDS YOU** sash, thread rows, backup/restore, reminders and Remove like any other card. **show removed** (formerly **show completed**) adds Done work whose worktree is gone, dimmed and Restore-only. The daemon keeps reading Done tickets from Linear while their worktree exists, so reopening one moves its card back to its phase column. Before, a Done ticket stopped being polled.
 - **ks-flow shows the Plannotator Inbox on each card**: when an agent asks in the Inbox instead of the terminal, its card now says so. Before, a session waiting there looked idle in its tmux pane and on the board, and KAR-13197's two blocking questions went unseen for hours.
   - A diagonal **NEEDS YOU** sash goes across the card's top-right corner, red when the agent stopped until you answer. Clicking it opens the thread.
   - Each card gets one row per Inbox thread (`⛔ Stopped on you · 2 open questions · holds up: …`, `Inbox ↗`). A thread with only new messages gets a quiet `✉ 1 new message` row and no sash.

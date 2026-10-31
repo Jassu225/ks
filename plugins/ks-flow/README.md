@@ -46,10 +46,10 @@ Ingestion bookkeeping (byte offsets, inode) stays in a local `checkpoints.json` 
 | `liveSessions` | 15s (1 tick) | re-read `~/.claude/sessions/*.json`; recompute only when the set of live processes changed |
 | `backup` | 60s (4 ticks) | enabled → not tried today → no sweep running → not swept today → past the time (or > 24h) |
 | `rotateLogs` | 60s (4 ticks) | today's date differs from the open log's |
-| `linear` | 3 min (12 ticks) | the board's tickets only (live worktree, not finished); one `linear issue batch-get` call |
+| `linear` | 3 min (12 ticks) | every ticket with a live worktree, Done ones included; one `linear issue batch-get` call |
 | `inbox` | 15s (1 tick) | Plannotator Inbox: read only what its project logs appended; `inbox.json` each tick, a health check every minute; recompute only on a change (see **Plannotator Inbox**) |
 
-**Live Linear fields.** A card's title, status, priority, estimate and Linear URL start as the `state.yaml` snapshot taken when the ticket was started. The `linear` job reads the current values for every ticket on the board in one call (the ks plugin's `linear issue batch-get`, one GraphQL query per team) and lays them over the snapshot in the daemon's memory, so the card, its column and its Done check follow Linear without anything rewriting `state.yaml`. A failed call keeps the last values and logs one line. Once Linear says a ticket is finished (by status name, or by Linear's `completed`/`canceled` state type, so custom names like "Shipped" count), the card leaves the board and stops being polled.
+**Live Linear fields.** A card's title, status, priority, estimate and Linear URL start as the `state.yaml` snapshot taken when the ticket was started. The `linear` job reads the current values for every ticket on the board in one call (the ks plugin's `linear issue batch-get`, one GraphQL query per team) and lays them over the snapshot in the daemon's memory, so the card, its column and its Done check follow Linear without anything rewriting `state.yaml`. A failed call keeps the last values and logs one line. Once Linear says a ticket is finished (by status name, or by Linear's `completed`/`canceled` state type, so custom names like "Shipped" count), the card moves to the **Done** column. It is still polled while its worktree exists, so a reopened ticket moves back to its phase column.
 
 Each card's header is a **status ribbon** in the colour Linear uses for that state (before the first sync, Linear's default colour for the status). Its **↻ refreshes the whole card** now: the board appends a `RefreshCard` event to `events.jsonl`, and the daemon runs the per-card form (`runFor`) of every clock job that has one, in table order — `worktrees` (the one `git worktree list`), `liveSessions` (re-read the running Claude processes), `stateYaml` (re-parse this card's `state.yaml` copies, ignoring the mtime gate), `linear` (`batch-get` for this ticket alone), `inbox` (the same read as the tick: one read covers every card) — then catches up the card's session transcripts and rewrites it with `cardRefreshedAt` (and `cardRefreshError` naming any step that failed). The board re-reads the backup status at the same time. `reminders`, the `backup` sweep and `rotateLogs` have no per-card form: they notify, upload or roll logs rather than read card data. The spinner stops when `cardRefreshedAt` moves; a failed step, or no answer in 60s, shows `!` with the reason in its tooltip.
 
@@ -136,7 +136,7 @@ firebase emulators:start --only firestore
 `ks-flow open` builds and serves the Next.js board (dark theme). Header controls:
 
 - **swimlanes** *(on by default)* — split cards into `ticket` / `project` lanes. Each lane shows only that type's phases (the ticket lane is the shorter init + context/research + plan/implement set), and a lane with no cards is hidden.
-- **show completed** *(off by default)* — reveal the [Completed · worktree removed](#completed--worktree-removed) table (finished work whose git worktree is already gone).
+- **show removed** *(off by default)* — also show, in the [Done column](#done-column), finished work whose git worktree is already gone (dimmed, Restore only).
 - **live / connecting…** — realtime subscription status.
 - **↻ refresh** — manual re-pull of the project, work-units, and sessions from
   the store (the live subscription still pushes on its own; this is an on-demand
@@ -147,12 +147,12 @@ firebase emulators:start --only firestore
 - **kill** — two-step kill switch that stops the daemon + PocketBase. They
   restart and re-backfill on the next Claude session, so it's reversible.
 
-Only cards whose worktree is a **current** git worktree and whose Linear status
-is not done are shown on the board (stale records linger in the store but are
-filtered out).
+Only cards whose worktree is a **current** git worktree are shown on the board
+(stale records linger in the store but are filtered out); finished ones sit in
+the last column, **Done** (see [Done column](#done-column)).
 
 The board also scrolls **horizontally only within each lane's column row** —
-the header and the Completed-worktrees table below stay fixed to the viewport.
+the header stays fixed to the viewport.
 
 ### Cards
 
@@ -191,8 +191,8 @@ so any field can be surfaced on the board without new daemon plumbing.
 
 - **Tracked project** — re-point the board at another repo. The path is
   validated as a git repo; the daemon re-points and re-backfills on save.
-- **Worktree removal command** — the command run by the Completed worktrees
-  view (below). Stored in `board-settings.json` (separate from `project.conf`,
+- **Worktree removal command** — the command a card's **Remove** runs (see
+  [Removing a worktree](#removing-a-worktree)). Stored in `board-settings.json` (separate from `project.conf`,
   so bootstrap never clobbers it).
 - **Archive to Google Cloud Storage** — opt-in (off by default). When enabled,
   Remove first archives the worktree before deleting it (see below). Toggling it
@@ -244,7 +244,7 @@ GCS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----\n"
 GCS_PROJECT_ID=my-gcp-project           # optional (falls back to the SA's)
 ```
 
-When enabled, removing a completed worktree archives it first, then runs your
+When enabled, removing a worktree archives it first, then runs your
 remove command. It goes through the same uploader as everything else (see
 **Transcript backup** below), so it writes:
 
@@ -416,11 +416,10 @@ the tarball), so the next sweep sees them as already backed up rather than
 re-uploading them. Old-format units (`transcript.tar.zst` only) get the same
 time-log and workflow handling as per-file ones.
 
-Done tickets leave the board, and they are the ones old enough to have been
-pruned, so the badge follows them: each row of *Completed worktrees · not
-removed* carries the same `☁ backup` / `⤓ restore N` pair, and each row of
-*Completed · worktree removed* (behind **show completed**) carries the restore
-alone — the sweep only backs up live worktrees. The restore CLI resolves where a
+Done tickets are the ones old enough to have been pruned. Their cards in the
+**Done** column carry the same `☁ backup` / `⤓ restore N` pair, and a Done card
+whose worktree is gone (behind **show removed**) carries the restore alone — the
+sweep only backs up live worktrees. The restore CLI resolves where a
 unit's transcripts belong exactly as the status does (live worktree, then the
 completed-unit record, then the location stamped on its objects, then the backup
 index), so a badge the board shows is one the restore can act on.
@@ -523,16 +522,27 @@ restore will need the worktree recreated first.
 
 Delete the `_legacy-backup/` prefix once you are satisfied.
 
-### Completed worktrees · not removed
+### Done column
 
-A table below the board lists finished work — Linear status done / merged /
-closed / canceled — **whose git worktree still exists**. These are cleanup
-candidates: the daemon nulls a card's `worktreeDir` once its worktree is gone,
-so a row here means the directory is still live.
+Finished work — Linear status done / merged / closed / canceled, or Linear's
+`completed`/`canceled` state type — leaves its phase column for the last column
+of its lane, **Done**, whatever phase it reached. It is the same card as
+everywhere else: status ribbon, links, Inbox threads and the **NEEDS YOU** sash,
+backup/restore, reminders and **Remove**. Newest activity first.
 
-Each row has a **Remove** button. Board cards carry one too, for work that is
-not finished; their confirmation adds a red warning that the ticket is still
-open and unpushed commits go with the branch if your command deletes it.
+By default the column holds only Done work **whose git worktree still exists**
+— cleanup candidates. Tick **show removed** in the header to add Done work whose
+worktree is already gone: those cards are dimmed and offer only Restore, since
+there is no worktree left to act on.
+
+A Done ticket with a live worktree is still read from Linear every 3 minutes, so
+reopening it moves its card back to its phase column.
+
+### Removing a worktree
+
+Every card with a live worktree has a **Remove** button. On a card outside the
+Done column the confirmation adds a red warning that the ticket is still open
+and unpushed commits go with the branch if your command deletes it.
 
 0. **Confirm.** A dialog names the worktree, says whether it is backed up first, and shows the exact command it will
    run (placeholders filled in). Esc, the backdrop or Cancel back out.
@@ -550,27 +560,15 @@ open and unpushed commits go with the branch if your command deletes it.
    `eval`'d — so your PATH, aliases, and shell functions resolve just like in a
    terminal. Placeholders `{{path}}` / `{{identifier}}` / `{{title}}` are
    substituted (also exposed as `$KS_WORKTREE` / `$KS_IDENTIFIER` / `$KS_TITLE`),
-   and `{{path}}` is that row's worktree.
+   and `{{path}}` is that card's worktree.
 4. **Streams output.** stdout/stderr stream live into that worktree's own
    bottom-right panel (hide it, and See logs beside Remove brings it back); on
-   success the row is hidden and the board refreshes, on failure the error
-   stays in the panel.
+   success the board refreshes and the card goes (or, with **show removed** on,
+   dims), on failure the error stays in the panel.
 
 > The removal command is arbitrary shell authored by you and run on localhost —
 > a single-user trust boundary. If no command is set, Remove prompts you to set
 > one in Settings.
-
-### Completed · worktree removed
-
-The board's archive tail: finished work (same done/merged/closed/canceled
-statuses) **whose git worktree no longer exists** — the inverse of the table
-above. **Hidden by default**; tick **show completed** in the header to reveal it.
-**Read-only** (ticket + Linear link, title, status, PR, last activity) — there's
-no worktree left to act on, so no Remove button.
-
-So the board reads top-to-bottom as a lifecycle: **active cards** (in their phase
-columns) → **Completed · not removed** (worktree still around, cleanup candidates)
-→ **Completed · worktree removed** (fully wrapped up).
 
 ## Plannotator Inbox
 

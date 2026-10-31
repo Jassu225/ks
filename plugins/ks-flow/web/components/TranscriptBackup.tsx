@@ -10,7 +10,7 @@ function absTime(iso: string | null): string {
 }
 
 /**
- * Per-unit backup + restore, on a board card and on the completed-work tables.
+ * Per-unit backup + restore, on every board card (the Done column's included).
  *
  * Local transcripts are pruned at 30 days, so the interesting state is "the
  * bucket has sessions this machine no longer does" — that card gets an amber
@@ -25,9 +25,9 @@ function absTime(iso: string | null): string {
  * Restore never overwrites a local transcript (the CLI enforces that); it only
  * fills in what is missing, so clicking it while a session is live is safe.
  *
- * Done tickets leave the board for the completed tables, and they are the ones
- * old enough to have been pruned, so the Restore has to follow them there.
- * `restoreOnly` drops the backup button for a unit whose worktree is gone:
+ * Done tickets are the ones old enough to have been pruned, so the Done
+ * column's cards matter most here. `restoreOnly` drops the backup button for a
+ * Done unit whose worktree is gone (shown behind "show removed"):
  * the sweep only backs up live worktrees, so it would have nothing to send.
  */
 export function TranscriptBackup({ unitId, restoreOnly = false }: { unitId: string; restoreOnly?: boolean }) {

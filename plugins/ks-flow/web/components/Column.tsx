@@ -1,8 +1,10 @@
-import type { InboxAddress, PhaseRef, ReminderDoc, SessionDoc, WorkUnitDoc } from '@/lib/types';
+import type { InboxAddress, ReminderDoc, SessionDoc, WorkUnitDoc } from '@/lib/types';
 import { WorkUnitCard } from './SessionCard';
 
 export function Column({
-  phase,
+  number,
+  name,
+  done = false,
   units,
   sessions,
   reminders,
@@ -10,7 +12,11 @@ export function Column({
   inbox,
   onRefresh,
 }: {
-  phase: PhaseRef;
+  /** The phase number; the Done column has none. */
+  number?: number;
+  name: string;
+  /** The Done column: Linear says these units are finished. */
+  done?: boolean;
   units: WorkUnitDoc[];
   sessions: SessionDoc[];
   reminders: ReminderDoc[];
@@ -21,9 +27,10 @@ export function Column({
   return (
     <div className="flex w-72 shrink-0 flex-col rounded-xl bg-slate-900/60">
       <div className="flex items-center justify-between px-3 py-2">
-        <h2 className="text-sm font-semibold text-slate-200">
-          <span className="mr-1.5 font-mono text-xs text-slate-500">{phase.number}</span>
-          {phase.name}
+        <h2 className={`text-sm font-semibold ${done ? 'text-emerald-300' : 'text-slate-200'}`}>
+          {number != null && <span className="mr-1.5 font-mono text-xs text-slate-500">{number}</span>}
+          {done && <span className="mr-1.5">✓</span>}
+          {name}
         </h2>
         <span className="rounded-full bg-slate-800 px-2 text-xs text-slate-400">
           {units.length}
@@ -41,6 +48,7 @@ export function Column({
               reminders={reminders}
               now={now}
               inbox={inbox}
+              done={done}
               dimmed={!u.worktreeDir}
               onRemoved={onRefresh}
             />

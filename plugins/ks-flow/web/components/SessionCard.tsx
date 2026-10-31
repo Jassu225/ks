@@ -381,6 +381,7 @@ export function WorkUnitCard({
   reminders,
   now,
   inbox,
+  done = false,
   dimmed = false,
   onRemoved,
 }: {
@@ -390,6 +391,9 @@ export function WorkUnitCard({
   now: number;
   /** The Plannotator Inbox's address, for the thread links. */
   inbox?: InboxAddress;
+  /** In the Done column: Linear says the work is finished. */
+  done?: boolean;
+  /** No live worktree (a Done unit already cleaned up). */
   dimmed?: boolean;
   /** After its worktree is removed: refresh the board so the card goes. */
   onRemoved?: () => void | Promise<void>;
@@ -522,14 +526,11 @@ export function WorkUnitCard({
             {pauseRec ? '⏸ paused' : '▶ active'}
           </button>
         )}
-        <TranscriptBackup unitId={unit.unitId} />
+        {/* No worktree left: the sweep has nothing to back up, only Restore applies. */}
+        <TranscriptBackup unitId={unit.unitId} restoreOnly={!unit.worktreeDir} />
         <ReminderControls unitId={unit.unitId} reminders={reminders} />
-        {/* Board cards are open tickets: the dialog warns before removing. */}
-        <RemoveWorktree
-          unit={unit}
-          completed={false}
-          onRemoved={onRemoved}
-        />
+        {/* An open ticket's dialog warns before removing. */}
+        <RemoveWorktree unit={unit} completed={done} onRemoved={onRemoved} />
       </div>
 
       <InboxThreads unit={unit} inbox={inbox} />

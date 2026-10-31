@@ -24,7 +24,7 @@ export default function Settings() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SetResult | null>(null);
 
-  // Worktree-removal command (run from the Completed worktrees view).
+  // Worktree-removal command (run by a card's Remove).
   const [removeCommand, setRemoveCommand] = useState('');
   const [cmdSaving, setCmdSaving] = useState(false);
   const [cmdSaved, setCmdSaved] = useState(false);
@@ -362,8 +362,7 @@ export default function Settings() {
         <section className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5">
           <h2 className="text-sm font-semibold text-slate-200">Worktree removal command</h2>
           <p className="mt-1 text-xs text-slate-400">
-            Run from the <span className="text-slate-300">Completed worktrees</span> view when you
-            click <span className="text-slate-300">Remove</span>. Executed with{' '}
+            Run when you click a card&apos;s <span className="text-slate-300">Remove</span>. Executed with{' '}
             <code className="text-slate-300">zsh -c</code> from the project root. Use{' '}
             <code className="text-slate-300">{'{{path}}'}</code>,{' '}
             <code className="text-slate-300">{'{{identifier}}'}</code>, or{' '}
@@ -395,7 +394,7 @@ export default function Settings() {
         <section className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5">
           <h2 className="text-sm font-semibold text-slate-200">Archive to Google Cloud Storage</h2>
           <p className="mt-1 text-xs text-slate-400">
-            When enabled, removing a completed worktree first compresses its{' '}
+            When enabled, removing a worktree first compresses its{' '}
             <span className="text-slate-300">transcript</span> and{' '}
             <span className="text-slate-300">workflow</span> folders into two{' '}
             <code className="text-slate-300">.tar.zst</code> archives (zstd <code>--ultra -22</code>)
