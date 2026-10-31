@@ -245,6 +245,8 @@ plugins/ks/scripts/quality-typecheck.sh
 
 All three source `quality-files.sh`, which collects the changed `.ts`/`.tsx` files (staged + unstaged + untracked + everything on the branch vs. its base).
 
+**Project gate** — they run only in the project set as `KS_PROJECT_ROOT_PATH` in `plugins/ks/.config` (written by `./init`): that checkout and every worktree of it (same git common dir). In any other repo, this plugin repo included, they exit 0 without checking anything. With no `.config` they run in every repo. `suggest-code-simplifier.sh` sources the same file, so it follows the same gate.
+
 **`.quality-ignore`** — optional file in the target repo root that excludes paths from that set. One pattern per line, matched as a fixed substring against the repo-relative path; `#` comments and blank lines ignored:
 
 ```

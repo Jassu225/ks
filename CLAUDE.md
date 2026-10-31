@@ -189,7 +189,7 @@ Provides LSP-powered semantic tools for symbol navigation, reference tracing, an
 - **Phase 9 boundary**: Planning only. Implementation happens in Phase 10.
 - **Research agents are read-only**: They document what exists. Findings must be verified in actual code.
 - **Watching a Grain recording**: delegate to `ks:grain-recording-watcher` rather than driving `grain` inline, then **let it finish** — don't run the same job in parallel. A silent agent is usually mid-download; ask it with `SendMessage`, and if you take over, tell it to stop first so two runs aren't writing one folder. Frames enter context as images; the agent absorbs that cost and leaves a `findings-*.md` behind. Inline `grain` use is for non-visual work (list, transcript, summary, export, tags, webhooks).
-- **Hooks run automatically**: Format, lint, and typecheck run on every Stop and SubagentStop event. A repo may exclude already-broken files via `.quality-ignore` in its root (see `plugins/ks/scripts/README.md`) — never add a file you broke yourself.
+- **Hooks run automatically**: Format, lint, and typecheck run on every Stop and SubagentStop event, only in the project set in `plugins/ks/.config` (`KS_PROJECT_ROOT_PATH`) and its worktrees — not in this repo. A repo may exclude already-broken files via `.quality-ignore` in its root (see `plugins/ks/scripts/README.md`) — never add a file you broke yourself.
 
 ## Environment Setup
 
