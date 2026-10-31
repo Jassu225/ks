@@ -2,16 +2,6 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "mcp__.*plannotator.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}\"/scripts/inbox-guard.mjs",
-            "timeout": 5
-          }
-        ]
-      },
-      {
         "matcher": "AskUserQuestion|ExitPlanMode",
         "hooks": [
           {

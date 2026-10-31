@@ -392,8 +392,7 @@ function narrow(t: ThreadSummary, ids: Set<string>): InboxThreadRef | null {
  * The card's Inbox state: what its own sessions asked or wrote, by Claude
  * session id only. A message's `base_path` (the folder it was sent from) is
  * not used: any session can name any folder, and a card must not show another
- * session's message as its own (scripts/inbox-guard.mjs refuses such sends
- * too). An open question or action item, or an answer still to send, makes the
+ * session's message as its own. An open question or action item, or an answer still to send, makes the
  * card wait on the person (`waiting.tool = 'Inbox'`) unless it already waits
  * on something older.
  */
