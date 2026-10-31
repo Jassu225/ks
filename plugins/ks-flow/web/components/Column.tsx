@@ -1,4 +1,4 @@
-import type { PhaseRef, ReminderDoc, SessionDoc, WorkUnitDoc } from '@/lib/types';
+import type { InboxAddress, PhaseRef, ReminderDoc, SessionDoc, WorkUnitDoc } from '@/lib/types';
 import { WorkUnitCard } from './SessionCard';
 
 export function Column({
@@ -7,6 +7,7 @@ export function Column({
   sessions,
   reminders,
   now,
+  inbox,
   onRefresh,
 }: {
   phase: PhaseRef;
@@ -14,6 +15,7 @@ export function Column({
   sessions: SessionDoc[];
   reminders: ReminderDoc[];
   now: number;
+  inbox?: InboxAddress;
   onRefresh?: () => void | Promise<void>;
 }) {
   return (
@@ -38,6 +40,7 @@ export function Column({
               sessions={sessions}
               reminders={reminders}
               now={now}
+              inbox={inbox}
               dimmed={!u.worktreeDir}
               onRemoved={onRefresh}
             />

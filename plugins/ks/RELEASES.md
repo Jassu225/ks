@@ -1,5 +1,14 @@
 # Releases
 
+## 2026-10-31
+
+- **ks-flow shows the Plannotator Inbox on each card**: when an agent asks in the Inbox instead of the terminal, its card now says so. Before, a session waiting there looked idle in its tmux pane and on the board, and KAR-13197's two blocking questions went unseen for hours.
+  - A diagonal **NEEDS YOU** sash goes across the card's top-right corner, red when the agent stopped until you answer. Clicking it opens the thread.
+  - Each card gets one row per Inbox thread (`⛔ Stopped on you · 2 open questions · holds up: …`, `Inbox ↗`). A thread with only new messages gets a quiet `✉ 1 new message` row and no sash.
+  - The card shows `⏳ waiting: Inbox`, and a macOS notice goes out when a new question arrives.
+  - How it works: the daemon reads the Inbox's files read-only on its 15s clock (`src/lib/inbox.ts`), following the Inbox's own rules for when a question is open or answered. It never reads the Inbox token. The daemon now has tests (`cd plugins/ks-flow/src && npm test`).
+- **Inbox threads join cards by session id only, with a guard on sends**: a card shows only questions and messages its own Claude sessions wrote. A message's sent-from folder (`base_path`) is ignored, and another session replying into the card's thread doesn't add its question to the card. A new `PreToolUse` hook (`scripts/inbox-guard.mjs`) refuses an Inbox `send_message` or `submit_guide` whose `project_path` is outside the session's own git checkout. It's a guard rail, not a lock: it only runs in sessions that load ks-flow, and the Inbox's stdio server and HTTP API accept any session id.
+
 ## 2026-10-30
 
 - **PR previews come back after a dropped connection**: the `/ks-project` pane's Vercel pills (`▲ DEPLOYING`, `▲ PREVIEW`) no longer vanish for the rest of a session after one failed Vercel call. Any error other than an auth refusal (the MCP server still connecting at startup, reconnecting after sleep) was read as "vercel plugin not installed": the pane stopped asking and dropped the pills, leaving only the GitHub link until the session restarted. Now a failed call keeps the last preview shown and asks again at the 2-minute idle interval.

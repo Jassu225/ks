@@ -20,6 +20,51 @@ export interface WaitingState {
   sessionId: string;
 }
 
+/** One Inbox question or action item still waiting on the person. */
+export interface InboxQuestionRef {
+  id: string;
+  messageId: string;
+  kind: string; // single | multi | text | action
+  prompt: string;
+  stopped: string | null;
+  holdsUp: string[];
+  askedAt: string;
+  /** The Claude session that asked it. */
+  askedBy: string | null;
+  /** open: unanswered; picked: answered in the Inbox but not sent yet. */
+  state: 'open' | 'picked';
+}
+
+/** A Plannotator Inbox thread with something for the person. */
+export interface InboxThreadRef {
+  threadId: string;
+  projectKey: string;
+  subject: string | null;
+  open: number;
+  picked: number;
+  actions: number;
+  stopped: string | null;
+  holdsUp: string[];
+  unseen: number;
+  since: string | null;
+  lastAt: string;
+  linkMessageId: string | null;
+  questions: InboxQuestionRef[];
+}
+
+export interface InboxCardState {
+  needsYou: boolean;
+  stopped: boolean;
+  since: string | null;
+  threads: InboxThreadRef[];
+}
+
+/** Where the Inbox answers (its port changes on restart) and whether it does now. */
+export interface InboxAddress {
+  url: string | null;
+  running: boolean;
+}
+
 export interface ProjectDoc {
   projectId: string;
   projectPath: string;
@@ -27,6 +72,8 @@ export interface ProjectDoc {
   workflowType: 'ticket' | 'project' | 'mixed';
   phaseModel: PhaseRef[];
   worktreePaths: string[];
+  inboxUrl?: string | null;
+  inboxRunning?: boolean;
   updatedAt: string;
 }
 
@@ -56,6 +103,8 @@ export interface WorkUnitDoc {
   waiting: WaitingState | null;
   sessionIds: string[];
   lastActivity: string | null;
+  /** The card's Plannotator Inbox threads; null/absent when none has anything for the person. */
+  inbox?: InboxCardState | null;
   /** The entire parsed state.yaml, verbatim (for surfacing any field). */
   state: Record<string, unknown> | null;
 }

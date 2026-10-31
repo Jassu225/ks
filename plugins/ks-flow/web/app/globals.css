@@ -96,3 +96,52 @@ body {
     animation: none;
   }
 }
+
+/* "Needs you": a diagonal sash across the card's top-right corner, for an
+   Inbox question, action item or unsent answer waiting on the person. It sits
+   in its own overflow-hidden box (SessionCard NeedsYouRibbon), so the corner
+   clips its ends without clipping the card's menus. A slow breathe draws the
+   eye; red when the agent has stopped until it is answered. */
+@keyframes ks-needs-you {
+  0%,
+  100% {
+    filter: brightness(1);
+    box-shadow: 0 1px 4px #0008, 0 0 0 #f9731600;
+  }
+  50% {
+    filter: brightness(1.3);
+    box-shadow: 0 1px 4px #0008, 0 0 10px #f97316aa;
+  }
+}
+.needs-you-ribbon {
+  position: absolute;
+  top: 15px;
+  right: -31px;
+  width: 116px;
+  transform: rotate(45deg);
+  padding: 3px 0;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #fff;
+  background: linear-gradient(180deg, #fb923c, #ea580c);
+  border-top: 1px dashed #fff6;
+  border-bottom: 1px dashed #fff6;
+  text-shadow: 0 1px 1px #0006;
+  animation: ks-needs-you 2s ease-in-out infinite;
+  z-index: 1;
+}
+.needs-you-ribbon.needs-you-stopped {
+  background: linear-gradient(180deg, #ef4444, #b91c1c);
+}
+a.needs-you-ribbon:hover {
+  filter: brightness(1.4);
+}
+@media (prefers-reduced-motion: reduce) {
+  .needs-you-ribbon {
+    animation: none;
+  }
+}

@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import type { ReminderDoc, SessionDoc, WorkUnitDoc } from '@/lib/types';
+import type { InboxAddress, InboxThreadRef, ReminderDoc, SessionDoc, WorkUnitDoc } from '@/lib/types';
 import { RemoveWorktree } from '@/components/RemoveWorktree';
 import { TranscriptBackup } from '@/components/TranscriptBackup';
 import { useBackupStatus } from '@/lib/backupStatus';
@@ -199,7 +199,7 @@ const CARD_REFRESH_TIMEOUT_MS = 60_000;
  * transcripts (the per-card form of each clock job), and the board re-reads its
  * backup status. The spinner stops when the card's cardRefreshedAt moves.
  */
-function StatusRibbon({ unit }: { unit: WorkUnitDoc }) {
+function StatusRibbon({ unit, ribbonSpace = false }: { unit: WorkUnitDoc; ribbonSpace?: boolean }) {
   const { refresh: refreshBackups } = useBackupStatus();
   const [askedAt, setAskedAt] = useState<string | null | undefined>(undefined); // cardRefreshedAt when clicked
   const [timedOut, setTimedOut] = useState(false);
@@ -247,7 +247,9 @@ function StatusRibbon({ unit }: { unit: WorkUnitDoc }) {
 
   return (
     <div
-      className="-mx-3 -mt-3 mb-2 flex items-center justify-between gap-2 rounded-t-lg border-b px-3 py-1"
+      className={`-mx-3 -mt-3 mb-2 flex items-center justify-between gap-2 rounded-t-lg border-b py-1 pl-3 ${
+        ribbonSpace ? 'pr-14' : 'pr-3'
+      }`}
       style={{ backgroundColor: `${color}26`, borderColor: `${color}55` }}
     >
       <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium" style={{ color }}>
@@ -270,11 +272,115 @@ function StatusRibbon({ unit }: { unit: WorkUnitDoc }) {
   );
 }
 
+/** A thread in the Inbox web app: `#thread=<root>&msg=<message>` (the url ends in "/"). */
+function threadLink(inbox: InboxAddress | undefined, t: InboxThreadRef): string | null {
+  if (!inbox?.url) return null;
+  return `${inbox.url}#thread=${encodeURIComponent(t.threadId)}${
+    t.linkMessageId ? `&msg=${encodeURIComponent(t.linkMessageId)}` : ''
+  }`;
+}
+
+/**
+ * The diagonal "Needs you" sash across the card's top-right corner: an Inbox
+ * question, action item or unsent answer waits on you. Red when the agent has
+ * stopped until you answer. Clicking it opens the first such thread.
+ */
+function NeedsYouRibbon({ unit, inbox }: { unit: WorkUnitDoc; inbox?: InboxAddress }) {
+  const state = unit.inbox;
+  if (!state?.needsYou) return null;
+  const first = state.threads.find((t) => t.questions.length > 0) ?? state.threads[0];
+  const href = first ? threadLink(inbox, first) : null;
+  const waiting = state.threads.reduce((n, t) => n + t.open + t.picked, 0);
+  const title =
+    `${state.stopped ? 'Stopped on you: ' : ''}${waiting} Inbox item${waiting === 1 ? '' : 's'} waiting on you` +
+    (state.since ? ` since ${relTime(state.since)}` : '') +
+    (href ? (inbox?.running ? ' — open the thread' : ' — the Inbox is closed: run `plannotator inbox`') : '');
+  const cls = `needs-you-ribbon pointer-events-auto ${state.stopped ? 'needs-you-stopped' : ''}`;
+  return (
+    // Its own clipping box, so the card itself keeps overflow visible for its menus.
+    <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-lg">
+      {href ? (
+        <a href={href} target="_blank" rel="noreferrer" className={cls} title={title} onClick={(e) => e.stopPropagation()}>
+          Needs you
+        </a>
+      ) : (
+        <span className={cls} title={title}>
+          Needs you
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** The card's Inbox threads: what waits on you in each, linked to the thread. */
+function InboxThreads({ unit, inbox }: { unit: WorkUnitDoc; inbox?: InboxAddress }) {
+  const threads = unit.inbox?.threads ?? [];
+  if (threads.length === 0) return null;
+  const closed = !!inbox?.url && !inbox.running;
+  return (
+    <div className="mt-2 space-y-1 border-t border-slate-800 pt-2 text-[11px]">
+      {threads.map((t) => {
+        const href = threadLink(inbox, t);
+        const questions = t.open - Math.min(t.actions, t.open);
+        const parts = [
+          questions > 0 && `${questions} open question${questions === 1 ? '' : 's'}`,
+          t.actions > 0 && `${t.actions} action item${t.actions === 1 ? '' : 's'}`,
+          t.picked > 0 && `${t.picked} answer${t.picked === 1 ? '' : 's'} to send`,
+          t.questions.length === 0 && t.unseen > 0 && `${t.unseen} new message${t.unseen === 1 ? '' : 's'}`,
+        ].filter(Boolean);
+        const waits = t.questions.length > 0;
+        const tip = [
+          t.subject,
+          ...t.questions.map((q) => `${q.kind === 'action' ? 'Action' : 'Q'}: ${q.prompt}`),
+          closed ? 'The Inbox is closed: run `plannotator inbox`' : null,
+        ]
+          .filter(Boolean)
+          .join('\n');
+        const body = (
+          <>
+            <span className="shrink-0">{t.stopped ? '⛔' : waits ? '✋' : '✉'}</span>
+            <span className="min-w-0">
+              {t.stopped && <span className="font-semibold text-red-300">Stopped on you · </span>}
+              <span className={waits ? 'text-slate-200' : 'text-slate-400'}>{parts.join(' · ')}</span>
+              {t.holdsUp.length > 0 && (
+                <span className="text-slate-500"> · holds up: {t.holdsUp.join('; ')}</span>
+              )}
+              {t.subject && <span className="block truncate text-slate-500">{t.subject}</span>}
+            </span>
+            {href && <span className="ml-auto shrink-0 text-slate-500">{closed ? 'Inbox (closed)' : 'Inbox ↗'}</span>}
+          </>
+        );
+        const cls = `flex items-start gap-1.5 rounded px-1.5 py-1 ${
+          t.stopped ? 'bg-red-950/60' : waits ? 'bg-orange-950/50' : 'bg-slate-800/60'
+        }`;
+        return href ? (
+          <a
+            key={t.threadId}
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            title={tip}
+            onClick={(e) => e.stopPropagation()}
+            className={`${cls} hover:brightness-125`}
+          >
+            {body}
+          </a>
+        ) : (
+          <div key={t.threadId} title={tip} className={cls}>
+            {body}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function WorkUnitCard({
   unit,
   sessions,
   reminders,
   now,
+  inbox,
   dimmed = false,
   onRemoved,
 }: {
@@ -282,6 +388,8 @@ export function WorkUnitCard({
   sessions: SessionDoc[];
   reminders: ReminderDoc[];
   now: number;
+  /** The Plannotator Inbox's address, for the thread links. */
+  inbox?: InboxAddress;
   dimmed?: boolean;
   /** After its worktree is removed: refresh the board so the card goes. */
   onRemoved?: () => void | Promise<void>;
@@ -292,6 +400,7 @@ export function WorkUnitCard({
     (s) => s.lastActivity && now - Date.parse(s.lastActivity) < ACTIVE_WINDOW_MS,
   ).length;
   const waiting = unit.waiting?.active;
+  const needsYou = !!unit.inbox?.needsYou;
 
   // Overdue: any uncleared custom reminder on this card whose due time has passed
   // → red travelling-border glow (takes precedence over the active-session glow).
@@ -326,14 +435,15 @@ export function WorkUnitCard({
 
   return (
     <div
-      className={`rounded-lg border bg-slate-900 p-3 shadow-sm transition ${
+      className={`relative rounded-lg border bg-slate-900 p-3 shadow-sm transition ${
         waiting ? 'border-amber-500 ring-2 ring-amber-500/30' : 'border-slate-800'
       } ${active > 0 ? 'session-glow' : overdue && !pauseRec ? 'overdue-glow' : ''} ${
         dimmed ? 'opacity-50' : ''
       }`}
     >
-      <StatusRibbon unit={unit} />
-      <div className="flex items-start justify-between gap-2">
+      <NeedsYouRibbon unit={unit} inbox={inbox} />
+      <StatusRibbon unit={unit} ribbonSpace={needsYou} />
+      <div className={`flex items-start justify-between gap-2 ${needsYou ? 'pr-8' : ''}`}>
         <span className="font-mono text-xs font-semibold text-slate-400">
           {unit.identifier}
         </span>
@@ -421,6 +531,8 @@ export function WorkUnitCard({
           onRemoved={onRemoved}
         />
       </div>
+
+      <InboxThreads unit={unit} inbox={inbox} />
 
       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
         <span>

@@ -61,6 +61,14 @@ import { isInProject, listWorktrees, toplevel } from './lib/worktree.js';
 import { dayStr, fileDay, pruneRotations, rotateFile } from './lib/rotate.js';
 import { scheduler, type Scheduler } from './lib/schedule.js';
 import { fetchLinearFacts, type LinearFacts } from './lib/linear-sync.js';
+import {
+  attachInbox,
+  InboxReader,
+  inboxRunning,
+  plannotatorDataDir,
+  readInboxRegistry,
+  type ThreadSummary,
+} from './lib/inbox.js';
 
 const cfg = loadConfig();
 const conf = readProjectConf();
@@ -131,6 +139,25 @@ let knownWorktrees: string[] = conf.worktreePaths ?? [];
 let liveSessions: LiveSession[] = []; // Claude processes running now (lib/claude-sessions)
 let eventsOffset = 0;
 let pbHandle: PbHandle | null = null;
+
+// ── Plannotator Inbox (lib/inbox) ─────────────────────────────────────────
+const PLANNOTATOR_DIR = plannotatorDataDir();
+// Inbox projects are keyed by the main checkout's realpath.
+const inboxReader = new InboxReader(
+  PLANNOTATOR_DIR,
+  new Set([projectPath, realpathOr(projectPath)]),
+  (msg) => log(msg),
+);
+let inboxThreads: ThreadSummary[] = []; // threads with something for the person
+let inboxUrl: string | null = null; // from inbox.json: the port changes on every restart
+let inboxIsRunning = false;
+let inboxHealthAt = 0; // ms epoch of the last health check
+let inboxHealthKey = ''; // the url + serverSession it checked
+const INBOX_HEALTH_MS = 60_000;
+const inboxAnnounced = new Set<string>(); // question ids already announced
+let inboxRead = false; // the Inbox has been read at least once
+let inboxPrimed = false; // the first read only records what was already open: no notices
+let pausedUnitIds = new Set<string>(); // cards paused on the board (reminderTick keeps it)
 
 // ── reminders ─────────────────────────────────────────────────────────────
 interface StopState {
@@ -316,6 +343,59 @@ async function readLinear(ids: string[]): Promise<void> {
   scheduleProjectRecompute();
 }
 
+/**
+ * The `inbox` job: read what the Plannotator Inbox appended since the last
+ * tick, and its address (inbox.json; the port moves on each restart) with a
+ * health check every minute. The cards are recomputed when either changed.
+ * Read-only; a failure keeps the last values and is logged by the clock.
+ */
+async function pollInbox(): Promise<void> {
+  let changed = false;
+  if (inboxReader.poll() || !inboxRead) {
+    inboxThreads = inboxReader.threads();
+    changed = true;
+  }
+  inboxRead = true;
+  const reg = readInboxRegistry(PLANNOTATOR_DIR);
+  const url = reg?.url ?? null;
+  const key = reg ? `${reg.url} ${reg.serverSession}` : '';
+  let running = inboxIsRunning;
+  if (!reg) running = false;
+  else if (key !== inboxHealthKey || Date.now() - inboxHealthAt >= INBOX_HEALTH_MS) {
+    running = await inboxRunning(reg);
+    inboxHealthAt = Date.now();
+    inboxHealthKey = key;
+  }
+  if (url !== inboxUrl || running !== inboxIsRunning) changed = true;
+  inboxUrl = url;
+  inboxIsRunning = running;
+  if (changed) scheduleProjectRecompute();
+}
+
+/**
+ * A macOS notice for each Inbox question or action item that newly waits on
+ * the person, one per card (the first read after a start only records what
+ * was already open). Silenced by the reminders switch and a paused card.
+ */
+function noticeInbox(cards: WorkUnitDoc[]): void {
+  if (!inboxRead) return; // cards recomputed before the first read know no threads yet
+  const enabled = reminderSettings().enabled;
+  for (const card of cards) {
+    const fresh = (card.inbox?.threads ?? [])
+      .flatMap((t) => t.questions)
+      .filter((q) => q.state === 'open' && !inboxAnnounced.has(q.id));
+    if (fresh.length === 0) continue;
+    for (const q of fresh) inboxAnnounced.add(q.id);
+    if (!inboxPrimed || !enabled || pausedUnitIds.has(card.unitId)) continue;
+    const first = fresh.find((q) => q.stopped) ?? fresh[0]!;
+    const what = first.kind === 'action' ? 'needs you to do something' : 'asked you';
+    const subtitle = first.stopped ? `Stopped on you — ${what} in the Inbox` : `Claude ${what} in the Inbox`;
+    const more = fresh.length > 1 ? ` (+${fresh.length - 1} more)` : '';
+    notify(`inbox-${card.unitId}`, subtitle, `${first.prompt}${more}`, card.identifier);
+  }
+  inboxPrimed = true;
+}
+
 /** The `stateYaml` job for one card: re-parse its state.yaml copies even if their
  * mtime says unchanged (a Refresh is the user saying "look again"). */
 function rescanUnitStateYaml(unitId: string): void {
@@ -395,8 +475,8 @@ async function recomputeProject(): Promise<void> {
   }
   const deduped = [...best.values()];
   const phaseModel = derivePhaseModel(deduped);
-  // join sessions onto each card
-  const joined = deduped.map((u) => joinUnit(u, sessions, liveSessions));
+  // join sessions onto each card, then their Inbox threads (by session id / worktree)
+  const joined = deduped.map((u) => attachInbox(joinUnit(u, sessions, liveSessions), inboxThreads));
   lastJoined.clear();
   for (const u of joined) lastJoined.set(u.unitId, u);
   boardTickets = joined
@@ -414,6 +494,8 @@ async function recomputeProject(): Promise<void> {
     workflowType: projectWorkflowType(joined),
     phaseModel,
     worktreePaths: knownWorktrees,
+    inboxUrl,
+    inboxRunning: inboxIsRunning,
   };
   const projectSig = JSON.stringify(projectDoc);
   if (projectSig !== lastProjectSig) {
@@ -437,6 +519,7 @@ async function recomputeProject(): Promise<void> {
     lastUnitSig.set(u.unitId, sig);
     await writer.upsertWorkUnit(projectId, { ...doc, updatedAt: nowIso() });
   }
+  noticeInbox(joined.filter((u) => isLive(u.worktreeDir)));
 }
 
 /** Re-read the running Claude processes; recompute the cards if the set changed. */
@@ -703,6 +786,10 @@ async function reminderTick(): Promise<void> {
   for (const u of units.values()) {
     if (u.sessionIds?.some((sid) => paused.has(sid))) pausedUnits.add(u.unitId);
   }
+  // The Inbox notices read the joined cards (their sessionIds are filled in).
+  pausedUnitIds = new Set(
+    [...lastJoined.values()].filter((u) => u.sessionIds.some((sid) => paused.has(sid))).map((u) => u.unitId),
+  );
 
   // Stop-nudges: a debounced first notice, then repeat every interval until
   // resume / cap / expiry. The gate is "time since last activity" (quiet
@@ -1026,6 +1113,11 @@ function startWatchers(): void {
         run: syncLinear,
         runFor: (unitId) => (/^[A-Z]+-\d+$/.test(unitId) ? readLinear([unitId]) : undefined),
       },
+
+      // Plannotator Inbox threads per card (lib/inbox): tails its project logs,
+      // re-reads inbox.json for the address. One read covers every card, so a
+      // card's Refresh runs the same read.
+      inbox: { every: TICK_MS, run: pollInbox, runFor: pollInbox },
     },
     (name, e) => log(`${name} failed`, (e as Error)?.message),
   );

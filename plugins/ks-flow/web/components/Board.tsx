@@ -123,6 +123,11 @@ export function Board({ config }: { config: BoardConfig }) {
   // Columns come from the project's phaseModel (project-defined), never a
   // hard-coded enum. Each card sits in the column matching its currentPhase.
   const columns = project?.phaseModel ?? [];
+  // The Plannotator Inbox's address, for the cards' thread links.
+  const inboxAddress = useMemo(
+    () => ({ url: project?.inboxUrl ?? null, running: project?.inboxRunning ?? false }),
+    [project?.inboxUrl, project?.inboxRunning],
+  );
 
   // Hide the stale backlog: a card shows only if its worktree is a CURRENT git
   // worktree (PocketBase keeps old records forever, so worktreeDir alone isn't
@@ -332,6 +337,7 @@ export function Board({ config }: { config: BoardConfig }) {
                       sessions={latestSessions}
                       reminders={reminders}
                       now={now}
+                      inbox={inboxAddress}
                       onRefresh={onRefresh}
                     />
                   ))}

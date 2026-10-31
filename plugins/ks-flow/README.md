@@ -47,10 +47,11 @@ Ingestion bookkeeping (byte offsets, inode) stays in a local `checkpoints.json` 
 | `backup` | 60s (4 ticks) | enabled → not tried today → no sweep running → not swept today → past the time (or > 24h) |
 | `rotateLogs` | 60s (4 ticks) | today's date differs from the open log's |
 | `linear` | 3 min (12 ticks) | the board's tickets only (live worktree, not finished); one `linear issue batch-get` call |
+| `inbox` | 15s (1 tick) | Plannotator Inbox: read only what its project logs appended; `inbox.json` each tick, a health check every minute; recompute only on a change (see **Plannotator Inbox**) |
 
 **Live Linear fields.** A card's title, status, priority, estimate and Linear URL start as the `state.yaml` snapshot taken when the ticket was started. The `linear` job reads the current values for every ticket on the board in one call (the ks plugin's `linear issue batch-get`, one GraphQL query per team) and lays them over the snapshot in the daemon's memory, so the card, its column and its Done check follow Linear without anything rewriting `state.yaml`. A failed call keeps the last values and logs one line. Once Linear says a ticket is finished (by status name, or by Linear's `completed`/`canceled` state type, so custom names like "Shipped" count), the card leaves the board and stops being polled.
 
-Each card's header is a **status ribbon** in the colour Linear uses for that state (before the first sync, Linear's default colour for the status). Its **↻ refreshes the whole card** now: the board appends a `RefreshCard` event to `events.jsonl`, and the daemon runs the per-card form (`runFor`) of every clock job that has one, in table order — `worktrees` (the one `git worktree list`), `liveSessions` (re-read the running Claude processes), `stateYaml` (re-parse this card's `state.yaml` copies, ignoring the mtime gate), `linear` (`batch-get` for this ticket alone) — then catches up the card's session transcripts and rewrites it with `cardRefreshedAt` (and `cardRefreshError` naming any step that failed). The board re-reads the backup status at the same time. `reminders`, the `backup` sweep and `rotateLogs` have no per-card form: they notify, upload or roll logs rather than read card data. The spinner stops when `cardRefreshedAt` moves; a failed step, or no answer in 60s, shows `!` with the reason in its tooltip.
+Each card's header is a **status ribbon** in the colour Linear uses for that state (before the first sync, Linear's default colour for the status). Its **↻ refreshes the whole card** now: the board appends a `RefreshCard` event to `events.jsonl`, and the daemon runs the per-card form (`runFor`) of every clock job that has one, in table order — `worktrees` (the one `git worktree list`), `liveSessions` (re-read the running Claude processes), `stateYaml` (re-parse this card's `state.yaml` copies, ignoring the mtime gate), `linear` (`batch-get` for this ticket alone), `inbox` (the same read as the tick: one read covers every card) — then catches up the card's session transcripts and rewrites it with `cardRefreshedAt` (and `cardRefreshError` naming any step that failed). The board re-reads the backup status at the same time. `reminders`, the `backup` sweep and `rotateLogs` have no per-card form: they notify, upload or roll logs rather than read card data. The spinner stops when `cardRefreshedAt` moves; a failed step, or no answer in 60s, shows `!` with the reason in its tooltip.
 
 Event-driven work stays off the clock: the chokidar watchers, the session-upsert (1s) and project-recompute (0.7s) debounces, and PocketBase's respawn. At start-up, backfill scans `state.yaml` and a reminder pass runs after the stop-nudges are re-armed; the clock's first tick follows 15s later.
 
@@ -163,7 +164,13 @@ Each card carries quick links + live state:
   `slack.pr_review_threads[]` is a read fallback). Each shown only when present.
 - **⧉ path** — copy the card's worktree directory to the clipboard.
 - **priority / estimate / waiting** badges; a `⏳ waiting` badge (amber ring) when
-  a session is blocked on you.
+  a session is blocked on you (`⏳ waiting: Inbox` when it asked in the Plannotator Inbox).
+- **NEEDS YOU** — a diagonal sash across the card's top-right corner when an Inbox
+  question, action item or unsent answer waits on you; red when the agent has
+  stopped until you answer. Clicking it opens the thread. Below the links, one row
+  per Inbox thread: `⛔ Stopped on you · 2 open questions · holds up: next commit
+  on #6848`, the thread's subject, and `Inbox ↗`. A thread with only new agent
+  messages shows a quiet `✉ 1 new message` row, without the sash. See **Plannotator Inbox**.
 - **Glowing animated border** when a session is **active** — a session counts as
   active if it wrote within the last **5 minutes** (recency, evaluated client-side
   against a shared ticking clock, so it self-expires — not the daemon's snapshot).
@@ -565,6 +572,21 @@ So the board reads top-to-bottom as a lifecycle: **active cards** (in their phas
 columns) → **Completed · not removed** (worktree still around, cleanup candidates)
 → **Completed · worktree removed** (fully wrapped up).
 
+## Plannotator Inbox
+
+Agents can ask in the [Plannotator Inbox](https://docs.plannotator.ai/open-source/inbox) instead of the terminal, so a session waiting there looks idle in its tmux pane. The daemon reads the Inbox's files and puts each card's open threads on the card (the **NEEDS YOU** sash and thread rows, under **Cards**), makes the card wait on you, and sends a notice. Read-only: the daemon never writes to the Inbox or calls it, except the health check.
+
+- **Where.** `$PLANNOTATOR_DATA_DIR`, else `~/.plannotator`, else `$XDG_DATA_HOME/plannotator` (the Inbox's own order), then `inbox/projects/<key>/`. Only the project whose `root` is this board's repository is read. `src/lib/inbox.ts` holds the reader, with tests in `src/lib/inbox.test.ts` (`npm test` in `src/`).
+- **Format.** `project.json`, `messages.jsonl` and `questions.jsonl` (questions **and** action items) are append-only logs of `{v, seq, at, kind, id, record}` lines, each a full snapshot: per `kind:id` the highest `seq` wins. The format is the Inbox's own, not a published one (plannotator 0.28.x, `packages/shared/inbox/store.ts`); it only adds fields. A line with `v` other than 1 is skipped and logged once, any line that doesn't parse is skipped, and annotations and Board cards are not read.
+- **Changes.** Each file is read from where the last read stopped. A crash's half-written line waits until the Inbox ends it. Deleting a thread rewrites the files (new inode, shorter), so that project is read again from the start; deleting a project removes its folder, and its threads leave the cards.
+- **What waits on you.** A question's state is worked out the way the Inbox does it (`inboxQuestionState`): replaced, closed by archiving (questions asked before the archive line) or Mark read, else **open** (no answer), **picked** (answered in the Inbox, not sent) or sent. An open question, an open action item, or a picked answer (it still has to be sent) waits on you. An answer whose reply line never landed counts as picked.
+- **Which card.** By Claude session id only: a question shows on the card whose `sessionIds` hold its `asked_by_agent_id`, an unseen message the card whose sessions hold its `author.session`. A thread another session replied into shows each card only its own part. A message's `base_path` (the folder it was sent from) is not used, since any session can name any folder; the Inbox project's `root` is the main checkout, so it can't place a thread either.
+- **Guard.** A `PreToolUse` hook on the Inbox tool (`scripts/inbox-guard.mjs`, matcher `mcp__.*plannotator.*`) refuses a `send_message` or `submit_guide` whose `project_path` is outside the session's own checkout: its git toplevel must be the session cwd's (a subfolder is fine, a sibling or nested worktree is not; outside git, the cwd or below). No `project_path` (the session's own folder) always passes, as do reads and `resolve_message`. It covers the mod's `plannotator_inbox` tool and the stdio server's per-action tools, and fails open on input it can't read. So one session can't file a message under a worktree another session is working in.
+- **Limits.** The guard is a guard rail against an agent filing a message in the wrong place, not a lock: it only runs in sessions that load ks-flow, and only sees calls made through the tool. The session id is what keeps a card honest, and it's reliable for messages sent through Claude Code's in-process `plannotator_inbox` tool, which stamps the real session id and takes no `agent_session` argument. The Inbox's stdio server (`plannotator inbox mcp`, which fills `agent_session` only when the caller leaves it out and trusts `PLANNOTATOR_SESSION_TAG`) and its HTTP API (with the token from `inbox.json`) accept any session id. Plannotator can't be changed, so an agent that goes around the tool can still post as another session.
+- **Waiting.** A card with something waiting gets `waiting: { tool: 'Inbox', since }` (the oldest waiting question), unless it already waits on something older.
+- **Notice.** When a question or action item newly waits, one notice per card: title the ticket, subtitle *Claude asked you in the Inbox* (*Stopped on you — …* when the agent stopped), body the question (`+N more`). What was already open when the daemon starts is not announced. Same switches as the rest: the reminders master switch and the card's Pause.
+- **Links.** `<url>#thread=<root id>&msg=<message id>` (the first waiting message), where `url` comes from `inbox.json` read every tick, since the Inbox's port changes when it restarts. The daemon reads `url`, `port` and `serverSession` only, never the token. `GET /api/inbox/health` decides `inboxRunning`; when the Inbox is closed the links say so (`plannotator inbox` starts it).
+
 ## Notifications
 
 Three hooks fire a `terminal-notifier` notification the moment a session in the tracked project blocks: the two blocking tools (`AskUserQuestion`, `ExitPlanMode`) and the two blocking hook events (`PermissionRequest`, `Elicitation`). These are daemon-independent and throttled per session.
@@ -621,6 +643,9 @@ An opt-in page for **saved notes & reminders**. **Off by default** — enable it
 ```bash
 claude plugin validate ./plugins/ks-flow
 claude --plugin-dir ./plugins/ks-flow      # load locally
+cd plugins/ks-flow/src && npm test         # daemon tests (node:test + tsx): lib/**/*.test.ts
 ```
+
+Tests are excluded from the daemon build (`tsconfig.json`).
 
 See `docs/IMPLEMENTATION_PLAN.md` for the full design.

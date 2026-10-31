@@ -34,10 +34,51 @@ export interface PrRef {
 
 export interface WaitingState {
   active: boolean;
-  /** AskUserQuestion | ExitPlanMode | PermissionRequest | Elicitation */
+  /** AskUserQuestion | ExitPlanMode | PermissionRequest | Elicitation | Inbox */
   tool: string;
   since: string;
   sessionId: string;
+}
+
+/** One Inbox question or action item still waiting on the person. */
+export interface InboxQuestionRef {
+  id: string; // `<message id>/<key>`
+  messageId: string;
+  kind: string; // single | multi | text | action
+  prompt: string; // clipped
+  stopped: string | null; // the agent can't go on until it's answered: why
+  holdsUp: string[];
+  askedAt: string;
+  /** The Claude session that asked it. */
+  askedBy: string | null;
+  /** open: unanswered; picked: answered in the Inbox but not sent yet. */
+  state: 'open' | 'picked';
+}
+
+/** A Plannotator Inbox thread with something for the person (lib/inbox). */
+export interface InboxThreadRef {
+  threadId: string; // the root message id: the Inbox links it as #thread=<id>
+  projectKey: string;
+  subject: string | null;
+  open: number;
+  picked: number;
+  actions: number; // of the open + picked, how many are action items
+  stopped: string | null;
+  holdsUp: string[];
+  unseen: number; // agent messages the person hasn't looked at
+  since: string | null; // when the oldest waiting question was asked
+  lastAt: string;
+  /** The message the link lands on (`&msg=`): the first one waiting, else the first unseen. */
+  linkMessageId: string | null;
+  questions: InboxQuestionRef[];
+}
+
+/** A card's Inbox threads. needsYou: a question, action item or unsent answer waits. */
+export interface InboxCardState {
+  needsYou: boolean;
+  stopped: boolean;
+  since: string | null;
+  threads: InboxThreadRef[];
 }
 
 /** Project-level document. phaseModel is the ORDERED COLUMN SET. */
@@ -48,6 +89,9 @@ export interface ProjectDoc {
   workflowType: 'ticket' | 'project' | 'mixed';
   phaseModel: PhaseRef[]; // ordered union of phases (the columns)
   worktreePaths: string[]; // CURRENT git worktrees — board hides cards not in this set
+  /** The Plannotator Inbox's address (its port changes on restart) and whether it answers. */
+  inboxUrl?: string | null;
+  inboxRunning?: boolean;
   updatedAt: string;
 }
 
@@ -86,6 +130,8 @@ export interface WorkUnitDoc {
   liveSessions?: LiveSession[];
   /** The newest of liveSessions: the one `ks-flow session` hands to scripts. */
   activeSession?: LiveSession | null;
+  /** The card's Plannotator Inbox threads; null when none has anything for the person. */
+  inbox?: InboxCardState | null;
   /** The entire parsed state.yaml, verbatim — so the board can surface any
    * field without new plumbing. The typed fields above are extracted from it
    * for convenient rendering. */
