@@ -1,4 +1,4 @@
-// lib/backup-runs.ts — history of backup sweeps, for the board's Backups page.
+// lib/backup-runs.ts — history of backup sweeps, for the board's Activity Log (Backup rows).
 //
 // Every real sweep (daily, a board button, a removal, by hand) is one doc in the
 // store (PocketBase `backup_runs`, or Firestore projects/{id}/backupRuns),

@@ -9,7 +9,11 @@
 //     ├─ sessions/{sessionId} ← JSONL-derived activity
 //     ├─ reminders/{uid}
 //     ├─ backupUnits/{uid}    ← what the GCS backup holds per unit
-//     └─ backupRuns/{uid}     ← one per backup sweep
+//     ├─ backupRuns/{uid}     ← one per backup sweep
+//     ├─ briefingItems/{uid}  ← what the master found in Slack for the person
+//     ├─ briefingRuns/{uid}   ← one per master pass over Slack
+//     ├─ dailyLogs/{date}     ← log-in / log-off per local day
+//     └─ masterEvents/{uid}   ← master starts/restarts and requests sent to it
 import {
   applicationDefault,
   cert,
@@ -22,6 +26,7 @@ import {
   getFirestore,
   type Firestore,
   type CollectionReference,
+  type Query,
 } from 'firebase-admin/firestore';
 import { readFileSync } from 'node:fs';
 import type { Config } from '../../config.js';
@@ -29,7 +34,13 @@ import type {
   BackupRunDoc,
   BackupStore,
   BackupUnitDoc,
+  BriefingItemDoc,
+  BriefingItemFilter,
+  BriefingRunDoc,
+  BriefingStore,
+  DailyLogDoc,
   DbProvider,
+  MasterEventDoc,
   ProjectDoc,
   ReminderDoc,
   SessionDoc,
@@ -113,6 +124,19 @@ function backupRunsCol(fs: Firestore, projectId: string): CollectionReference {
   return projectRef(fs, projectId).collection('backupRuns');
 }
 
+function briefingItemsCol(fs: Firestore, projectId: string): CollectionReference {
+  return projectRef(fs, projectId).collection('briefingItems');
+}
+function briefingRunsCol(fs: Firestore, projectId: string): CollectionReference {
+  return projectRef(fs, projectId).collection('briefingRuns');
+}
+function dailyLogsCol(fs: Firestore, projectId: string): CollectionReference {
+  return projectRef(fs, projectId).collection('dailyLogs');
+}
+function masterEventsCol(fs: Firestore, projectId: string): CollectionReference {
+  return projectRef(fs, projectId).collection('masterEvents');
+}
+
 /** Firestore refuses `undefined` fields (optional ones left out); a JSON round-trip drops them. */
 function plain<T>(doc: T): T {
   return JSON.parse(JSON.stringify(doc)) as T;
@@ -144,6 +168,71 @@ class FirestoreBackups implements BackupStore {
 
   async upsertBackupRun(projectId: string, doc: BackupRunDoc): Promise<void> {
     await backupRunsCol(this.fs, projectId).doc(doc.uid).set(plain(doc));
+  }
+}
+
+/** The briefing store. Whole-doc `set`, like backups: a doc is always written
+ * as read-modify-write of the full record. */
+class FirestoreBriefing implements BriefingStore {
+  private fs: Firestore;
+  constructor(cfg: Config) {
+    this.fs = db(cfg);
+  }
+
+  async getBriefingItems(projectId: string, filter: BriefingItemFilter = {}): Promise<BriefingItemDoc[]> {
+    let q: Query = briefingItemsCol(this.fs, projectId);
+    if (filter.status) q = q.where('status', '==', filter.status);
+    if (filter.groupKey) q = q.where('groupKey', '==', filter.groupKey);
+    const snap = await q.get();
+    return snap.docs
+      .map((d) => d.data() as BriefingItemDoc)
+      .sort((a, b) => a.dueAt.localeCompare(b.dueAt));
+  }
+
+  async getBriefingItem(projectId: string, uid: string): Promise<BriefingItemDoc | null> {
+    const snap = await briefingItemsCol(this.fs, projectId).doc(uid).get();
+    return snap.exists ? (snap.data() as BriefingItemDoc) : null;
+  }
+
+  async upsertBriefingItem(projectId: string, doc: BriefingItemDoc): Promise<void> {
+    await briefingItemsCol(this.fs, projectId).doc(doc.uid).set(plain(doc));
+  }
+
+  async getBriefingRuns(projectId: string): Promise<BriefingRunDoc[]> {
+    const snap = await briefingRunsCol(this.fs, projectId).orderBy('startedAt', 'desc').get();
+    return snap.docs.map((d) => d.data() as BriefingRunDoc);
+  }
+
+  async getBriefingRun(projectId: string, uid: string): Promise<BriefingRunDoc | null> {
+    const snap = await briefingRunsCol(this.fs, projectId).doc(uid).get();
+    return snap.exists ? (snap.data() as BriefingRunDoc) : null;
+  }
+
+  async upsertBriefingRun(projectId: string, doc: BriefingRunDoc): Promise<void> {
+    await briefingRunsCol(this.fs, projectId).doc(doc.uid).set(plain(doc));
+  }
+
+  async getDailyLog(projectId: string, date: string): Promise<DailyLogDoc | null> {
+    const snap = await dailyLogsCol(this.fs, projectId).doc(date).get();
+    return snap.exists ? (snap.data() as DailyLogDoc) : null;
+  }
+
+  async getDailyLogs(projectId: string): Promise<DailyLogDoc[]> {
+    const snap = await dailyLogsCol(this.fs, projectId).orderBy('date', 'desc').get();
+    return snap.docs.map((d) => d.data() as DailyLogDoc);
+  }
+
+  async upsertDailyLog(projectId: string, doc: DailyLogDoc): Promise<void> {
+    await dailyLogsCol(this.fs, projectId).doc(doc.uid).set(plain(doc));
+  }
+
+  async getMasterEvents(projectId: string, limit = 200): Promise<MasterEventDoc[]> {
+    const snap = await masterEventsCol(this.fs, projectId).orderBy('at', 'desc').limit(limit).get();
+    return snap.docs.map((d) => d.data() as MasterEventDoc);
+  }
+
+  async upsertMasterEvent(projectId: string, doc: MasterEventDoc): Promise<void> {
+    await masterEventsCol(this.fs, projectId).doc(doc.uid).set(plain(doc));
   }
 }
 
@@ -263,10 +352,12 @@ export function createFirestoreProvider(cfg: Config): DbProvider {
   let writer: FirestoreWriter | undefined;
   let source: FirestoreSource | undefined;
   let backups: FirestoreBackups | undefined;
+  let briefing: FirestoreBriefing | undefined;
   return {
     name: 'firestore',
     writer: () => (writer ??= new FirestoreWriter(cfg)),
     source: () => (source ??= new FirestoreSource(cfg)),
     backups: () => (backups ??= new FirestoreBackups(cfg)),
+    briefing: () => (briefing ??= new FirestoreBriefing(cfg)),
   };
 }

@@ -1,0 +1,48 @@
+#!/bin/bash
+# ks-master-view — the one terminal that shows the ks-flow master: attach to
+# the tmux session `ks-master`, and whenever that session ends (the master was
+# killed, or restarted into a new session) wait for the next one and attach
+# again. claude-ks-master opens it (Ghostty, else Terminal.app) when no viewer
+# is running; close its window to stop it, and the next master start opens a
+# new one.
+#
+#   ks-master-view <master-dir>
+#
+# <master-dir> = <ks-flow dataDir>/master. The viewer's pid goes in
+# <master-dir>/viewer.pid so only one runs: a second one exits at once.
+set -uo pipefail
+
+export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
+NAME="ks-master"
+MASTER_DIR="${1:-${KS_MASTER_DIR:-}}"
+[ -n "$MASTER_DIR" ] || { echo "usage: ks-master-view <master-dir>" >&2; exit 2; }
+PIDFILE="$MASTER_DIR/viewer.pid"
+
+# One viewer: a live pid in the file that is another ks-master-view wins.
+if [ -f "$PIDFILE" ]; then
+  OTHER="$(cat "$PIDFILE" 2>/dev/null || true)"
+  if [ -n "$OTHER" ] && [ "$OTHER" != "$$" ] && ps -p "$OTHER" -o command= 2>/dev/null | grep -q ks-master-view; then
+    echo "ks-master-view: already running (pid $OTHER)"
+    exit 0
+  fi
+fi
+mkdir -p "$MASTER_DIR"
+echo $$ >"$PIDFILE"
+trap '[ "$(cat "$PIDFILE" 2>/dev/null)" = "$$" ] && rm -f "$PIDFILE"' EXIT
+
+printf '\033]0;%s\007' "$NAME" # window title
+waiting=""
+while true; do
+  if tmux has-session -t "=$NAME" 2>/dev/null; then
+    waiting=""
+    tmux attach-session -t "=$NAME"
+    # Detached on purpose (prefix + d): stop. Session ended: wait for the next.
+    tmux has-session -t "=$NAME" 2>/dev/null && exit 0
+  elif [ -z "$waiting" ]; then
+    clear
+    echo "ks-master is not running. This window attaches as soon as it starts"
+    echo "(Start master on the ks-flow board, or the daemon's next start)."
+    waiting=1
+  fi
+  sleep 2
+done

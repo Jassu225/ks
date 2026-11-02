@@ -1,5 +1,6 @@
 'use client';
-// useBoard — the board's only data dependency. It subscribes to the project
+// useBoard — the board's store subscription (one instance, in
+// lib/boardData.tsx's provider; pages read it with useBoardData()). It subscribes to the project
 // doc, work-units, and in-project sessions in real time and keeps the board
 // components provider-agnostic: they never import a backend. Which backend it
 // talks to is decided by cfg.dbProvider (resolved identically on the daemon):
@@ -42,6 +43,8 @@ export function useBoard(cfg: BoardConfig): BoardData {
   const reloadRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
+    // No project configured yet: nothing to subscribe to (the pages say so).
+    if (!cfg.projectId) return;
     const setters = { setProject, setWorkUnits, setSessions, setReminders, setConnected };
     const register = (fn: () => Promise<void>): void => {
       reloadRef.current = fn;

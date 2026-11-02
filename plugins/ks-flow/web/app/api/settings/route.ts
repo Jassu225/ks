@@ -3,8 +3,9 @@
 // config (enable + bucket + optional object prefix; sensitive creds live in
 // $CLAUDE_PLUGIN_DATA/.env, never here).
 //
-// GET  → { removeCommand, gcsArchive: { enabled, bucket, prefix } }
-// POST { removeCommand?, gcsArchive? } → persist (merges with existing).
+// GET  → { removeCommand, gcsArchive, reminders, notes, briefing, … }
+// POST { removeCommand?, gcsArchive?, reminders?, notes?, briefing? } → persist
+// (merges with existing; blocks this route doesn't know are kept as they are).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -63,11 +64,63 @@ interface Notes {
   slack: boolean;
   linear: boolean;
 }
+// Briefing (docs/briefing.md): the master session's scheduled Slack passes.
+// Defaults and validation mirror src/lib/boardsettings.ts briefingSettings().
+interface Briefing {
+  enabled: boolean;
+  schedule: string[];
+  names: string[];
+  halfTime: string[];
+  slackUserId: string | null;
+}
 interface Settings {
   removeCommand: string;
   gcsArchive: GcsArchive;
   reminders: Reminders;
   notes: Notes;
+  briefing: Briefing;
+}
+
+const DEFAULT_BRIEFING: Briefing = {
+  enabled: false,
+  schedule: ['00:00', '06:00', '12:00', '18:00'],
+  names: ['Jaswanth'],
+  halfTime: [],
+  slackUserId: null,
+};
+const SLOT = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function strings(v: unknown, dflt: string[], ok: (x: string) => boolean = () => true): string[] {
+  return Array.isArray(v)
+    ? [...new Set(v.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(ok))]
+    : [...dflt];
+}
+
+/** A `briefing` block as briefingSettings() reads it; missing fields from `base`. */
+function parseBriefing(b: Record<string, unknown>, base: Briefing): Briefing {
+  return {
+    enabled: typeof b.enabled === 'boolean' ? b.enabled : base.enabled,
+    schedule: strings(b.schedule, base.schedule, (x) => SLOT.test(x)).sort(),
+    names: strings(b.names, base.names, (x) => x !== ''),
+    halfTime: strings(b.halfTime, base.halfTime, (x) => x !== ''),
+    slackUserId:
+      b.slackUserId === null
+        ? null
+        : typeof b.slackUserId === 'string'
+          ? b.slackUserId.trim() || null
+          : base.slackUserId,
+  };
+}
+
+/** The whole file as stored, so a save keeps blocks this route does not edit
+ * (e.g. transcriptBackup, read by the daemon's backupSettings()). */
+function readRaw(): Record<string, unknown> {
+  try {
+    const s = JSON.parse(readFileSync(settingsPath(), 'utf8'));
+    return s && typeof s === 'object' && !Array.isArray(s) ? s : {};
+  } catch {
+    return {};
+  }
 }
 
 const DEFAULT_GCS: GcsArchive = { enabled: false, bucket: '', prefix: '' };
@@ -110,6 +163,10 @@ function read(): Settings {
         slack: n.slack === true,
         linear: n.linear === true,
       },
+      briefing: parseBriefing(
+        s.briefing && typeof s.briefing === 'object' ? s.briefing : {},
+        DEFAULT_BRIEFING,
+      ),
     };
   } catch {
     return {
@@ -117,6 +174,7 @@ function read(): Settings {
       gcsArchive: { ...DEFAULT_GCS },
       reminders: { ...DEFAULT_REMINDERS },
       notes: { ...DEFAULT_NOTES },
+      briefing: { ...DEFAULT_BRIEFING },
     };
   }
 }
@@ -139,6 +197,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     gcsArchive?: Partial<GcsArchive>;
     reminders?: Partial<Reminders>;
     notes?: Partial<Notes>;
+    briefing?: Partial<Briefing>;
   };
   try {
     body = await req.json();
@@ -184,8 +243,12 @@ export async function POST(req: Request): Promise<NextResponse> {
     };
   }
 
+  if (body.briefing && typeof body.briefing === 'object') {
+    next.briefing = parseBriefing(body.briefing as Record<string, unknown>, current.briefing);
+  }
+
   const dir = dataDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(settingsPath(), JSON.stringify(next, null, 2));
+  writeFileSync(settingsPath(), JSON.stringify({ ...readRaw(), ...next }, null, 2));
   return NextResponse.json({ ok: true, ...next });
 }

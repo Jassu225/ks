@@ -1,0 +1,8 @@
+{
+  "name": "ks-master",
+  "version": "0.1.0",
+  "description": "The ks-flow master session: reads Slack into the Briefing board on a schedule, runs log-in and log-off, and wakes itself on requests from the ks-flow daemon and board",
+  "author": {
+    "name": "Jaswanth Sai Sattenapalli"
+  }
+}

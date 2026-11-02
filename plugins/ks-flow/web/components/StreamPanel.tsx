@@ -8,7 +8,7 @@
 // overwriting one shared panel.
 //
 // The provider sits in the root layout (app/providers.tsx), so streams outlive
-// a page change: start a backup on the board, open /backups, and it is still
+// a page change: start a backup on the board, open /activity, and it is still
 // streaming. A panel's ✕ only hides it; the stream stays, and <SeeLogs> next to
 // the action that started it brings it back. A stream lasts until it is
 // dismissed, the same action runs again, or the page is reloaded.

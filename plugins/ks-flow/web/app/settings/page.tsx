@@ -4,6 +4,8 @@
 // + projectId, rewrites project.conf, and restarts the daemon.
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { AppHeader } from '@/components/AppHeader';
 
 interface Conf {
   projectPath: string;
@@ -16,6 +18,15 @@ interface SetResult extends Conf {
   daemon: string;
 }
 
+/** board-settings.json `briefing` (docs/briefing.md). */
+interface BriefingSettingsForm {
+  enabled: boolean;
+  schedule: string[];
+  names: string[];
+  halfTime: string[];
+  slackUserId: string | null;
+}
+
 export default function Settings() {
   const [path, setPath] = useState('');
   const [current, setCurrent] = useState<Conf | null>(null);
@@ -23,6 +34,7 @@ export default function Settings() {
   const [picking, setPicking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SetResult | null>(null);
+  const router = useRouter();
 
   // Worktree-removal command (run by a card's Remove).
   const [removeCommand, setRemoveCommand] = useState('');
@@ -58,6 +70,65 @@ export default function Settings() {
   const [linearKeyPresent, setLinearKeyPresent] = useState(false);
   const [notesSaving, setNotesSaving] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
+
+  // Briefing (the master session's scheduled Slack passes). Defaults mirror
+  // src/lib/boardsettings.ts briefingSettings().
+  const [brEnabled, setBrEnabled] = useState(false);
+  const [brSchedule, setBrSchedule] = useState<string[]>(['00:00', '06:00', '12:00', '18:00']);
+  const [brSlot, setBrSlot] = useState('09:00');
+  const [brNames, setBrNames] = useState('Jaswanth');
+  const [brHalfTime, setBrHalfTime] = useState('');
+  const [brSlackUserId, setBrSlackUserId] = useState('');
+  const [brSaving, setBrSaving] = useState(false);
+  const [brSaved, setBrSaved] = useState(false);
+  const [brError, setBrError] = useState<string | null>(null);
+
+  const splitList = (s: string): string[] =>
+    [...new Set(s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean))];
+
+  const addSlot = (): void => {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(brSlot)) return;
+    setBrSchedule((s) => [...new Set([...s, brSlot])].sort());
+    setBrSaved(false);
+  };
+
+  const saveBriefing = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    setBrSaving(true);
+    setBrSaved(false);
+    setBrError(null);
+    try {
+      const r = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          briefing: {
+            enabled: brEnabled,
+            schedule: brSchedule,
+            names: splitList(brNames),
+            halfTime: splitList(brHalfTime),
+            slackUserId: brSlackUserId.trim() || null,
+          },
+        }),
+      });
+      if (!r.ok) throw new Error();
+      const d: { briefing?: BriefingSettingsForm } = await r.json();
+      if (d.briefing) applyBriefing(d.briefing);
+      setBrSaved(true);
+      setTimeout(() => setBrSaved(false), 2000);
+    } catch {
+      setBrError('Save failed — is the board server still running?');
+    }
+    setBrSaving(false);
+  };
+
+  const applyBriefing = (b: Partial<BriefingSettingsForm>): void => {
+    setBrEnabled(b.enabled === true);
+    if (Array.isArray(b.schedule)) setBrSchedule(b.schedule);
+    if (Array.isArray(b.names)) setBrNames(b.names.join(', '));
+    if (Array.isArray(b.halfTime)) setBrHalfTime(b.halfTime.join(', '));
+    setBrSlackUserId(b.slackUserId ?? '');
+  };
 
   const checkReminderPreflight = async (): Promise<void> => {
     try {
@@ -129,6 +200,7 @@ export default function Settings() {
             debounceSec?: number;
           };
           notes?: { enabled?: boolean; slack?: boolean; linear?: boolean };
+          briefing?: Partial<BriefingSettingsForm>;
           slackTokenPresent?: boolean;
           linearKeyPresent?: boolean;
         }) => {
@@ -149,6 +221,7 @@ export default function Settings() {
           setNotesLinear(s.notes?.linear === true);
           setSlackTokenPresent(s.slackTokenPresent === true);
           setLinearKeyPresent(s.linearKeyPresent === true);
+          if (s.briefing) applyBriefing(s.briefing);
         },
       )
       .catch(() => {});
@@ -270,6 +343,9 @@ export default function Settings() {
       if (!res.ok) setError(data.error ?? 'Failed to set project.');
       else {
         setResult(data);
+        // The layout read the old project.conf; re-render it so every page's
+        // shared subscription follows the new project.
+        router.refresh();
         setCurrent({ projectPath: data.projectPath, commonDir: data.commonDir, projectId: data.projectId });
       }
     } catch {
@@ -280,22 +356,22 @@ export default function Settings() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-800 bg-slate-950 px-5 py-3">
-        <h1 className="text-lg font-bold">ks-flow · settings</h1>
-        <div className="flex items-center gap-3 text-xs">
-          <button
-            type="button"
-            onClick={() => void editEnv()}
-            title="Open $CLAUDE_PLUGIN_DATA/.env in your default text editor (not read or sent over the network)"
-            className="rounded bg-slate-800 px-2 py-1 font-medium text-slate-200 hover:bg-slate-700"
-          >
-            Edit .env
-          </button>
-          <Link href="/" className="text-indigo-400 hover:text-indigo-300">
-            ← back to board
-          </Link>
-        </div>
-      </header>
+      <AppHeader
+        toolbar={
+          <>
+            <h1 className="text-sm font-semibold text-slate-200">Settings</h1>
+            <div className="grow" />
+            <button
+              type="button"
+              onClick={() => void editEnv()}
+              title="Open $CLAUDE_PLUGIN_DATA/.env in your default text editor (not read or sent over the network)"
+              className="rounded bg-slate-800 px-2 py-1 font-medium text-slate-200 hover:bg-slate-700"
+            >
+              Edit .env
+            </button>
+          </>
+        }
+      />
 
       <main className="mx-auto max-w-2xl px-5 py-8">
         <section className="rounded-lg border border-slate-800 bg-slate-900 p-5">
@@ -660,6 +736,168 @@ export default function Settings() {
               className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
             >
               {notesSaving ? 'Saving…' : notesSaved ? 'Saved ✓' : 'Save notes settings'}
+            </button>
+          </form>
+        </section>
+
+        <section className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5" aria-labelledby="briefing-settings">
+          <h2 id="briefing-settings" className="text-sm font-semibold text-slate-200">
+            Briefing
+          </h2>
+          <p className="mt-1 text-xs text-slate-400">
+            A long-running master Claude session reads Slack (DMs, @mentions, your name, your own
+            promises) and puts what needs you on the{' '}
+            <Link href="/briefing" className="text-indigo-400 hover:text-indigo-300">
+              Briefing
+            </Link>{' '}
+            page with a due time. Only you archive items there.
+          </p>
+
+          <form onSubmit={saveBriefing} className="mt-4 space-y-4">
+            <div>
+              <label className="flex items-center gap-2 text-sm text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={brEnabled}
+                  onChange={(e) => {
+                    setBrEnabled(e.target.checked);
+                    setBrSaved(false);
+                  }}
+                  className="h-4 w-4 rounded border-slate-600 bg-slate-800"
+                />
+                Enable scheduled briefings
+              </label>
+              <p className="mt-1 pl-6 text-[11px] text-slate-500">
+                When on, the daemon asks the master for a Slack pass at each time below, and starts
+                the master (or restarts it) when it is down. Off: nothing is scheduled; “Brief me
+                now” on the Briefing page still works while a master runs.
+              </p>
+            </div>
+
+            <fieldset className="border-t border-slate-800 pt-3">
+              <legend className="text-xs text-slate-400">Schedule (local time)</legend>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {brSchedule.length === 0 && (
+                  <span className="text-[11px] text-amber-400">No times: nothing will be scheduled.</span>
+                )}
+                {brSchedule.map((slot) => (
+                  <span
+                    key={slot}
+                    className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800 py-0.5 pl-2.5 pr-1 font-mono text-xs text-slate-200"
+                  >
+                    {slot}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${slot}`}
+                      onClick={() => {
+                        setBrSchedule((s) => s.filter((x) => x !== slot));
+                        setBrSaved(false);
+                      }}
+                      className="rounded-full px-1.5 text-slate-400 hover:bg-slate-700 hover:text-slate-100"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <label htmlFor="br-slot" className="sr-only">
+                  Add a time
+                </label>
+                <input
+                  id="br-slot"
+                  type="time"
+                  value={brSlot}
+                  onChange={(e) => setBrSlot(e.target.value)}
+                  className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 font-mono text-sm text-slate-100 focus:border-indigo-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={addSlot}
+                  disabled={brSchedule.includes(brSlot)}
+                  className="rounded bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                >
+                  Add time
+                </button>
+              </div>
+            </fieldset>
+
+            <div className="border-t border-slate-800 pt-3">
+              <label htmlFor="br-names" className="block text-xs text-slate-400">
+                Your names
+              </label>
+              <input
+                id="br-names"
+                type="text"
+                value={brNames}
+                onChange={(e) => {
+                  setBrNames(e.target.value);
+                  setBrSaved(false);
+                }}
+                placeholder="Jaswanth"
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">
+                Comma-separated. A message that writes one of these anywhere counts as written to you.
+              </p>
+            </div>
+
+            <div>
+              <label htmlFor="br-halftime" className="block text-xs text-slate-400">
+                Half-time senders (Slack user ids)
+              </label>
+              <input
+                id="br-halftime"
+                type="text"
+                value={brHalfTime}
+                onChange={(e) => {
+                  setBrHalfTime(e.target.value);
+                  setBrSaved(false);
+                }}
+                placeholder="U012ABCDEF, U034GHIJKL"
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 font-mono text-sm text-slate-100 focus:border-indigo-500 focus:outline-none"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">
+                Asks from these people get half the usual window (a DM is due in 2h, not 4h). Empty by default.
+              </p>
+              {splitList(brHalfTime).some((id) => !/^[UW][A-Z0-9]+$/.test(id)) && (
+                <p className="mt-1 text-[11px] text-amber-400">
+                  Slack user ids look like U012ABCDEF (not names).
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label htmlFor="br-userid" className="block text-xs text-slate-400">
+                Your Slack user id
+              </label>
+              <input
+                id="br-userid"
+                type="text"
+                value={brSlackUserId}
+                onChange={(e) => {
+                  setBrSlackUserId(e.target.value);
+                  setBrSaved(false);
+                }}
+                placeholder="U0…"
+                className="mt-1 w-56 rounded border border-slate-700 bg-slate-800 px-3 py-2 font-mono text-sm text-slate-100 focus:border-indigo-500 focus:outline-none"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">
+                Finds your @mentions and your own messages (promises). Optional; empty until set.
+              </p>
+            </div>
+
+            {brError && (
+              <p role="alert" className="text-xs text-red-400">
+                {brError}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={brSaving}
+              className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {brSaving ? 'Saving…' : brSaved ? 'Saved ✓' : 'Save briefing settings'}
             </button>
           </form>
         </section>

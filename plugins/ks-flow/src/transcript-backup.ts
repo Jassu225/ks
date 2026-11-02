@@ -29,7 +29,7 @@
 //                           daemon passes it), manual, unit, removal, completed.
 //                           Left out, it follows the target flags.
 //     --runs                upload nothing; print the run history as JSON (what
-//                           the board's Backups page reads)
+//                           the board's Activity Log reads for its Backup rows)
 //
 // Every real sweep is recorded in the store (PocketBase backup_runs; see
 // lib/backup-runs.ts): when it started, what started it, and what it uploaded.

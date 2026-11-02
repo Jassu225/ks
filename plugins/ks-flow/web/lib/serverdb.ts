@@ -1,4 +1,5 @@
-// lib/serverdb.ts — SERVER-side reminder writes (Next.js API routes only).
+// lib/serverdb.ts — SERVER-side store writes (Next.js API routes only):
+// reminders, briefing items, master events, the Slack names cache.
 //
 // The board's server is the writer for the `reminders` collection (the daemon
 // reads + writes back). Provider is resolved the same way as app/page.tsx /
@@ -9,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import PocketBase from 'pocketbase';
-import type { ReminderDoc } from './types';
+import type { BriefingItemDoc, MasterEventDoc, ReminderDoc } from './types';
 
 const REMINDERS = 'reminders';
 const SLACK_NAMES = 'slack_names';
@@ -129,6 +130,11 @@ async function pbDelete(cfg: ServerConfig, uid: string): Promise<void> {
 
 // ── Firestore (firebase-admin) ──────────────────────────────────────────────
 async function fsCol(cfg: ServerConfig) {
+  return fsProjectCol(cfg, REMINDERS);
+}
+
+/** `projects/<projectId>/<name>` through the board's firebase-admin app. */
+async function fsProjectCol(cfg: ServerConfig, name: string) {
   const { getApps, initializeApp, cert, applicationDefault } = await import('firebase-admin/app');
   const { getFirestore } = await import('firebase-admin/firestore');
   const APP = 'ks-flow-board';
@@ -151,7 +157,84 @@ async function fsCol(cfg: ServerConfig) {
       app = initializeApp({ credential, projectId: cfg.gcpProjectId }, APP);
     }
   }
-  return getFirestore(app).collection('projects').doc(cfg.projectId).collection(REMINDERS);
+  return getFirestore(app).collection('projects').doc(cfg.projectId).collection(name);
+}
+
+// ── briefing_items (docs/briefing.md): the board's due changes and archives ──
+// PocketBase rows mirror key/groupKey/status/dueAt/archivedAt out of `data`
+// (as src/lib/db/providers/pocketbase.ts); Firestore stores the doc itself
+// under projects/<id>/briefingItems/<uid>.
+const BRIEFING_ITEMS = 'briefing_items';
+const FS_BRIEFING_ITEMS = 'briefingItems';
+/** uids per PocketBase OR filter, so the request URL stays short. */
+const PB_UID_CHUNK = 50;
+
+/** The current project's briefing items with these uids (missing ones are
+ * left out). One read per 50 uids (PocketBase), one batched read (Firestore). */
+export async function getBriefingItems(uids: string[]): Promise<BriefingItemDoc[]> {
+  const cfg = serverConfig();
+  const unique = [...new Set(uids)];
+  if (unique.length === 0) return [];
+  if (cfg.dbProvider === 'pocketbase') {
+    const pb = pbClient(cfg);
+    const out: BriefingItemDoc[] = [];
+    for (let i = 0; i < unique.length; i += PB_UID_CHUNK) {
+      const chunk = unique.slice(i, i + PB_UID_CHUNK);
+      const params: Record<string, string> = { k: cfg.projectId };
+      chunk.forEach((u, j) => (params[`u${j}`] = u));
+      const any = chunk.map((_, j) => `uid={:u${j}}`).join(' || ');
+      const recs = await pb
+        .collection(BRIEFING_ITEMS)
+        .getFullList({ filter: pb.filter(`projectKey={:k} && (${any})`, params) });
+      for (const r of recs) if (r.data) out.push(r.data as BriefingItemDoc);
+    }
+    return out;
+  }
+  const col = await fsProjectCol(cfg, FS_BRIEFING_ITEMS);
+  const snaps = await col.firestore.getAll(...unique.map((u) => col.doc(u)));
+  return snaps.filter((s) => s.exists).map((s) => s.data() as BriefingItemDoc);
+}
+
+/** Write one briefing item back (it must exist: the board never creates items). */
+export async function putBriefingItem(doc: BriefingItemDoc): Promise<void> {
+  const cfg = serverConfig();
+  if (cfg.dbProvider === 'pocketbase') {
+    const pb = pbClient(cfg);
+    const rec = await pb
+      .collection(BRIEFING_ITEMS)
+      .getFirstListItem(pb.filter('projectKey={:k} && uid={:u}', { k: cfg.projectId, u: doc.uid }));
+    await pb.collection(BRIEFING_ITEMS).update(rec.id, {
+      uid: doc.uid,
+      projectKey: cfg.projectId,
+      key: doc.key,
+      groupKey: doc.groupKey,
+      status: doc.status,
+      dueAt: doc.dueAt,
+      archivedAt: doc.archivedAt ?? '',
+      data: doc,
+    });
+    return;
+  }
+  await (await fsProjectCol(cfg, FS_BRIEFING_ITEMS)).doc(doc.uid).set(doc);
+}
+
+// ── master_events: the board's own requests to the master (Activity Log) ────
+// Same record shape as src/lib/db/providers/pocketbase.ts (uid, projectKey,
+// mirrored `at`, data) / Firestore projects/<id>/masterEvents/<uid>.
+const MASTER_EVENTS = 'master_events';
+const FS_MASTER_EVENTS = 'masterEvents';
+
+/** Record one master event. Firestore refuses undefined fields, so unset optional ones are dropped. */
+export async function addMasterEvent(doc: MasterEventDoc): Promise<void> {
+  const cfg = serverConfig();
+  const plain = JSON.parse(JSON.stringify(doc)) as MasterEventDoc;
+  if (cfg.dbProvider === 'pocketbase') {
+    await pbClient(cfg)
+      .collection(MASTER_EVENTS)
+      .create({ uid: plain.uid, projectKey: cfg.projectId, at: plain.at, data: plain });
+    return;
+  }
+  await (await fsProjectCol(cfg, FS_MASTER_EVENTS)).doc(plain.uid).set(plain);
 }
 
 // ── public API ────────────────────────────────────────────────────────────────

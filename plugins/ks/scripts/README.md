@@ -279,6 +279,22 @@ Remote Control can be switched on only at launch (`claude --remote-control`) or 
 
 Both scripts run `tmux`, `ps` and `kill`, which the Bash sandbox blocks. For an agent to use them, list them in the sandbox's `excludedCommands` (`"claude-ks-rc *"`, `"claude-ks-rc-restart *"`) and call them as the first word of the command.
 
+### ks-flow master (`claude-ks-master`, `claude-ks-rc-restart --master`)
+
+The master is the long-lived session behind ks-flow's Briefing (`plugins/ks-master`, contract `plugins/ks-flow/docs/briefing.md`).
+
+- **`claude-ks-master [--detached] [--pane <tmux-pane>] [--dry-run]`** starts it: `claude-ks --local-plugin ks-master --name ks-master --session-id <new uuid> --remote-control ks-master "/ks-master:start"` in the karmasuite main checkout (`KS_PROJECT_ROOT_PATH` from `../.config`).
+  - Before Claude starts it writes `<ks-flow data dir>/master/session.json` (`{ v, sessionId, pid: null, tmuxPane, cwd, startedAt, handoff }`). The data dir comes from `plugins/ks-flow/src/lib/datadir.mjs`; `handoff` carries over from the previous file. The plugin's mod fills in `pid`.
+  - It exports `KS_MASTER_DIR` (that `master/` folder) and `KS_MASTER_HANDOFFS` (`<project>/workflow/<user>/ks-master/handoffs`; `<user>` = `KS_MASTER_USER`, else the only folder under `workflow/`, else `id -un`).
+  - With no flag it runs in this terminal. `--detached` always uses the tmux session `ks-master`: a new window there when the session exists, else a new detached session `ks-master`; it doesn't attach. Instead it makes sure the **viewer** is open: `ks-master-view <master-dir>`, a loop on `tmux attach -t ks-master` that reattaches whenever the session is replaced (a killed master, a restart into a new session), opened in Ghostty, else Terminal.app, only when `<dataDir>/master/viewer.pid` names no live viewer. So one window always shows the master; close it to stop it, and the next start reopens it. `--no-viewer` (or `KS_MASTER_NO_VIEWER=1`) skips it. `--pane` runs in that pane (`respawn-pane -k`), or detached when the pane is gone.
+  - It refuses when a master is running or starting: `session.json`'s pid is a running Claude process; or, with no pid yet, its session id is a live interactive session in `~/.claude/sessions/*.json`; or `session.json` is under 3 minutes old (still starting). Replace a live master with the restart below.
+- **`claude-ks-rc-restart --master [--handoff <file>] [--force] [--dry-run]`** replaces the master. It reads the pid and pane from `session.json` instead of asking ks-flow about a ticket; with no pid recorded yet it finds the process by session id, as above. With none found and `session.json` under 3 minutes old it exits 1 ("master is still starting"), `--force` included, rather than start a second master.
+  - Graceful (the default) needs a handoff written since the master started. `--handoff <file>` records it in `session.json.handoff`; otherwise the one already recorded must be that recent. `--force` skips the check: the daemon's hard restart of a stuck master.
+  - Like the ticket restart, the kill and relaunch run in the tmux server (`--apply-master`): SIGTERM after 2 s (SIGKILL after 10 s), then `claude-ks-master --pane <pane>`. A master whose process is already gone is started straight away.
+  - Log: `~/Library/Logs/claude-ks-rc.log`.
+
+The ticket form (`claude-ks-rc-restart [<ticket>] [--dry-run]`) is unchanged. `claude-ks-master` needs the same sandbox exclusion as the others (`"claude-ks-master *"`); the ks-flow daemon runs it unsandboxed.
+
 ### Machine helpers (`quit-chrome`, `mem-info`)
 
 Small macOS scripts for things the Bash sandbox blocks (`osascript`, the process list, `sysctl`). An agent can run them only when they're in the sandbox's `excludedCommands` (`"quit-chrome"`, `"quit-chrome *"`, `"mem-info"`, `"mem-info *"`) and called as the first word of the command.

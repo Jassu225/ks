@@ -62,6 +62,64 @@ export function reminderSettings(): ReminderSettings {
   return cached;
 }
 
+// ── briefing (the master session's Slack passes) ─────────────────────────────
+export interface BriefingSettings {
+  /** Master switch: the daemon writes scheduled requests only when on. */
+  enabled: boolean;
+  /** Local times of day ('HH:MM') for a scheduled pass. */
+  schedule: string[];
+  /** Names that count as the person being written to ("Jaswanth" anywhere). */
+  names: string[];
+  /** Slack user ids whose asks get half the usual window. */
+  halfTime: string[];
+  /** The person's own Slack user id, once known. */
+  slackUserId: string | null;
+}
+
+const BRIEFING_DEFAULTS: BriefingSettings = {
+  enabled: false,
+  schedule: ['00:00', '06:00', '12:00', '18:00'],
+  names: ['Jaswanth'],
+  halfTime: [],
+  slackUserId: null,
+};
+
+let cachedBriefing: BriefingSettings = BRIEFING_DEFAULTS;
+let cachedBriefingMtime = -1;
+
+/** Read the `briefing` block out of board-settings.json. Off until the person
+ * turns it on: on, the daemon schedules passes of a long-running master session. */
+export function briefingSettings(): BriefingSettings {
+  const path = join(dataDir(), 'board-settings.json');
+  let mtime: number;
+  try {
+    mtime = statSync(path).mtimeMs;
+  } catch {
+    cachedBriefing = BRIEFING_DEFAULTS;
+    cachedBriefingMtime = -1;
+    return cachedBriefing;
+  }
+  if (mtime === cachedBriefingMtime) return cachedBriefing;
+  cachedBriefingMtime = mtime;
+  try {
+    const s = JSON.parse(readFileSync(path, 'utf8'));
+    const b = (s.briefing ?? {}) as Partial<Record<keyof BriefingSettings, unknown>>;
+    const strings = (v: unknown, dflt: string[], ok: (x: string) => boolean = () => true): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && ok(x)) : dflt;
+    const slot = (x: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(x);
+    cachedBriefing = {
+      enabled: b.enabled === true,
+      schedule: [...new Set(strings(b.schedule, BRIEFING_DEFAULTS.schedule, slot))].sort(),
+      names: strings(b.names, BRIEFING_DEFAULTS.names, (x) => x.trim() !== ''),
+      halfTime: strings(b.halfTime, BRIEFING_DEFAULTS.halfTime),
+      slackUserId: typeof b.slackUserId === 'string' && b.slackUserId ? b.slackUserId : null,
+    };
+  } catch {
+    cachedBriefing = BRIEFING_DEFAULTS;
+  }
+  return cachedBriefing;
+}
+
 // ── transcript backup (end-of-day sweep) ─────────────────────────────────────
 export interface BackupSettings {
   /** Master switch for the daily sweep. Still requires gcsArchive.enabled. */

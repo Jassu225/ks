@@ -39,6 +39,17 @@
       },
       "repository": "https://github.com/karmasuite/ks",
       "keywords": ["claude-code", "agents", "concurrency", "limit"]
+    },
+    {
+      "name": "ks-master",
+      "source": "./plugins/ks-master",
+      "description": "The ks-flow master session: reads Slack into the Briefing board on a schedule, runs log-in and log-off, and wakes itself on requests from the ks-flow daemon and board",
+      "version": "0.1.0",
+      "author": {
+        "name": "Jaswanth Sai Sattenapalli"
+      },
+      "repository": "https://github.com/karmasuite/ks",
+      "keywords": ["claude-code", "slack", "briefing", "ks-flow"]
     }
   ]
 }

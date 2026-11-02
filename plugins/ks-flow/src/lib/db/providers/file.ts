@@ -5,6 +5,7 @@
 //            project, debounced like the Firestore writer).
 //   source = fs.watch via a tiny local read endpoint owned by this provider
 //            (the browser can't read local disk directly), polled by the board.
+//   backups/briefing = one JSON file per collection, the same way.
 //
 // Not implemented in v1. createProvider() throws for db_provider="file".
 export {};

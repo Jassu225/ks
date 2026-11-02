@@ -1,36 +1,20 @@
 'use client';
-import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { BackupStatusProvider, useBackupStatus } from '@/lib/backupStatus';
 import { SeeLogs, useStreams } from '@/components/StreamPanel';
 import { BACKUP_ALL, backupRunAliases } from '@/lib/backupStreams';
-import { useBoard } from '@/lib/useBoard';
-import { useNow } from '@/lib/useNow';
+import { useShared } from '@/lib/boardData';
+import { isDone } from '@/lib/units';
 import type { BoardConfig, SessionDoc, WorkUnitDoc } from '@/lib/types';
+import { AppHeader } from './AppHeader';
 import { Column } from './Column';
+import { CloudIcon, PowerIcon, RefreshIcon } from './icons';
 
 // Ticket workflow runs only a subset of phases (init + context/research +
 // plan/implement), so the ticket lane shows just these columns. Mirrors
 // TICKET_TEMPLATE in src/lib/phasemodel.ts.
 const TICKET_PHASES = new Set([0, 1, 2, 9, 10]);
 
-// Linear statuses treated as "done" → the Done column, whatever phase the unit
-// reached.
-const DONE_STATUSES = new Set([
-  'done',
-  'completed',
-  'complete',
-  'canceled',
-  'cancelled',
-  'merged',
-  'closed',
-  'archived',
-]);
-/** Finished: a done status name, or Linear's completed/canceled state type once synced. */
-const isDone = (u: WorkUnitDoc): boolean =>
-  (!!u.linearStatus && DONE_STATUSES.has(u.linearStatus.trim().toLowerCase())) ||
-  u.linearStatusType === 'completed' ||
-  u.linearStatusType === 'canceled';
 
 
 /**
@@ -66,7 +50,7 @@ function BackupNowButton() {
       }
       className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-slate-400 hover:text-slate-200 disabled:opacity-50"
     >
-      <span className={busy ? 'animate-pulse' : ''}>☁</span>
+      <CloudIcon size={14} className={busy ? 'animate-pulse' : ''} />
       <span>{busy ? 'backing up…' : 'backup'}</span>
     </button>
     <SeeLogs streamKey={BACKUP_ALL} />
@@ -75,20 +59,13 @@ function BackupNowButton() {
 }
 
 export function Board({ config }: { config: BoardConfig }) {
-  const { project, workUnits, sessions, reminders, connected, refresh } = useBoard(config);
+  // The one live subscription and shared clock, from the layout's provider
+  // (lib/boardData.tsx) — the header and the other pages read the same.
+  const { board, now } = useShared();
+  const { project, workUnits, sessions, reminders, connected, refresh } = board;
   const [swimlanes, setSwimlanes] = useState(true);
   const [showRemoved, setShowRemoved] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const now = useNow(30_000); // one shared clock → recency-based glow self-expires
-
-  // Notes page is opt-in (Settings → Notes). Only surface the header link when on.
-  const [notesEnabled, setNotesEnabled] = useState(false);
-  useEffect(() => {
-    fetch('/api/notes/config')
-      .then((r) => r.json())
-      .then((c: { enabled?: boolean }) => setNotesEnabled(!!c?.enabled))
-      .catch(() => {});
-  }, []);
 
   const onRefresh = async (): Promise<void> => {
     setRefreshing(true);
@@ -190,12 +167,13 @@ export function Board({ config }: { config: BoardConfig }) {
     // above every page, in app/providers.tsx.)
     <BackupStatusProvider>
     <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
-      <header className="flex items-center justify-between border-b border-slate-800 bg-slate-900 px-5 py-3">
-        <div>
-          <h1 className="text-lg font-bold text-slate-100">ks-flow</h1>
-          <p className="text-xs text-slate-500">{project?.projectPath ?? config.projectPath}</p>
-        </div>
-        <div className="flex items-center gap-3 text-xs">
+      <AppHeader
+        toolbar={
+        <>
+          <span className="truncate font-mono text-[11px] text-slate-500" title="Tracked project">
+            {project?.projectPath ?? config.projectPath}
+          </span>
+          <div className="grow" />
           <span
             className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-400"
             title="Active backing store (set by the daemon's db_provider)"
@@ -240,43 +218,19 @@ export function Board({ config }: { config: BoardConfig }) {
             onClick={onRefresh}
             disabled={refreshing}
             title="Refresh the board from the store"
-            className="rounded px-2 py-0.5 text-slate-400 hover:text-slate-200 disabled:opacity-50"
+            aria-label="Refresh the board"
+            className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-slate-400 hover:text-slate-200 disabled:opacity-50"
           >
-            <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`}>↻</span>
+            <RefreshIcon size={14} className={refreshing ? 'animate-spin' : ''} />
+            refresh
           </button>
           <BackupNowButton />
-          {notesEnabled && (
-            <Link
-              href="/notes"
-              className="text-slate-400 hover:text-slate-200"
-              title="Notes & reminders"
-            >
-              📝
-            </Link>
-          )}
-          <Link
-            href="/backups"
-            className="text-slate-400 hover:text-slate-200"
-            title="Backup runs"
-          >
-            ☁
-          </Link>
-          <Link
-            href="/processes"
-            className="text-slate-400 hover:text-slate-200"
-            title="Running processes"
-          >
-            ▤
-          </Link>
-          <Link href="/settings" className="text-slate-400 hover:text-slate-200" title="Settings">
-            ⚙
-          </Link>
           <button
             type="button"
             onClick={onKill}
             disabled={killState === 'killing' || killState === 'killed'}
             title="Stop the daemon + PocketBase. They restart and re-backfill on the next Claude session."
-            className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+            className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
               killState === 'armed'
                 ? 'bg-red-600 text-white'
                 : killState === 'killed'
@@ -284,13 +238,15 @@ export function Board({ config }: { config: BoardConfig }) {
                   : 'bg-red-950/50 text-red-400 hover:bg-red-900/60'
             }`}
           >
+            <PowerIcon size={12} />
             {killState === 'idle' && 'kill'}
             {killState === 'armed' && 'confirm?'}
             {killState === 'killing' && 'killing…'}
             {killState === 'killed' && 'stopped'}
           </button>
-        </div>
-      </header>
+        </>
+        }
+      />
 
       <main className="flex-1 overflow-y-auto overflow-x-hidden p-4">
         {columns.length === 0 ? (

@@ -9,6 +9,7 @@
 //     a day until cleared, and the card glows red.
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppHeader } from '@/components/AppHeader';
 import type { ReactNode } from 'react';
 import { useNow } from '@/lib/useNow';
 import type { ReminderDoc } from '@/lib/types';
@@ -729,9 +730,11 @@ export default function Notes(): JSX.Element {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-800 bg-slate-950 px-5 py-3">
-        <h1 className="text-lg font-bold">ks-flow · notes</h1>
-        <div className="flex items-center gap-3 text-xs">
+      <AppHeader
+        toolbar={
+        <>
+          <h1 className="text-sm font-semibold text-slate-200">Notes</h1>
+          <div className="grow" />
           {config?.enabled && (
             <div className="relative">
               <button
@@ -797,11 +800,9 @@ export default function Notes(): JSX.Element {
               🗑{trashed.length ? ` ${trashed.length}` : ''}
             </button>
           )}
-          <Link href="/" className="text-indigo-400 hover:text-indigo-300">
-            ← back to board
-          </Link>
-        </div>
-      </header>
+        </>
+        }
+      />
 
       <main className="mx-auto max-w-5xl px-5 py-8">
         {loading && <p className="text-sm text-slate-500">Loading…</p>}

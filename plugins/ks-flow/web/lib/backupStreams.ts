@@ -14,7 +14,7 @@ export function restoreKey(unitId: string): string {
   return `restore:${unitId}`;
 }
 
-/** The key a backup stream also answers to once its run is recorded: a /backups row's. */
+/** The key a backup stream also answers to once its run is recorded: an Activity Log (/activity) backup row's. */
 export function backupRunKey(runUid: string): string {
   return `backup-run:${runUid}`;
 }

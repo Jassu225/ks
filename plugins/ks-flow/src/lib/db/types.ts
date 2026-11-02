@@ -314,6 +314,157 @@ export interface BackupStore {
   upsertBackupRun(projectId: string, doc: BackupRunDoc): Promise<void>;
 }
 
+// ── briefing ────────────────────────────────────────────────────────────────
+// What the master session found in Slack for the person (docs/briefing.md).
+// The master writes items and runs only through `ks-flow briefing` (the CLI);
+// the board archives and moves due times; the daemon records the notices it
+// sent. Nothing archives an item but the person. Ids are `uid`, like reminders.
+// master_events (MasterEventDoc) is the daemon's and the board's log of what
+// they did to the master.
+// The kind/stage/rule unions match lib/briefing/escalation.ts, which can't
+// import them (the board keeps a verbatim copy of it).
+
+export type BriefingKind = 'ask' | 'promise' | 'fyi';
+export type BriefingStage = 'calm' | 'warm' | 'hot' | 'overdue';
+export type DueRule = 'message' | 'promise' | 'dm' | 'mention' | 'fyi' | 'manual';
+export type Resolution = 'done' | 'not-mine' | 'wont-do';
+
+/** Where the item came from in Slack. Both links are always stored so items
+ * can be grouped and found by either. */
+export interface SlackRef {
+  channel: string; // C…/D…/G… id
+  channelName: string | null; // "#ai", "DM", "group DM"
+  ts: string; // this message's ts
+  threadTs: string | null; // the thread root's ts when this message is a reply; null for a root message
+  messageUrl: string; // permalink to THIS exact message
+  threadUrl: string | null; // permalink to the thread's ROOT message; null when this message is the root
+  from: { id: string; name: string };
+  text: string; // the exact message text
+  sentAt: string; // ISO
+}
+
+export interface DueChange {
+  at: string; // ISO, when the change was made
+  from: string | null; // previous dueAt (null on first set)
+  to: string;
+  by: 'master' | 'you';
+  reason?: string;
+}
+
+export interface BriefingItemDoc {
+  uid: string; // itemUid(key) — doc id
+  key: string; // `slack:<channel>:<ts>` — one item per Slack message
+  groupKey: string; // `slack:<channel>:<threadTs ?? ts>` — one card per thread
+  kind: BriefingKind;
+  title: string; // one line, what is asked or promised
+  why: string; // one line: why it is on the list / why this due time
+  source: SlackRef;
+  receivedAt: string; // ISO (= source.sentAt)
+  clockStart: string; // ISO: receivedAt, or the next Monday 09:00 when received on a weekend
+  dueAt: string; // ISO
+  dueRule: DueRule;
+  dueSetByYou: boolean; // true once the person sets a due time; the master never changes it after
+  dueHistory: DueChange[];
+  pushedCount: number; // times the person moved dueAt later
+  fyiCap: boolean; // kind 'fyi': the stage never passes 'warm'
+  quick: boolean; // a small ask (≈ under 5 min): eligible for the Quick replies batch
+  unit: string | null; // KAR-… when linked to a ticket
+  links: { label: string; url: string }[];
+  evidence: { at: string; text: string; url?: string }[]; // "looks done" hints; never closes anything
+  linkedTo: string | null; // uid of an archived item this one follows up
+  status: 'open' | 'archived';
+  archivedAt: string | null;
+  resolution: Resolution | null;
+  archiveNote: string | null;
+  // No `notified`: the notices the daemon sent live in its own
+  // <dataDir>/master/notices.json, so the daemon never writes an item.
+  createdBy: 'master' | 'you';
+  runId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One pass of the master over Slack. Written running; finished by `run finish`. */
+export interface BriefingRunDoc {
+  uid: string; // uuid — doc id
+  trigger: 'schedule' | 'button' | 'log-in' | 'log-off' | 'manual';
+  slot: string | null; // '06:00' for a scheduled run
+  startedAt: string;
+  endedAt: string | null;
+  status: 'running' | 'ok' | 'failed';
+  slackCursor: string | null; // ISO: Slack read up to here; the next run starts from the newest ok run's
+  added: number;
+  updated: number;
+  summary: string | null;
+  error: string | null;
+}
+
+/** One local day's log-in / log-off record. */
+export interface DailyLogDoc {
+  uid: string; // 'YYYY-MM-DD' (local) — doc id
+  date: string;
+  logInAt: string | null;
+  logOffAt: string | null;
+  logIn: Record<string, unknown> | null; // what /ks-master:log-in reported (plan, counts, sessions)
+  logOff: Record<string, unknown> | null; // what /ks-master:log-off reported (archived, slipped, sessions, time)
+  sessions: {
+    unit: string;
+    sessionId: string | null;
+    phase: string | null;
+    state: string;
+    lastDid: string;
+    suggestion?: string;
+  }[];
+  updatedAt: string;
+}
+
+/** Something done to or for the master session in the background: the daemon
+ * starting or hard-restarting it, or a request file written for it (by the
+ * daemon's schedule, or the board's Brief me now / Restart master). The
+ * request files and daemon-state.json keep only what is pending and the last
+ * action; this is the history the board's Activity Log lists. */
+export interface MasterEventDoc {
+  uid: string; // uuid — doc id
+  at: string; // ISO
+  kind: 'start' | 'restart' | 'request';
+  /** A request's trigger. */
+  trigger?: 'schedule' | 'button' | 'restart';
+  /** A schedule request's slot ('06:00'). */
+  slot?: string | null;
+  /** Why: the supervisor's reason (`no live process for session.json`), or what asked. */
+  reason: string;
+  by: 'daemon' | 'board';
+  /** ok: launched and exited 0 / request written · failed · dropped: one of that
+   * trigger was already pending. Absent while a start/restart command still runs. */
+  result?: 'ok' | 'failed' | 'dropped';
+  /** The request id, the command's exit, an error. */
+  detail?: string;
+}
+
+/** Read filter for briefing items; both fields optional (absent = all). */
+export interface BriefingItemFilter {
+  status?: 'open' | 'archived';
+  groupKey?: string;
+}
+
+/** The briefing CLI's and the daemon's side. Writes replace the whole doc. */
+export interface BriefingStore {
+  getBriefingItems(projectId: string, filter?: BriefingItemFilter): Promise<BriefingItemDoc[]>;
+  getBriefingItem(projectId: string, uid: string): Promise<BriefingItemDoc | null>;
+  upsertBriefingItem(projectId: string, doc: BriefingItemDoc): Promise<void>;
+  /** Newest first. */
+  getBriefingRuns(projectId: string): Promise<BriefingRunDoc[]>;
+  getBriefingRun(projectId: string, uid: string): Promise<BriefingRunDoc | null>;
+  upsertBriefingRun(projectId: string, doc: BriefingRunDoc): Promise<void>;
+  getDailyLog(projectId: string, date: string): Promise<DailyLogDoc | null>;
+  /** Newest first. */
+  getDailyLogs(projectId: string): Promise<DailyLogDoc[]>;
+  upsertDailyLog(projectId: string, doc: DailyLogDoc): Promise<void>;
+  /** Newest first, at most `limit` (default 200). */
+  getMasterEvents(projectId: string, limit?: number): Promise<MasterEventDoc[]>;
+  upsertMasterEvent(projectId: string, doc: MasterEventDoc): Promise<void>;
+}
+
 /** Daemon (Node) side. */
 export interface SessionWriter {
   upsertSession(projectId: string, doc: SessionDoc): Promise<void>;
@@ -353,4 +504,5 @@ export interface DbProvider {
   writer(): SessionWriter;
   source(): SessionSource;
   backups(): BackupStore;
+  briefing(): BriefingStore;
 }

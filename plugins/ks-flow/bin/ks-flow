@@ -12,6 +12,7 @@
 #   ks-flow backfill-archive  archive all completed (worktree-removed) workflows
 #   ks-flow backup-enabled    exit 0 if cloud (GCS) backup is on in board settings, else 1
 #   ks-flow session [UNIT]    the Claude process (pid, tmux pane) live in a unit's worktree; --json
+#   ks-flow briefing CMD      the master's Briefing CLI: context, find, add, evidence, run, daily
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -223,6 +224,14 @@ case "$cmd" in
     exec node "$DAEMON_DIR/dist/session-info.js" "$@"
     ;;
 
+  briefing)
+    # The Briefing's read/write path for the master session (docs/briefing.md):
+    # context, find, add, evidence, run start|finish, daily set|get. No archive
+    # or delete — only the person archives, on the board.
+    shift
+    exec node "$DAEMON_DIR/dist/briefing-cli.js" "$@"
+    ;;
+
   backfill-archive)
     # Archive units whose worktree is GONE (completed work in the main checkout).
     # Same one uploader, different target selection.
@@ -283,7 +292,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]}" >&2
+    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|briefing <command>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]}" >&2
     exit 1
     ;;
 esac

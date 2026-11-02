@@ -1,0 +1,231 @@
+#!/bin/bash
+# claude-ks-master — start the ks-flow master session (the Briefing's Slack
+# reader; plugins/ks-master, contract plugins/ks-flow/docs/briefing.md).
+#
+#   claude-ks-master [--detached] [--pane <tmux-pane>] [--dry-run]
+#
+#   (none)      run in this terminal (its tmux pane, if any, is recorded)
+#   --detached  start without attaching, always in the tmux session `ks-master`:
+#               a new window there when that session exists, else a new
+#               detached session `ks-master` (`tmux attach -t ks-master` to watch)
+#   --pane      run in that tmux pane, replacing what runs there
+#               (claude-ks-rc-restart --master); a pane that is gone falls back
+#               to --detached
+#   --no-viewer don't open the viewer window (also KS_MASTER_NO_VIEWER=1)
+#   --dry-run   print what it would start and write, start nothing
+#
+# The viewer: after starting in a new tmux window or session, it makes sure one
+# terminal shows the master — ks-master-view (a loop on `tmux attach -t
+# ks-master` that reattaches whenever the session is replaced), opened in
+# Ghostty, else Terminal.app, only when <dataDir>/master/viewer.pid names no
+# live viewer. One viewer at most: an open one just reattaches by itself.
+#
+# It runs `claude-ks --local-plugin ks-master` in the karmasuite main checkout
+# (KS_PROJECT_ROOT_PATH from plugins/ks/.config) with Remote Control on, a fresh
+# session id (--session-id) and the first message "Let's resume working on this
+# project". Before Claude starts it writes <dataDir>/master/session.json
+# ({ v, sessionId, pid: null, tmuxPane, cwd, startedAt, handoff }); the mod fills
+# in pid. `handoff` carries over from the previous session.json: the handoff
+# the new master resumes from. <dataDir> is ks-flow's data dir
+# (plugins/ks-flow/src/lib/datadir.mjs, honouring KS_FLOW_DATA).
+#
+# Exports to the session: KS_MASTER_DIR (<dataDir>/master: the mod is inert
+# without it) and KS_MASTER_HANDOFFS (<project>/workflow/<user>/ks-master/handoffs;
+# <user> = KS_MASTER_USER, else the one folder under workflow/, else `id -un`).
+#
+# Refuses when session.json's pid is still a live Claude process — or, with no
+# pid yet, when its session id is a live one in ~/.claude/sessions/*.json, or
+# session.json is under 3 minutes old (a master still starting): replace a
+# running master with `claude-ks-rc-restart --master`.
+#
+# Runs tmux and ps, so a sandboxed agent needs it in the sandbox's
+# excludedCommands; the ks-flow daemon runs it unsandboxed.
+set -euo pipefail
+
+# Run from launchd (the ks-flow daemon) PATH is bare: find Homebrew's tmux.
+# Claude itself starts in a login shell inside the tmux pane, with the user's PATH.
+export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/../.config"
+NAME="ks-master"
+# Its own start skill, not "Let's resume working on this project": in the
+# karmasuite checkout that phrase means "resume a ticket workflow", and a master
+# given it went looking for tickets instead of its handoff.
+FIRST_MESSAGE="/ks-master:start"
+
+usage() {
+  echo "usage: claude-ks-master [--detached] [--pane <tmux-pane>] [--no-viewer] [--dry-run]" >&2
+  exit 2
+}
+
+DETACHED="" PANE="" DRY="" NO_VIEWER="${KS_MASTER_NO_VIEWER:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --detached) DETACHED=1; shift ;;
+    --no-viewer) NO_VIEWER=1; shift ;;
+    --pane) PANE="${2-}"; [ -n "$PANE" ] || usage; shift 2 ;;
+    --dry-run) DRY=1; shift ;;
+    *) usage ;;
+  esac
+done
+
+PROJECT=""
+[ -f "$CONFIG_FILE" ] && PROJECT="$(grep -E '^KS_PROJECT_ROOT_PATH=' "$CONFIG_FILE" | head -1 | cut -d'=' -f2- || true)"
+[ -n "$PROJECT" ] && [ -d "$PROJECT" ] || {
+  echo "claude-ks-master: KS_PROJECT_ROOT_PATH in plugins/ks/.config is not set or not a directory (run plugins/ks/init)" >&2
+  exit 1
+}
+PROJECT="$(cd "$PROJECT" && pwd)"
+
+# KS_MASTER_DIR (set by the ks-flow daemon when it runs this, and by
+# claude-ks-rc-restart's relaunch) wins; else resolve the data dir.
+MASTER_DIR="${KS_MASTER_DIR:-}"
+if [ -z "$MASTER_DIR" ]; then
+  DATA_DIR="$(node "$REPO_ROOT/plugins/ks-flow/src/lib/datadir.mjs" --cwd "$PROJECT")"
+  [ -n "$DATA_DIR" ] || { echo "claude-ks-master: could not resolve the ks-flow data dir" >&2; exit 1; }
+  MASTER_DIR="$DATA_DIR/master"
+fi
+SESSION_FILE="$MASTER_DIR/session.json"
+
+WF_USER="${KS_MASTER_USER:-}"
+if [ -z "$WF_USER" ] && [ -d "$PROJECT/workflow" ]; then
+  USERS=()
+  for d in "$PROJECT"/workflow/*/; do [ -d "$d" ] && USERS+=("$(basename "$d")"); done
+  [ ${#USERS[@]} -eq 1 ] && WF_USER="${USERS[0]}"
+fi
+[ -n "$WF_USER" ] || WF_USER="$(id -un)"
+HANDOFFS="$PROJECT/workflow/$WF_USER/ks-master/handoffs"
+
+# The live pid of the Claude process running session $1: its
+# ~/.claude/sessions/<pid>.json (kind interactive, that sessionId) whose pid
+# still runs `claude`. Empty when none. (Same lookup in claude-ks-rc-restart.)
+pid_for_session() {
+  local sid="$1" f pid
+  [ -n "$sid" ] || return 0
+  for f in "$HOME"/.claude/sessions/*.json; do
+    [ -f "$f" ] || continue
+    pid="$(jq -r --arg sid "$sid" 'select(.kind == "interactive" and .sessionId == $sid) | .pid // empty' "$f" 2>/dev/null || true)"
+    if [ -n "$pid" ] && [[ "$(ps -p "$pid" -o command= 2>/dev/null || true)" == *claude* ]]; then
+      echo "$pid"
+      return 0
+    fi
+  done
+}
+
+# A live master already? session.json's pid running `claude`, else (no pid yet:
+# the mod fills it in once loaded) a live process with its session id.
+OLD_PID="$(jq -r '.pid // empty' "$SESSION_FILE" 2>/dev/null || true)"
+OLD_SID="$(jq -r '.sessionId // empty' "$SESSION_FILE" 2>/dev/null || true)"
+OLD_STARTED="$(jq -r '.startedAt // empty' "$SESSION_FILE" 2>/dev/null || true)"
+LIVE_PID=""
+if [ -n "$OLD_PID" ] && [[ "$(ps -p "$OLD_PID" -o command= 2>/dev/null || true)" == *claude* ]]; then
+  LIVE_PID="$OLD_PID"
+elif [ -z "$OLD_PID" ]; then
+  LIVE_PID="$(pid_for_session "$OLD_SID")"
+fi
+if [ -n "$LIVE_PID" ]; then
+  echo "claude-ks-master: a master is already running (pid $LIVE_PID); use claude-ks-rc-restart --master to replace it" >&2
+  exit 1
+fi
+# No pid and no process yet, but session.json under 3 minutes old: a master is
+# still starting. claude-ks-rc-restart --master sets KS_MASTER_REPLACING to the
+# session it has just stopped, which is the one exception.
+if [ -z "$OLD_PID" ] && [ -n "$OLD_STARTED" ] && [ "${KS_MASTER_REPLACING:-}" != "$OLD_SID" ]; then
+  STARTED_EPOCH="$(date -j -u -f '%Y-%m-%dT%H:%M:%S' "${OLD_STARTED%%.*}" +%s 2>/dev/null || echo 0)"
+  if [ $(($(date +%s) - STARTED_EPOCH)) -lt 180 ]; then
+    echo "claude-ks-master: a master is still starting (session $OLD_SID, started $OLD_STARTED); try again in a few minutes" >&2
+    exit 1
+  fi
+fi
+PREV_HANDOFF="$(jq -r '.handoff // empty' "$SESSION_FILE" 2>/dev/null || true)"
+
+SESSION_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+ARGS=("$SCRIPT_DIR/claude-ks" --local-plugin ks-master --name "$NAME" --session-id "$SESSION_ID" --remote-control "$NAME" "$FIRST_MESSAGE")
+SH="${SHELL:-/bin/zsh}"
+INNER="export KS_MASTER_DIR=$(printf '%q' "$MASTER_DIR") KS_MASTER_HANDOFFS=$(printf '%q' "$HANDOFFS"); cd $(printf '%q' "$PROJECT") && $(printf '%q ' "${ARGS[@]}"); exec $(printf '%q' "$SH") -l"
+
+# Where it runs: the --pane pane if it still exists; when --detached (or the pane
+# is gone), always the tmux session named $NAME — a new window in it when it
+# exists, else that session created — never whatever session tmux calls current
+# (from launchd that is one the person may not be looking at); else this terminal.
+# `=` makes tmux match the session name exactly, not as a prefix.
+MODE="here"
+if [ -n "$PANE" ] && tmux display-message -p -t "$PANE" '#{pane_id}' >/dev/null 2>&1; then
+  MODE="pane"
+elif [ -n "$PANE" ] || [ -n "$DETACHED" ]; then
+  if tmux has-session -t "=$NAME" 2>/dev/null; then MODE="window"; else MODE="session"; fi
+fi
+
+write_session() { # $1 = tmux pane or ""
+  mkdir -p "$MASTER_DIR" "$HANDOFFS"
+  local tmp="$SESSION_FILE.tmp.$$"
+  jq -n --arg sid "$SESSION_ID" --arg pane "$1" --arg cwd "$PROJECT" --arg handoff "$PREV_HANDOFF" \
+    --arg at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+    '{v: 1, sessionId: $sid, pid: null, tmuxPane: (if $pane == "" then null else $pane end), cwd: $cwd,
+      startedAt: $at, handoff: (if $handoff == "" then null else $handoff end)}' >"$tmp"
+  mv "$tmp" "$SESSION_FILE"
+}
+
+# Open the viewer (ks-master-view) unless one is running. Never fails the start.
+ensure_viewer() {
+  [ -n "$NO_VIEWER" ] && return 0
+  local pidfile="$MASTER_DIR/viewer.pid" viewer="$SCRIPT_DIR/ks-master-view" other
+  other="$(cat "$pidfile" 2>/dev/null || true)"
+  if [ -n "$other" ] && ps -p "$other" -o command= 2>/dev/null | grep -q ks-master-view; then
+    echo "claude-ks-master: viewer already open (pid $other); it reattaches by itself"
+    return 0
+  fi
+  local app=""
+  for a in /Applications/Ghostty.app "$HOME/Applications/Ghostty.app"; do [ -d "$a" ] && app="$a" && break; done
+  if [ -n "$app" ]; then
+    open -na "$app" --args -e "$viewer" "$MASTER_DIR" >/dev/null 2>&1 \
+      && echo "claude-ks-master: opened the viewer in Ghostty" \
+      || echo "claude-ks-master: could not open Ghostty for the viewer (run: $viewer $MASTER_DIR)" >&2
+  else
+    local cmd
+    cmd="$(printf '%q %q' "$viewer" "$MASTER_DIR")"
+    osascript -e 'tell application "Terminal" to activate' \
+      -e "tell application \"Terminal\" to do script \"${cmd//\"/\\\"}\"" >/dev/null 2>&1 \
+      && echo "claude-ks-master: opened the viewer in Terminal" \
+      || echo "claude-ks-master: could not open Terminal for the viewer (run: $viewer $MASTER_DIR)" >&2
+  fi
+  return 0
+}
+
+if [ -n "$DRY" ]; then
+  echo "claude-ks-master (dry run): would start $NAME ($MODE${PANE:+ $PANE}) in $PROJECT"
+  echo "  session id:  $SESSION_ID"
+  echo "  session.json: $SESSION_FILE (handoff: ${PREV_HANDOFF:-none})"
+  echo "  handoffs:    $HANDOFFS"
+  echo "  command:     $INNER"
+  exit 0
+fi
+
+case "$MODE" in
+  pane)
+    write_session "$PANE"
+    tmux respawn-pane -k -t "$PANE" -c "$PROJECT" "$SH" -lc "$INNER"
+    echo "claude-ks-master: started $NAME in tmux pane $PANE (session $SESSION_ID)"
+    ;;
+  window | session)
+    # Make the pane first so session.json names it before Claude starts.
+    if [ "$MODE" = window ]; then
+      NEW_PANE="$(tmux new-window -d -P -F '#{pane_id}' -t "=$NAME:" -n "$NAME" -c "$PROJECT")"
+    else
+      NEW_PANE="$(tmux new-session -d -P -F '#{pane_id}' -s "$NAME" -n "$NAME" -c "$PROJECT")"
+    fi
+    write_session "$NEW_PANE"
+    tmux respawn-pane -k -t "$NEW_PANE" -c "$PROJECT" "$SH" -lc "$INNER"
+    echo "claude-ks-master: started $NAME in tmux session $NAME (new $MODE), pane $NEW_PANE (session $SESSION_ID); watch it with: tmux attach -t $NAME"
+    ensure_viewer
+    ;;
+  here)
+    [ -t 0 ] && [ -t 1 ] || { echo "claude-ks-master: no terminal here; use --detached" >&2; exit 1; }
+    write_session "${TMUX_PANE:-}"
+    export KS_MASTER_DIR="$MASTER_DIR" KS_MASTER_HANDOFFS="$HANDOFFS"
+    cd "$PROJECT"
+    exec "${ARGS[@]}"
+    ;;
+esac

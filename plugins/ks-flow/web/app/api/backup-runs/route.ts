@@ -1,4 +1,4 @@
-// /api/backup-runs — the history of backup sweeps, for the Backups page.
+// /api/backup-runs — the history of backup sweeps, for the Activity Log's Backup rows.
 //
 // GET → { ok, runs: BackupRun[] } newest first (see src/lib/backup-runs.ts).
 //

@@ -127,13 +127,14 @@ firebase emulators:start --only firestore
 | `ks-flow session [<unit>] [--json]` | The Claude Code process live in a unit's worktree, as the daemon recorded it: `{ unitId, worktreeDir, workflowDir, activeSession, liveSessions }`. Exit 1 for an unknown unit or one with no live session; exit 2 when the store is unreachable or the running daemon predates live-session tracking. No unit lists every unit with a live session. The record can be up to one tick (15s) old, so check the pid before signalling it. |
 | `ks-flow backup-enabled` | Exit 0 when cloud (GCS) backup is switched on in Settings, else 1. Checked by `remove_worktree` and `ks-start-ticket`. |
 | `ks-flow restore --unit <id> [--overwrite] [--workflow] [--workflow-only] [--workflow-dir <path>] [--overwrite-time-log] [--dry-run] [--json]` | Restore a unit's backed-up transcripts into `~/.claude/projects/<encoded>`, and merge its time log. Local files win unless `--overwrite`. Reads per-file objects, falling back to a legacy `transcript.tar.zst`. `--workflow` also unpacks the workflow folder; `--workflow-only` unpacks just that (no sessions, no time log); `--workflow-dir` says where it goes instead of working it out; `--overwrite-time-log` replaces the local time log instead of merging. |
+| `ks-flow briefing <context\|find\|add\|evidence\|run\|daily> …` | The master session's read/write path for the [Briefing](#briefing-briefing): read what's known, look up items by thread, add or update items, attach evidence, record runs, write the daily log. It has no archive or delete: only the board archives. See `docs/briefing.md` ("CLI"). |
 | `ks-flow archive <worktree> [id]` | Familiar alias — forwards to `backup --worktree … --force`. |
 | `ks-flow backfill-archive [--dry-run] [--force]` | Familiar alias — forwards to `backup --completed`. |
 | `ks-flow migrate-archives [--dry-run] [--unit <id>] [--backup-prefix <p>] [--delete-legacy] [--force]` | Convert legacy `transcript.tar.zst` archives to the per-file layout, after server-side copying every affected object to a safety prefix. |
 
 ## Board UI
 
-`ks-flow open` builds and serves the Next.js board (dark theme). Header controls:
+`ks-flow open` builds and serves the Next.js board (dark theme). Every page shares one header: ks-flow and the project, tabs **Board · Briefing · Daily log · Notes · Activity Log** (Notes only when enabled), and on the right the **bell** (Briefing items hot or overdue, red when above zero), the **Inbox** button (opens the Plannotator Inbox; badge = open questions plus new messages), the **master** chip (live, busy, no heartbeat, starting, down, not started), and links to Processes and Settings. A page's own controls sit in a row under it. The Board's controls:
 
 - **swimlanes** *(on by default)* — split cards into `ticket` / `project` lanes. Each lane shows only that type's phases (the ticket lane is the shorter init + context/research + plan/implement set), and a lane with no cards is hidden.
 - **show removed** *(off by default)* — also show, in the [Done column](#done-column), finished work whose git worktree is already gone (dimmed, Restore only).
@@ -230,6 +231,28 @@ and refuses to kill anything that isn't a running ks-flow daemon, so it can't
 terminate an arbitrary process. (The launchd-managed daemon respawns if killed,
 so the kill only sticks for the stray one.)
 
+### Activity Log (`/activity`)
+
+One history of everything ks-flow and the master session do in the background,
+newest first. Each row has a type chip; filter chips narrow it (All · Backup ·
+Briefing · Log-in/off · Master, with counts; `?type=backup|briefing|log|master`
+in the URL). Click a row for its details. It replaces the old Backups page:
+`/backups` redirects to `/activity?type=backup`.
+
+| Type | Source | Row shows |
+|---|---|---|
+| **Backup** | `backup_runs` via `GET /api/backup-runs` (running / interrupted is checked on the server) | trigger (Daily, Back up now, Card backup, Worktree removal, Completed units), status, scope, files and units uploaded, uncompressed → compressed bytes, errors; *See logs* for a run this board started. The dialog lists every upload ([Run history](#transcript-backup--end-of-day)). |
+| **Briefing** | `briefing_runs`, trigger `schedule` / `button` / `manual` | Scheduled 06:00 (the slot) / Brief me / Manual, status, items added and updated, where Slack was read up to, the master's summary or the error, duration |
+| **Log-in / Log-off** | `briefing_runs`, trigger `log-in` / `log-off` | the same, plus a link to that day's `/daily?date=…` |
+| **Master** | `master_events` | the daemon starting the master or hard-restarting it (why, and how the command exited), and each request sent to it — the daemon's schedule requests, the board's Brief me now / Restart master — written or *dropped* (one of that kind was already waiting) |
+
+Briefing runs and master events are live through the shared store
+subscription; backup rows re-read when `backup_runs` changes and every 30 s
+(a run whose process died turns *interrupted* without a write). A briefing
+run with no end two hours on shows as *interrupted*; a start/restart whose
+exit the daemon never saw (it restarted meanwhile) shows *No result* after 15
+min — `<dataDir>/master/launch.log` has its output.
+
 ### GCS archive on removal
 
 Opt-in archival of a project's conversation for later analysis. Enable it in
@@ -283,15 +306,16 @@ worktree** of the tracked project. It runs as a child process, and catches up on
 wake or after a restart if a day was missed, so a Mac asleep through the window
 does not silently skip a day.
 
-**Run history (board → ☁ Backups).** Every real sweep — the daily one, the
+**Run history (board → Activity Log, Backup rows).** Every real sweep — the daily one, the
 board's buttons, a worktree removal, a run by hand — is one record in the store
 (PocketBase `backup_runs`, or Firestore `projects/{id}/backupRuns`): when it
 started, what started it, its outcome, how many units it checked and how many
 were already current (nothing to upload, no errors), and per unit every object
 it uploaded — each with its uncompressed and uploaded (zstd) size, totalled per
 run — and every error. It is written as the run starts and completed as
-it ends, so a run that died mid-way still shows, as *interrupted*. The page
-lists the runs; clicking one opens what it uploaded. The daemon's once-a-day
+it ends, so a run that died mid-way still shows, as *interrupted*. The
+[Activity Log](#activity-log-activity) lists the runs as **Backup** rows;
+clicking one opens what it uploaded. The daemon's once-a-day
 check reads the newest finished run to decide whether today's sweep has
 happened. Status, reindex and dry runs upload nothing and are not recorded.
 
@@ -439,12 +463,12 @@ is a *stream* under a key it chooses — `backup:all`, `backup:<id>`,
 ones) — with its own panel, stacked bottom-right, so two actions at once each
 keep their own output and outcome. The provider sits in the root layout
 (`web/app/providers.tsx`), so a stream outlives a page change: start a backup on
-the board, open ☁ Backups, and it is still streaming there. A panel's ✕ only
+the board, open the Activity Log, and it is still streaming there. A panel's ✕ only
 hides it; `<SeeLogs streamKey=…>`, rendered beside the button that started the
 action, brings it back (pulsing while it runs). *clear* forgets a finished
 stream. Each button is disabled by its own stream (`useStreams().anyRunning`),
 not by one board-wide flag. A backup stream also answers to its run's id — the
-CLI prints `run <uid> started` — so the Backups page's row for that run shows
+CLI prints `run <uid> started` — so the Activity Log's Backup row for that run shows
 See logs too. Routes emit the `{ type: 'stdout' | 'stderr' | 'exit' }` line
 protocol via `web/lib/streamproc.ts`.
 
@@ -635,6 +659,18 @@ An opt-in page for **saved notes & reminders**. **Off by default** — enable it
 **Notification titles** — a fired note reminder is titled by its work type + source: **Professional Slack note** / **Personal Slack note** / **Professional note** / **Personal note** (the daemon builds the subtitle from `workType` + whether `section === 'slack'`).
 
 > Gating (`/api/notes/config`): the page + **Any note** show on the Notes **toggle**; the **Slack note** option also needs `SLACK_TOKEN` present (a `LINEAR_API_KEY` slot is wired for a future Linear source). Only a boolean (`tokenPresent` / `keyPresent`) is reported to the UI — the token never leaves the server. Set tokens with the **Edit .env** button in the settings header (see [Settings](#settings-settings)).
+
+## Briefing (`/briefing`)
+
+A master Claude session (the `ks-master` plugin, started by `claude-ks-master`) reads Slack every six hours and puts what needs you on the board with a due time. The full design and the contract between the parts is `docs/briefing.md`. **Off by default**: turn it on under `/settings` → **Briefing**.
+
+- **What it reads:** your DMs (group DMs too), your @mentions, "Jaswanth" written anywhere, and your own messages (to spot promises and replies). No channel is read in full.
+- **Items:** an *ask* (someone wants something from you), a *promise* (you said you'd do something), or *FYI* (a mention or DM that asks nothing). Each stores the exact message link and, for a thread reply, the thread's first message link. Items from one thread show as one card.
+- **Due times:** a deadline in the message as is; a promise as said ("by EOD" 19:00, "tomorrow" 12:00 the next working day); DM +4h; mention +24h; FYI +24h. Something arriving on a weekend starts its clock Monday 09:00, and a due time landing on a weekend moves to Monday at the same time (never a deadline from the message or one you set). Senders on the half-time list get half the time. Change any due time on the card; every change is kept, and pushing one later counts as "pushed N×".
+- **Escalation:** calm (under 50% of the time used), warm (50–80%), hot (80–100%, one notice), overdue (full red, one notice, then a reminder at each scheduled run). FYI never passes warm. Several notices owed at once become one summary. The reminders switch mutes them, and pausing a card mutes items linked to its ticket. The daemon keeps what it sent in its own `<dataDir>/master/notices.json` and never writes an item, so it can't undo an archive or a due change.
+- **Only you archive.** Nothing closes on its own, a reply doesn't close an ask, and the master can only attach "looks done" evidence. Archive asks Done / Not mine / Won't do and an optional note.
+- **The page:** Next up, then Overdue, Hot, Quick replies, Due today, Later, and Worth knowing (folded); nearest due first in each. The sidebar has the master (Brief me now and Restart master while one runs, both disabled or refused while none does; **Start master** while none does, which the daemon launches right away even with the Briefing off; Open in Claude; one viewer window, opened by `claude-ks-master` when none is open, always shows it and reattaches after every restart), the session roll call and today's counts. **Daily log** (`/daily`) shows what `/ks-master:log-off` wrote: archived, slipped, promises due tomorrow, where each session stopped, engaged time.
+- **The master:** woken by request files in `<dataDir>/master/requests/` (daemon at each slot, the board's buttons); its mod submits them as turns when it's idle. The daemon starts it when it's down and hard-restarts it when a request sits unanswered for 15 min with no heartbeat for 5 (the launch commands' output goes to `<dataDir>/master/launch.log`). A master counts as running while its process lives (found by pid, or by session id before the pid is recorded) or, for its first 3 minutes, while it is still starting: nothing starts a second one beside it. It restarts itself with a handoff (`/ks-master:restart`) after log-off or past 70% context. Each start, restart and request is kept in the store (`master_events`) and listed in the [Activity Log](#activity-log-activity) with the briefing, log-in and log-off runs. See `plugins/ks-master/README.md`.
 
 ## Development
 

@@ -1,7 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
+import { AppHeader } from '@/components/AppHeader';
+import { RefreshIcon } from '@/components/icons';
 
 interface ProcInfo {
   name: string;
@@ -84,22 +85,23 @@ export default function ProcessesPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-800 bg-slate-950 px-5 py-3">
-        <h1 className="text-lg font-bold">ks-flow · processes</h1>
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={loading}
-            className="text-xs text-slate-400 hover:text-slate-200 disabled:opacity-50"
-          >
-            {loading ? 'refreshing…' : '↻ refresh'}
-          </button>
-          <Link href="/" className="text-xs text-indigo-400 hover:text-indigo-300">
-            ← back to board
-          </Link>
-        </div>
-      </header>
+      <AppHeader
+        toolbar={
+          <>
+            <h1 className="text-sm font-semibold text-slate-200">Processes</h1>
+            <div className="grow" />
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={loading}
+              className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-200 disabled:opacity-50"
+            >
+              <RefreshIcon size={14} className={loading ? 'animate-spin' : ''} />
+              {loading ? 'refreshing…' : 'refresh'}
+            </button>
+          </>
+        }
+      />
 
       <main className="mx-auto max-w-3xl px-5 py-8">
         <p className="text-xs text-slate-400">

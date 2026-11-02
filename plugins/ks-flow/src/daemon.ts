@@ -10,6 +10,7 @@ import chokidar from 'chokidar';
 import {
   createWriteStream,
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -27,7 +28,29 @@ import type {
   SessionWriter,
   WorkUnitDoc,
 } from './lib/db/types.js';
-import { backupSettings, reminderSettings } from './lib/boardsettings.js';
+import { backupSettings, briefingSettings, reminderSettings } from './lib/boardsettings.js';
+import { composeNotices, owedNotices, recordNotices } from './lib/briefing/notices.js';
+import {
+  decideManualStart,
+  decideSchedule,
+  decideSupervision,
+  MASTER_RESTART_CMD,
+  MASTER_START_CMD,
+  masterDir,
+  pendingRequests,
+  pidIsClaude,
+  readDaemonState,
+  readHeartbeat,
+  readNotices,
+  readSession,
+  runMasterCommand,
+  schedulePrompt,
+  takeStartRequest,
+  writeDaemonState,
+  writeNotices,
+  writeRequest,
+} from './lib/master.js';
+import { masterEvent, recordMasterEvent, scheduleRequestEvent, supervisorEvent } from './lib/master-events.js';
 import { isFullSweep, listRuns, type BackupRun } from './lib/backup-runs.js';
 import { notify, terminalNotifierAvailable } from './lib/notify.js';
 import {
@@ -52,6 +75,7 @@ import { parseStateYaml } from './lib/stateyaml.js';
 import {
   CLAUDE_PROJECTS_DIR,
   DAEMON_LOG_PATH,
+  DATA_DIR,
   encodeProjectDir,
   EVENTS_PATH,
   expandTilde,
@@ -1050,6 +1074,20 @@ function startWatchers(): void {
   procWatcher.on('unlink', rescanLiveSessions);
   procWatcher.on('error', (e) => log('sessions watcher error (continuing):', (e as Error)?.message));
 
+  // The board's "Start master" drops master/start-request.json: act on it now,
+  // not at the master job's next 60 s tick. The job itself reads and removes
+  // the file, so a press caught here and by the tick is still one start.
+  try {
+    mkdirSync(MASTER_DIR, { recursive: true });
+    const startWatcher = chokidar.watch(MASTER_DIR, { ignoreInitial: true, usePolling: usePoll, depth: 0 });
+    startWatcher.on('add', (p) => {
+      if (p.endsWith('/start-request.json')) setTimeout(masterSuperviseTick, 250);
+    });
+    startWatcher.on('error', (e) => log('master watcher error (continuing):', (e as Error)?.message));
+  } catch (e) {
+    log('master watcher not started (the 60 s tick still takes start requests):', (e as Error)?.message);
+  }
+
   // Every periodic job runs off one clock (lib/schedule): a tick every TICK_MS
   // runs the jobs whose interval has passed, never one still running from the
   // last tick. A wake from sleep runs each overdue job once on the first tick.
@@ -1112,6 +1150,13 @@ function startWatchers(): void {
       // re-reads inbox.json for the address. One read covers every card, so a
       // card's Refresh runs the same read.
       inbox: { every: TICK_MS, run: pollInbox, runFor: pollInbox },
+
+      // Briefing (docs/briefing.md): stage notices for the items, the master's
+      // scheduled requests, and its supervisor. Nothing card-specific, so a
+      // card's Refresh leaves them out.
+      briefingNotices: { every: BRIEFING_TICK_MS, run: briefingNoticeTick },
+      briefingSchedule: { every: BRIEFING_TICK_MS, run: briefingScheduleTick },
+      master: { every: BRIEFING_TICK_MS, run: masterSuperviseTick },
     },
     (name, e) => log(`${name} failed`, (e as Error)?.message),
   );
@@ -1213,6 +1258,169 @@ async function backupTick(): Promise<void> {
     const summary = tail.trim().split('\n').slice(-3).join(' | ');
     if (code === 0) log('transcript backup done:', summary || '(no output)');
     else log(`transcript backup exited ${code}:`, summary || '(no output)');
+  });
+}
+
+// ── briefing (docs/briefing.md, "Daemon") ───────────────────────────────────
+//
+// Three clock jobs: stage notices for briefing items (lib/briefing/notices),
+// the scheduled request files for the master, and the master's supervisor
+// (lib/master). The store holds the items; <dataDir>/master/ holds the master's
+// files, and daemon-state.json there remembers the last slot handled and the
+// last start/restart across daemon restarts.
+const BRIEFING_TICK_MS = 60_000; // 4 ticks
+const briefingStore = provider.briefing();
+const MASTER_DIR = masterDir(DATA_DIR);
+let masterState: ReturnType<typeof readDaemonState> | null = null; // read on first use
+let lastMasterWhy: string | null = null; // the supervisor's last "held" reason (log once)
+
+function saveMasterState(): void {
+  if (!masterState) return;
+  try {
+    writeDaemonState(MASTER_DIR, masterState);
+  } catch (e) {
+    log('master: daemon-state.json write failed', (e as Error)?.message);
+  }
+}
+
+/**
+ * The `briefingNotices` job: a notice when an open item first turns hot, one
+ * when it turns overdue, and a re-nag for each still-overdue item at every
+ * schedule slot. Several owed in one tick (the first tick after a start finds
+ * everything that crossed while the daemon was down) go out as ONE summary.
+ * Muted by the reminders switch and by a paused card (an item's `unit`).
+ * What was sent lives in <dataDir>/master/notices.json (the daemon's own file),
+ * never in the items: the board and the CLI are the items' only writers, so a
+ * notice cannot undo an archive or a due change landing at the same moment.
+ * The file is written before the notice is sent, so a failed write never
+ * repeats a notice every minute; uids no longer open are pruned from it.
+ */
+async function briefingNoticeTick(): Promise<void> {
+  const items = await briefingStore.getBriefingItems(projectId, { status: 'open' });
+  const now = new Date();
+  const sent = readNotices(MASTER_DIR);
+  const owed = owedNotices(items, now, sent, {
+    schedule: briefingSettings().schedule,
+    enabled: reminderSettings().enabled,
+    pausedUnits: pausedUnitIds,
+  });
+  const { map, changed } = recordNotices(sent, owed, new Set(items.map((i) => i.uid)));
+  if (!changed) return;
+  try {
+    writeNotices(MASTER_DIR, map);
+  } catch (e) {
+    log('briefing: notices.json write failed, not sending', (e as Error)?.message);
+    return;
+  }
+  for (const n of composeNotices(owed, now)) notify(n.group, n.subtitle, n.message, n.title);
+  if (owed.length) log(`briefing: ${owed.map((o) => `${o.kind} ${o.uid}`).join(', ')}`);
+}
+
+/**
+ * The `briefingSchedule` job: at each briefing.schedule slot (local) write a
+ * `schedule` request for the master — none while briefing is off, and none
+ * when one is still pending (one per trigger). A slot missed while the daemon
+ * was down is written on the first tick if it is at most 6 h old.
+ */
+function briefingScheduleTick(): void {
+  masterState ??= readDaemonState(MASTER_DIR);
+  const s = briefingSettings();
+  const d = decideSchedule({ now: new Date(), schedule: s.schedule, enabled: s.enabled, slotAt: masterState.slotAt });
+  if (!d.advanceTo) return;
+  if (d.write) {
+    const req = writeRequest(MASTER_DIR, {
+      trigger: 'schedule',
+      slot: d.write.slot,
+      prompt: schedulePrompt(d.write.slot),
+    });
+    log(
+      req
+        ? `briefing: schedule request for the ${d.write.slot} slot written (${req.id})`
+        : `briefing: ${d.write.slot} slot — a schedule request is already pending, not writing another`,
+    );
+    void recordMasterEvent(briefingStore, projectId, scheduleRequestEvent(d.write.slot, req), log);
+  } else if (s.enabled) {
+    log(`briefing: ${slotLabel(d.advanceTo)} slot not requested (${d.why})`);
+  }
+  masterState.slotAt = d.advanceTo.toISOString();
+  saveMasterState();
+}
+
+function slotLabel(d: Date): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * The `master` job. First, always (briefing on or off): the board's "Start
+ * master" press (start-request.json) launches claude-ks-master --detached unless
+ * a master runs or is starting. Then, only while briefing is on: no live process
+ * for session.json → claude-ks-master --detached; a request pending > 15 min
+ * with a heartbeat older than 5 min → claude-ks-rc-restart --master --force. At
+ * most one of either per 10 min. Live = session.json's pid or session id among
+ * the running Claude processes (liveSessions), else its pid running `claude`.
+ */
+function masterSuperviseTick(): void {
+  masterState ??= readDaemonState(MASTER_DIR);
+  const session = readSession(MASTER_DIR);
+  const alive =
+    !!session &&
+    (liveSessions.some((l) => l.sessionId === session.sessionId || (session.pid !== null && l.pid === session.pid)) ||
+      (session.pid !== null && pidIsClaude(session.pid)));
+  const now = Date.now();
+  const press = takeStartRequest(MASTER_DIR);
+  if (press) {
+    const m = decideManualStart({ now, session, alive, heartbeat: readHeartbeat(MASTER_DIR) });
+    if (!m.start) {
+      log(`master: start requested from the board, not starting (${m.why})`);
+      void recordMasterEvent(
+        briefingStore,
+        projectId,
+        masterEvent({ kind: 'start', reason: 'Start master (board)', by: 'board', result: 'dropped', detail: m.why }),
+        log,
+      );
+      return;
+    }
+    log(`master: start (${m.why}) → ${MASTER_START_CMD.join(' ')}`);
+    masterState.lastActionAt = new Date(now).toISOString();
+    masterState.lastAction = 'start';
+    saveMasterState();
+    const ev = masterEvent({ kind: 'start', reason: 'Start master (board)', by: 'board' });
+    const recorded = recordMasterEvent(briefingStore, projectId, ev, log);
+    runMasterCommand(MASTER_START_CMD, MASTER_DIR, log, (outcome) => {
+      void recorded.then(() => recordMasterEvent(briefingStore, projectId, { ...ev, ...outcome }, log));
+    });
+    return;
+  }
+  if (!briefingSettings().enabled) return;
+  const pending = pendingRequests(MASTER_DIR);
+  const lastAction = masterState.lastActionAt ? Date.parse(masterState.lastActionAt) : NaN;
+  const d = decideSupervision({
+    now,
+    session,
+    alive,
+    heartbeat: readHeartbeat(MASTER_DIR),
+    oldestRequestAt: pending.length ? Math.min(...pending.map((p) => p.createdAt)) : null,
+    lastActionAt: Number.isFinite(lastAction) ? lastAction : null,
+  });
+  if (!d.action) {
+    // A held action is logged once, not on every tick of its 10 min.
+    if (d.why !== 'ok' && d.why !== lastMasterWhy) log(`master: ${d.why}`);
+    lastMasterWhy = d.why;
+    return;
+  }
+  lastMasterWhy = null;
+  const cmd = d.action === 'start' ? MASTER_START_CMD : MASTER_RESTART_CMD;
+  log(`master: ${d.action} (${d.why}) → ${cmd.join(' ')}`);
+  masterState.lastActionAt = new Date(now).toISOString();
+  masterState.lastAction = d.action;
+  saveMasterState();
+  // The Activity Log's record: written now (no result while the command runs),
+  // completed when it exits — after the first write settled, so the update
+  // finds the record instead of creating a second one.
+  const ev = supervisorEvent(d.action, d.why);
+  const recorded = recordMasterEvent(briefingStore, projectId, ev, log);
+  runMasterCommand(cmd, MASTER_DIR, log, (outcome) => {
+    void recorded.then(() => recordMasterEvent(briefingStore, projectId, { ...ev, ...outcome }, log));
   });
 }
 
