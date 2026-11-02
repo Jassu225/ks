@@ -172,12 +172,23 @@ info "  New branch: ${NEW_BRANCH_NAME}"
 info "  Based on: ${BASE_BRANCH}"
 echo "" >&2
 
-# Remove .claude folder from main repo to prevent it from being copied into the worktree
+# Delete the git-tracked files under <repo>/.claude, except agents/test-writer.md.
+# Untracked files (settings.local.json, .cc-writes/, local additions) are never
+# touched.
+remove_tracked_claude_files() {
+    local repo="$1" f
+    while IFS= read -r -d '' f; do
+        [[ "$f" == ".claude/agents/test-writer.md" ]] && continue
+        rm -f "${repo}/${f}"
+    done < <(git -C "$repo" ls-files -z -- .claude)
+    git -C "$repo" checkout -- .claude/agents/test-writer.md 2>/dev/null || true
+}
+
+# Remove the tracked .claude files from the main repo
 if [[ -d "${MAIN_REPO_DIR}/.claude" ]]; then
-    info "Removing .claude folder from main repo before worktree creation..."
-    rm -rf "${MAIN_REPO_DIR}/.claude"
-    git -C "$MAIN_REPO_DIR" checkout -- .claude/agents/test-writer.md 2>/dev/null || true
-    success "Removed .claude folder from main repo (restored agents/test-writer.md)"
+    info "Removing tracked .claude files from main repo before worktree creation..."
+    remove_tracked_claude_files "$MAIN_REPO_DIR"
+    success "Removed tracked .claude files from main repo (kept agents/test-writer.md and untracked files)"
 fi
 
 # Create the worktrees base directory if it doesn't exist
@@ -268,14 +279,22 @@ else
     warn ".scripts/ folder not found in main repo, skipping"
 fi
 
-# Delete .claude folder if it exists (preserves agents/test-writer.md)
-info "Removing .claude folder from worktree..."
+# Remove the tracked .claude files from the worktree
+info "Removing tracked .claude files from worktree..."
 if [[ -d "${WORKTREE_PATH}/.claude" ]]; then
-    rm -rf "${WORKTREE_PATH}/.claude"
-    git -C "$WORKTREE_PATH" checkout -- .claude/agents/test-writer.md 2>/dev/null || true
-    success "Removed .claude folder (restored agents/test-writer.md)"
+    remove_tracked_claude_files "$WORKTREE_PATH"
+    success "Removed tracked .claude files (kept agents/test-writer.md)"
 else
     info ".claude folder not present, skipping"
+fi
+
+# Copy the main repo's .claude/settings.local.json into the worktree
+if [[ -f "${MAIN_REPO_DIR}/.claude/settings.local.json" ]]; then
+    mkdir -p "${WORKTREE_PATH}/.claude"
+    cp "${MAIN_REPO_DIR}/.claude/settings.local.json" "${WORKTREE_PATH}/.claude/settings.local.json"
+    success "Copied .claude/settings.local.json"
+else
+    info ".claude/settings.local.json not found in main repo, skipping"
 fi
 
 # Install dependencies
