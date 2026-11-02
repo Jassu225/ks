@@ -1,5 +1,13 @@
 # Releases
 
+## 2026-11-02
+
+- **The workflow now reads and writes the KarmaSuite knowledge base (ks-docs)**: `~/git/ks-docs` is a shared knowledge base in the Open Knowledge Format.
+  - **Phase 2 reads it:** `/ks:research_codebase` starts from the concepts that match the ticket and hands them to its research agents as leads. Every claim is still confirmed in the code, and concepts nobody has verified count as unchecked.
+  - **Phase 10 writes to it:** `/ks:implement-plan` ends each iteration, after the code review, with an **Update ks-docs** step. A subagent follows ks-docs' own rules to fix concepts the change made false and to add durable knowledge (how something works, gotchas, decisions and their reasons). It writes nothing when there's nothing worth keeping, and nothing at all while ks-docs still has uncommitted changes from an earlier session: it lists them and asks you to review and commit them first. Changes are left uncommitted: you review them, mark what you checked as verified, and commit. It is a substep of Phase 10, not a new phase, so the board, the statusline and existing `state.yaml` files are unchanged.
+  - **Recorded:** the outcome goes on Phase 10's iteration in `state.yaml` as `docs` (`updated`, `none-needed`, `skipped` or `unavailable`, with the files and a one-line note). The project manager runs the step before marking Phase 10 complete when a session ended without it.
+- **`create-worktree` keeps `.claude/settings.local.json`**: new worktrees used to lose the main checkout's untracked `.claude` files, because the script ran `rm -rf .claude`. It now deletes only git-tracked `.claude` files (keeping `agents/test-writer.md`) and copies `settings.local.json` into the new worktree. That file grants write access to ks-docs.
+
 ## 2026-10-31
 
 - **ks-flow Briefing: everything you owe, with a clock**: a new **Briefing** page lists the Slack messages that need you, each with a due time. The master session reads Slack at 00:00, 06:00, 12:00 and 18:00, or when you press **Brief me now**. It reads your DMs, your @mentions, "Jaswanth" written anywhere, and your own messages (to catch promises). Each item is an ask, a promise ("I'll do it by EOD") or FYI.

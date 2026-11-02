@@ -80,7 +80,8 @@ If the user says no, or the dry run fails (not in tmux, or ks-flow not running),
 
 #### Phase 10: Implementation
 - Supports **iteration** — see Phase 9-10 Iteration below
-- **Post-command bookkeeping:** After `/ks:implement-plan` completes (all phases committed and PR created), the project-manager marks phase 10 as `COMPLETED` in `state.yaml` and runs `/ks:create_handoff`
+- **Last substep, Update ks-docs:** `/ks:implement-plan` ends each iteration by writing what the work taught into the knowledge base `~/git/ks-docs` (uncommitted, for the user to review) and recording the outcome as `docs` on Phase 10's current iteration in `state.yaml` (`status: updated | none-needed | skipped | unavailable`). See its "Update ks-docs" section. It is not a separate phase.
+- **Post-command bookkeeping:** After `/ks:implement-plan` completes (all phases committed, PR created, code review addressed, ks-docs step done), the project-manager checks that Phase 10's current iteration has a `docs` entry. If it is missing (the session ended before that step), run the "Update ks-docs" section of `/ks:implement-plan` now. Then mark phase 10 as `COMPLETED` in `state.yaml` and run `/ks:create_handoff`
 
 ---
 
@@ -198,11 +199,13 @@ The current iteration number is the length of the `iterations` array. Timestamps
   iterations:
     - started_at: "2026-01-28T10:30:00Z"
       ended_at: "2026-01-28T14:00:00Z"
+      docs: { status: "updated", files: ["codebase/allocation-engine.md"], note: "Added refund re-allocation gotcha", at: "2026-01-28T13:55:00Z" }
     - started_at: "2026-02-01T10:30:00Z"
       ended_at: "2026-02-01T12:00:00Z"
+      docs: { status: "none-needed", note: "Copy change only", at: "2026-02-01T11:58:00Z" }
 ```
 
-For phases 1-8, timestamps remain at the phase level (`started_at`, `ended_at`) as before.
+For phases 1-8, timestamps remain at the phase level (`started_at`, `ended_at`) as before. `docs` on a Phase 10 iteration records the ks-docs substep (see Phase 10 above).
 
 ### Interaction with Revisit
 

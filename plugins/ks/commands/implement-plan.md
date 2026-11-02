@@ -31,6 +31,7 @@ You are the **orchestrator**. You delegate deep analysis and heavy reading to su
 **Output:**
 - Implemented code changes in the KarmaSuite codebase
 - Updated plan (`implementation-plan-{NN}.md`) with completed checkboxes
+- Knowledge-base updates in `~/git/ks-docs/content/` (uncommitted, for the user to review), recorded as `docs` on Phase 10's iteration in `state.yaml`. See [Update ks-docs](#update-ks-docs)
 
 Example invocation:
 ```
@@ -335,7 +336,8 @@ Each phase already has its own PR against the project branch. After the final ph
    Agent(subagent_type: "general-purpose", prompt: "Run /code-review to review all changes in the current PR. Report back with any issues found.")
    ```
    Address any high-confidence issues before finalizing.
-3. **Congratulate the user**: "Project implementation complete! All phases have been successfully executed."
+3. **Update ks-docs**: see [Update ks-docs](#update-ks-docs) below. The diff is the whole feature: `git diff origin/main...{project-slug}`.
+4. **Congratulate the user**: "Project implementation complete! All phases have been successfully executed."
 
 ### Ticket Workflows
 
@@ -346,7 +348,60 @@ Each phase already has its own PR against the project branch. After the final ph
    Agent(subagent_type: "general-purpose", prompt: "Run /code-review to review all changes in the current PR. Report back with any issues found.")
    ```
    Address any high-confidence issues before finalizing.
-3. **Congratulate the user**: "Ticket implementation complete! All phases have been successfully executed."
+3. **Update ks-docs**: see [Update ks-docs](#update-ks-docs) below. The diff is the PR's: `git diff origin/main...HEAD`.
+4. **Congratulate the user**: "Ticket implementation complete! All phases have been successfully executed."
+
+### Update ks-docs
+
+KarmaSuite's shared knowledge base is `~/git/ks-docs`, a bundle in the Open Knowledge Format (knowledge in `content/`, the rules for agents in its `CLAUDE.md`). Phase 2 reads it; this step writes back what the work taught, so the next ticket starts from it. It runs once per Phase 10 iteration, after the code-review fixes are pushed, so the docs describe the code as it ships.
+
+1. **Check it's there and clear.**
+   - If `~/git/ks-docs/content/index.md` doesn't exist, skip the step and record `status: "unavailable"` (step 4).
+   - Run `git status --porcelain -- content` in `~/git/ks-docs` (only `content/` counts: the user's own edits to the tooling don't block). If it prints anything (modified, staged or untracked files), earlier changes are still waiting for the user's review, and ks-docs' `CLAUDE.md` ("Before writing: no unreviewed changes") forbids new writes. Don't spawn the writer. List those files for the user, ask them to review, mark verified and commit, and record `status: "skipped"` with `note: "ks-docs has unreviewed changes"`. Re-run this step once they've committed.
+2. **Spawn the docs writer.** Fill in the paths and the diff command from the workflow step above:
+
+```
+Agent(
+  subagent_type: "general-purpose",
+  name: "ks-docs-writer",
+  description: "Update ks-docs from this work",
+  prompt: "Update KarmaSuite's knowledge base at ~/git/ks-docs with what this change taught. Read ~/git/ks-docs/CLAUDE.md fully first and follow it exactly; it is the rulebook (concept format, frontmatter, never set `verified`, timestamps from `date -u`, index.md and log.md updates, never commit).
+
+INPUTS
+- Implementation plan: {project-directory-path}/resources/implementation-plan-{NN}.md
+- Codebase research: {project-directory-path}/resources/codebase-research.md
+- The change: run `{diff command}` in {worktree path}; PR(s): {PR URLs from state.yaml prs[]}
+- The code itself, in {worktree path}
+
+WHAT TO WRITE
+1. Grep ~/git/ks-docs/content/ for concepts on what this change touches. Update them first: a fact the change made false gets fixed, or the concept gets `status: deprecated` with what replaced it.
+2. Add a new concept only for durable knowledge a future engineer or agent needs: how a part of the system works, a gotcha and its reason, a decision and its reason, a domain term, a playbook. Not ticket progress, not a summary of the PR, not anything true only for this branch.
+3. Check every claim against the code in the worktree. Cite sources as GitHub links pinned to the PR's head commit (https://github.com/karmasuite/karmasuite/blob/<sha>/<path>), since main may not have the change yet.
+4. Nothing worth recording is a valid outcome: then write nothing.
+
+REPORT BACK
+Either a list of every file you created, updated or deprecated under content/ (path + one line each), or `none needed: <one-line reason>`. Do not commit or push in ks-docs."
+)
+```
+
+3. **Hand the review to the user.** Show the report and say the changes are in `~/git/ks-docs`, uncommitted: they review them (`git status` and `git diff` in `~/git/ks-docs`), mark the concepts they checked `verified: { by: human:<name>, at: ... }`, and commit. Never commit or push in ks-docs yourself.
+   - If the writer reports a write was refused (`Operation not permitted`), the checkout's `.claude/settings.local.json` lacks the sandbox grant (`"sandbox": { "filesystem": { "allowWrite": ["~/git/ks-docs"] } }`). Tell the user; don't work around it. Record `status: "skipped"` with that reason.
+   - The user may also say to skip the step: record `status: "skipped"`.
+4. **Record it in state.yaml**, on Phase 10's current (last) iteration entry:
+
+```yaml
+- number: 10
+  name: "implementation"
+  iterations:
+    - started_at: "2026-01-28T10:30:00Z"
+      ended_at: null
+      docs:
+        status: "updated"        # updated | none-needed | skipped | unavailable
+        files:                   # content/-relative paths; omit when none
+          - "codebase/allocation-engine.md"
+        note: "Refunds now re-run allocation; added gotcha"   # one line: the writer's reason or the skip reason
+        at: "2026-01-28T13:55:00Z"
+```
 
 ## Remember
 
