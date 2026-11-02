@@ -23,7 +23,7 @@ task: Workflow reads and writes the ks-docs knowledge base (Phase 2 read, Phase 
     4. Records `docs: {status, files, note, at}` on Phase 10's current iteration in `state.yaml`.
   - `commands/project-manager.md`: Phase 10 describes the substep. Bookkeeping runs it when `docs` is missing, before marking COMPLETED. The `state.yaml` example shows `docs`.
   - `CLAUDE.md` gets a "ks-docs (knowledge base)" critical rule; `RELEASES.md` gets a 2026-11-02 entry, which also covers the create-worktree fix.
-- **ks-docs `CLAUDE.md`**: ks-master edited it at our request, with the user's OK. It is **uncommitted in ks-docs**: a new section "## Before writing: no unreviewed changes" (`git status --porcelain -- content`; edits to the tooling don't block), and "After writing" step 3 points to it.
+- **ks-docs `CLAUDE.md`**: ks-master edited it at our request, with the user's OK; the user has committed and pushed it in ks-docs. It adds a new section "## Before writing: no unreviewed changes" (`git status --porcelain -- content`; edits to the tooling don't block), and "After writing" step 3 points to it.
 
 ## Key Decisions Made
 - **A substep, not Phase 11.** `TERMINAL_PHASE = 10` in ks-flow `phasemodel.ts`, the statusline's `FRESH_SESSION_PHASES`, the phase lists in `ks-start-ticket` and every existing `state.yaml` all assume 10 phases. The step also iterates with Phase 10 and needs no fresh session.
@@ -36,8 +36,7 @@ task: Workflow reads and writes the ks-docs knowledge base (Phase 2 read, Phase 
 None.
 
 ## Uncommitted Changes
-- This repo: none (this handoff is committed with this push).
-- `~/git/ks-docs/CLAUDE.md` (the rule above), for the user to review and commit.
+None. (The ks-docs rule is committed and pushed in ks-docs too.)
 
 ## Known Issues
 - **Not yet run on a real ticket.** The first Phase 10 that reaches "Update ks-docs" is the test.
