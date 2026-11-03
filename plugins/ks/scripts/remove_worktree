@@ -241,7 +241,7 @@ cd "$KS_PROJECT_ROOT"
 # board runs before its Remove. The board sets KS_FLOW_BACKED_UP=1 once it has
 # done so, which skips a second upload. A failed backup aborts the removal.
 if [[ "${KS_FLOW_BACKED_UP:-}" == "1" ]]; then
-    info "Cloud backup already done by the ks-flow board"
+    info "Cloud backup done above by the ks-flow board (its first step) — skipping a second upload"
 elif ! command -v ks-flow >/dev/null 2>&1; then
     info "ks-flow not installed — skipping cloud backup"
 elif ! ks-flow backup-enabled; then

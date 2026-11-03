@@ -2,7 +2,7 @@
 
 Date: 2026-03-31
 
-Comparison of Jaswanth's description of the 10-phase project manager workflow against the actual implementation in the codebase.
+Comparison of the user's description of the 10-phase project manager workflow against the actual implementation in the codebase.
 
 ---
 

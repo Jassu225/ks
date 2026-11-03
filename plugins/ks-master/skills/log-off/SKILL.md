@@ -1,13 +1,13 @@
 ---
 name: log-off
-description: End Jaswanth's working day - a last Briefing pass, what was archived, what is still open and what slipped, promises due tomorrow, a roll call of his Claude sessions with a suggestion for each, engaged time from ks-time, a walk through the open items (archive or keep), the day's log saved, then a graceful restart of the master. Use when he says log off, wrap up, end my day, or runs /ks-master:log-off.
+description: End the user's working day - a last Briefing pass, what was archived, what is still open and what slipped, promises due tomorrow, a roll call of their Claude sessions with a suggestion for each, engaged time from ks-time, a walk through the open items (archive or keep), the day's log saved, then a graceful restart of the master. Use when they say log off, wrap up, end my day, or runs /ks-master:log-off.
 argument-hint: (no arguments)
 ---
 
 # Log off
 
-The end of the day: nothing owed gets lost overnight. You report, he decides;
-you never archive and never change a due time — he does both on the board.
+The end of the day: nothing owed gets lost overnight. You report, they decide;
+you never archive and never change a due time — they do both on the board.
 
 ## 1. Last pass
 
@@ -24,7 +24,7 @@ ks-flow briefing context
 ks-flow briefing daily get
 ```
 
-(today's log: the log-in plan, if he logged in) and
+(today's log: the log-in plan, if they logged in) and
 
 ```bash
 ks-time --all --json
@@ -45,7 +45,7 @@ One line per entry, nothing empty shown:
 1. **Archived today** — `archivedRecent` with `archivedAt` today: title —
    resolution (done / not mine / won't do).
 2. **Still open** — counts by stage, then the overdue and hot ones by title.
-3. **Slipped** — items that went overdue today, and items whose due time he
+3. **Slipped** — items that went overdue today, and items whose due time they
    moved later today (`dueHistory` entries `by: "you"` today, `pushedCount`).
    No blame; just the list.
 4. **Promises due tomorrow** — kind `promise`, `dueAt` tomorrow — to whom.
@@ -60,8 +60,8 @@ One line per entry, nothing empty shown:
      else its current phase.
    - *suggestion*: one of the board's four, with a few words of why when it
      helps:
-     - `leave running` — working on its own, nothing needed from him;
-     - `answer first` — it waits on him (a tool prompt, an Inbox question);
+     - `leave running` — working on its own, nothing needed from them;
+     - `answer first` — it waits on them (a tool prompt, an Inbox question);
      - `close or plan` — idle or finished for now: close it, or give it
        tomorrow's task;
      - `remove worktree` — the ticket is Done / the PR merged: remove the
@@ -72,16 +72,16 @@ One line per entry, nothing empty shown:
 
 ## 4. Walk the open items
 
-Go through the open items with him, worst stage first (overdue, hot, today,
+Go through the open items with them, worst stage first (overdue, hot, today,
 later); the FYIs as one group at the end. Show them numbered, a few at a time,
 and ask for each: **archive or keep?**
 
-- *Archive*: tell him to archive it on the board (Briefing page → the card →
+- *Archive*: tell them to archive it on the board (Briefing page → the card →
   Archive, with Done / Not mine / Won't do). You never archive.
-- *Keep*: nothing to do. If he wants a different due time, he sets it on the
-  board (Change due); never set it for him.
+- *Keep*: nothing to do. If they want a different due time, they set it on the
+  board (Change due); never set it for them.
 
-Record his answers for the log. Stop walking when he says so.
+Record their answers for the log. Stop walking when they say so.
 
 ## 5. Save the day's log
 

@@ -46,6 +46,8 @@ When invoked:
 
 **Execution (all phases):** Run the phase's command (from the table above) with `{project-directory-path}` as argument. Verify the output files listed in the table were created.
 
+**Knowledge base (all phases):** KarmaSuite's product and domain knowledge (features and pages, business rules, terms, integrations, product decisions) is in `~/git/ks-docs/content`. A concept's `## Known issues` section lists problems in that area that aren't fixed yet: don't assume the code is correct there. Use it whenever a phase needs business context, not only where a command names it: start at `content/index.md` and the relevant area's `index.md`, or grep `content/`, and read only the concepts that match. A concept without a `verified` key is agent-written: confirm it in the code or with the user before relying on it. Phases 1, 2 and 9 lean on it most. Only Phase 10's "Update ks-docs" step writes to it.
+
 **Linear project update (phases 3, 5, 6, 7):** After the command completes, post a project update using the project ID from `state.yaml`:
 ```
 linear project update <project-id> --body "<update message>" --health onTrack

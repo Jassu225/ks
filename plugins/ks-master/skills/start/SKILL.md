@@ -16,10 +16,10 @@ sessions' work; the session roll call is `/ks-master:log-in`'s job, not this one
    - **None** (or the folder is empty): you are the first master. Say so in
      one line, then go to step 3.
 2. If its **Resume Point** names unfinished work (a briefing run that never
-   finished, a log-off walk half done, something Jaswanth asked for later),
+   finished, a log-off walk half done, something the user asked for later),
    do that now, following the skill it belongs to (`/ks-master:briefing`,
    `/ks-master:log-off`).
 3. Report in at most two lines: that you are up (and from which handoff, if
    any), and what is still open. Then stop and wait: wake-ups arrive as
    prompts from the plugin (`/ks-master:briefing …`, `/ks-master:restart …`),
-   and Jaswanth starts the day with `/ks-master:log-in`.
+   and the user starts the day with `/ks-master:log-in`.

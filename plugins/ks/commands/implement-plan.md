@@ -374,17 +374,22 @@ INPUTS
 - The code itself, in {worktree path}
 
 WHAT TO WRITE
+ks-docs is mostly product knowledge and must stay small in detail, but most of the product isn't covered yet. Its CLAUDE.md, \"What belongs here\" and \"Filling gaps: cover the whole flow\", is the standard: follow it strictly.
 1. Grep ~/git/ks-docs/content/ for concepts on what this change touches. Update them first: a fact the change made false gets fixed, or the concept gets `status: deprecated` with what replaced it.
-2. Add a new concept only for durable knowledge a future engineer or agent needs: how a part of the system works, a gotcha and its reason, a decision and its reason, a domain term, a playbook. Not ticket progress, not a summary of the PR, not anything true only for this branch.
-3. Check every claim against the code in the worktree. Cite sources as GitHub links pinned to the PR's head commit (https://github.com/karmasuite/karmasuite/blob/<sha>/<path>), since main may not have the change yet.
-4. Nothing worth recording is a valid outcome: then write nothing.
+1a. If no concept covers the feature, page or flow this change touched, write that whole flow at product level, even though the change touched only part of it: what it does, who uses it, its main business rules, how its key numbers are meant to be derived. Read the parts of the flow the change didn't touch before describing them; never infer them from names or from the changed part. Put anything you couldn't confirm in an `## Open questions` list at the end, never as fact. If a concept already covers the flow, only add what's new or correct what's wrong.
+2. Then ask what a future engineer or agent needs to know about the product after this change: a feature or page (what, who, which user problem), a domain term or business rule (numbers in product terms), what an integration syncs and why, a product-behavior decision and its reason. Prefer one line in an existing concept over a new file.
+2a. Known issues (the `## Known issues` section of a concept, see ks-docs' CLAUDE.md \"Known issues\"): if this change fixes one, remove its bullet. If the work found a real problem it didn't fix (out of scope, deferred), add a bullet to the concept of the feature, page or flow it affects: what goes wrong in product terms, when and for whom, what a change there must not assume, and the Linear ticket as a footnote (or \"no ticket yet\"). Confirm it in the code first.
+3. A gotcha only if it passes all three checks: reusable (across features, not one function or one fix), recurring (will trap more than one future change), not local (you'd miss it even after reading the code you're changing). Write it at the level of the rule, not the incident.
+4. Never write code-level detail: function or component names, file paths, CSS values, commit pins, the before/after of this fix. That belongs in the PR description. Never write ticket progress or a summary of the PR.
+5. Check every claim against the code in the worktree. Cite sources where a claim needs one: the Linear ticket or the PR for product behavior, a `blob/main/<path>` link only when the rule can't be stated without the code.
+6. When the touched flow is already covered, nothing worth recording is the usual outcome for a bug fix: then write nothing. When it isn't covered, step 1a applies to bug fixes too.
 
 REPORT BACK
 Either a list of every file you created, updated or deprecated under content/ (path + one line each), or `none needed: <one-line reason>`. Do not commit or push in ks-docs."
 )
 ```
 
-3. **Hand the review to the user.** Show the report and say the changes are in `~/git/ks-docs`, uncommitted: they review them (`git status` and `git diff` in `~/git/ks-docs`), mark the concepts they checked `verified: { by: human:<name>, at: ... }`, and commit. Never commit or push in ks-docs yourself.
+3. **Hand the review to the user.** Show the report and say the changes are in `~/git/ks-docs`, uncommitted: they review them (`git status` and `git diff` in `~/git/ks-docs`), mark the concepts they checked `verified: { by: human:<name>, at: ... }`, and commit. For a strict second opinion before committing, they can run `/ks-master:docs-review` in the master session. Never commit or push in ks-docs yourself.
    - If the writer reports a write was refused (`Operation not permitted`), the checkout's `.claude/settings.local.json` lacks the sandbox grant (`"sandbox": { "filesystem": { "allowWrite": ["~/git/ks-docs"] } }`). Tell the user; don't work around it. Record `status: "skipped"` with that reason.
    - The user may also say to skip the step: record `status: "skipped"`.
 4. **Record it in state.yaml**, on Phase 10's current (last) iteration entry:

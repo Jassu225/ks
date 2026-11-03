@@ -68,7 +68,7 @@ export interface BriefingSettings {
   enabled: boolean;
   /** Local times of day ('HH:MM') for a scheduled pass. */
   schedule: string[];
-  /** Names that count as the person being written to ("Jaswanth" anywhere). */
+  /** Names that count as the person being written to (the user's name, anywhere). */
   names: string[];
   /** Slack user ids whose asks get half the usual window. */
   halfTime: string[];

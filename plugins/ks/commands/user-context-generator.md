@@ -18,6 +18,8 @@ Example: `workflow/jaswanth/basic-egl-optimisation` → `workflow/jaswanth/basic
 
 Follow these steps in order. **Each step is iterative** - keep asking clarifying questions until the user explicitly says they are satisfied or asks to move to the next step.
 
+**Business context:** when the user names a feature, page, term, rule or integration, look it up in the knowledge base (grep `~/git/ks-docs/content/`, read the matching concepts; `content/domain/terminology.md` has the acronyms). Use it to understand what they mean and ask sharper questions, for example who uses the page or which rule applies. The document records what the user says: don't copy concepts into it, and ask rather than assume when a concept and the user disagree.
+
 ### Step 1: Gather Customer Problem
 Ask: "What problem are customers facing? Describe the pain point or frustration."
 

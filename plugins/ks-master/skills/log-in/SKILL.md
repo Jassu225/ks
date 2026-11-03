@@ -1,14 +1,14 @@
 ---
 name: log-in
-description: Start Jaswanth's working day - a catch-up Briefing pass, then what is overdue, hot and promised for today, a roll call of his Claude sessions from the ks-flow board, and one ordered plan for the day, saved to the day's log. Use when he says log in, good morning, start my day, or runs /ks-master:log-in.
+description: Start the user's working day - a catch-up Briefing pass, then what is overdue, hot and promised for today, a roll call of their Claude sessions from the ks-flow board, and one ordered plan for the day, saved to the day's log. Use when they say log in, good morning, start my day, or runs /ks-master:log-in.
 argument-hint: (no arguments)
 ---
 
 # Log in
 
 The start of the day: catch up on Slack, show what is owed, see where every
-session stands, and agree one ordered plan. Short, scannable output: he reads
-it on his phone too.
+session stands, and agree one ordered plan. Short, scannable output: they read
+it on their phone too.
 
 ## 1. Catch up
 
@@ -43,12 +43,12 @@ In this order, one line per entry, nothing empty shown:
    `waiting on you (<tool>)`, `Inbox: N questions`, `running`, `idle`, `no
    session`, `done — worktree left`. Add the PR link when there is one.
 7. **Plan for today** — one numbered list, in this order: overdue items;
-   sessions blocked on him (waiting / Inbox); hot items; the quick-replies batch
+   sessions blocked on them (waiting / Inbox); hot items; the quick-replies batch
    as one step; promises due today; today's other items; then the units to
    push forward, the one closest to done first. Mark FYIs as "read when free"
    at the end, as a count.
 
-Ask whether he wants to change the order. Change it only as he says.
+Ask whether they want to change the order. Change it only as they say.
 
 ## 4. Save the day's log
 
@@ -73,7 +73,7 @@ The board's Daily log page reads this file; keep exactly these names:
 }
 ```
 
-- `plan`: the ordered plan, one string per step (the final order, if he
+- `plan`: the ordered plan, one string per step (the final order, if they
   changed it).
 - `sessions`: the roll call, one entry per unit. `unit` and `state` are never
   empty; `sessionId` and `phase` are a string or `null` (never `""` — the CLI
@@ -82,5 +82,5 @@ The board's Daily log page reads this file; keep exactly these names:
   `remove worktree` (free text when none fits); leave the key out when there
   is nothing to suggest.
 
-Never archive anything and never change a due time here; if he says an item is
-done, tell him to archive it on the board.
+Never archive anything and never change a due time here; if they say an item is
+done, tell them to archive it on the board.

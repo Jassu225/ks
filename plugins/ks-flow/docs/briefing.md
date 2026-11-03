@@ -1,7 +1,7 @@
 # Briefing — design and build contract
 
 A master Claude session reads Slack every six hours and puts everything that
-needs Jaswanth on the ks-flow board with a due time. Each item escalates
+needs the user on the ks-flow board with a due time. Each item escalates
 (calm → warm → hot → overdue) as its time runs out, and **only the person
 archives** — nothing closes or archives on its own. Goals: accountability
 (nothing owed is lost, "I'll do it" is tracked as a promise) and efficiency
@@ -216,7 +216,7 @@ through the daemon-side store (`src/lib/db`) for the configured project.
 | `daily get [<YYYY-MM-DD>]` | one daily log |
 
 Board settings (`board-settings.json`, block `briefing`): `{ enabled: boolean,
-schedule: ['00:00','06:00','12:00','18:00'], names: ['Jaswanth'], halfTime:
+schedule: ['00:00','06:00','12:00','18:00'], names: ['<your name>'], halfTime:
 string[] /* Slack user ids, empty for now */, slackUserId: string | null }`.
 
 ## The master
@@ -252,8 +252,8 @@ string[] /* Slack user ids, empty for now */, slackUserId: string | null }`.
     (a new window in the tmux session `ks-master`, or that session created).
   - Every new master's first message: `/ks-master:start` (its own skill — "Let's resume working on this project" made a master in the karmasuite checkout resume a ticket workflow instead);
     it reads the newest file in the master handoffs folder first.
-- **Slack scope**: DMs (incl. group DMs), @mentions anywhere, "Jaswanth"
-  written anywhere, and the person's own messages (to spot promises and
+- **Slack scope**: DMs (incl. group DMs), @mentions anywhere, the person's
+  name written anywhere, and the person's own messages (to spot promises and
   replies; never shown as items). No channel is read in full.
 - **Sandbox**: in the master's project `ks-flow` must be a sandbox-excluded
   first-word command (like `slack`), and PocketBase on 127.0.0.1 reachable.

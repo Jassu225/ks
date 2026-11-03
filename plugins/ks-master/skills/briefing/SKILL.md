@@ -1,20 +1,20 @@
 ---
 name: briefing
-description: Run one Briefing pass — read Slack since the last cursor (DMs and group DMs, @mentions, "Jaswanth" written anywhere, and his own messages for promises), and put everything that needs him on the ks-flow board as items with due times. The ks-master session's job on every scheduled slot, the board's "Brief me now", log-in and log-off. Arguments - <trigger> [slot], trigger one of schedule, button, log-in, log-off, manual.
+description: Run one Briefing pass — read Slack since the last cursor (DMs and group DMs, @mentions, the user's name written anywhere, and their own messages for promises), and put everything that needs them on the ks-flow board as items with due times. The ks-master session's job on every scheduled slot, the board's "Brief me now", log-in and log-off. Arguments - <trigger> [slot], trigger one of schedule, button, log-in, log-off, manual.
 argument-hint: <schedule|button|log-in|log-off|manual> [HH:MM]
 ---
 
 # Briefing pass
 
 One pass reads Slack from the last cursor up to now and leaves the board
-holding one item per message that needs Jaswanth: what is asked of him (`ask`),
-what he said he would do (`promise`), and what he should know (`fyi`), each with
+holding one item per message that needs the user: what is asked of them (`ask`),
+what they said they would do (`promise`), and what they should know (`fyi`), each with
 a due time. You (the master) open and close the run; **a subagent does the
 reading**, so the Slack text never fills your context.
 
 Rules that apply throughout (the master instructions have the rest): the only
 write path is `ks-flow briefing …`; there is no archive and you never ask for
-one; a due time Jaswanth set (`dueSetByYou`) is never changed; `slack` and
+one; a due time the user set (`dueSetByYou`) is never changed; `slack` and
 `ks-flow` are the first word of each Bash command, one call per command, no
 pipes or loops; never supply `SLACK_TOKEN`.
 
@@ -62,12 +62,12 @@ ks-flow briefing run finish <RUN> --added <n> --updated <n> --failed "<what went
 ## 4. Report
 
 For `log-in` and `log-off` triggers, return only the counts and the reader's
-"most urgent" lines: the calling skill reports. Otherwise tell Jaswanth, in at
+"most urgent" lines: the calling skill reports. Otherwise tell the user, in at
 most six lines:
 
 - `Briefing <HH:MM>: N new, M updated` (plus "nothing new" when both are 0).
 - Anything overdue or due within two hours, one line each: title — who — due.
-- Promises of his due today.
+- Their promises due today.
 - Evidence added ("looks done — archive on the board if so").
 
 Then stop. Do not offer to do the items, and never archive.
@@ -78,7 +78,7 @@ Then stop. Do not offer to do the items, and never archive.
 
 Paste this to the subagent, with the placeholders filled in.
 
-> You read Slack for Jaswanth's Briefing and write what needs him to the ks-flow
+> You read Slack for the user's Briefing and write what needs them to the ks-flow
 > board. Run `<RUN>`, window from `<FROM>` to `<TO>` (ISO; include a message
 > when FROM ≤ its time < TO).
 >
@@ -90,12 +90,12 @@ Paste this to the subagent, with the placeholders filled in.
 > look for one.
 >
 > **A. What you know already.** Run `ks-flow briefing context`. Keep:
-> `settings.names` (names to look for, e.g. "Jaswanth"), `settings.halfTime`
+> `settings.names` (names to look for: the user's name and any nicknames), `settings.halfTime`
 > (Slack user ids whose windows are halved — the CLI applies that itself),
 > `knownKeys` (every item's key, archived ones too), `open` (open items: their
 > `uid`, `key`, `groupKey`, `source.messageUrl`, `dueSetByYou`), and
 > `board.units` (`identifier`, `title`, `pr`) for linking items to tickets.
-> Then `slack user me --json` for his Slack user id and handle.
+> Then `slack user me --json` for their Slack user id and handle.
 >
 > **B. Read Slack in the window.** Collect every message below, deduplicated by
 > channel + ts. `after:` in a search is a whole day and exclusive: use the day
@@ -106,12 +106,12 @@ Paste this to the subagent, with the placeholders filled in.
 >    `slack channel history <id> --oldest <FROM> --latest <TO> --limit 200 --json`.
 >    For a message with `replyCount`, read its thread
 >    (`slack message thread <id> <ts> --json`) and keep the replies in the window.
->    Every DM message to him is a candidate, his own included (for promises).
+>    Every DM message to them is a candidate, their own included (for promises).
 > 2. *@mentions anywhere.* `slack search messages "@<handle> after:<day>" --sort timestamp --limit 100 --json`;
->    keep hits whose text contains `<@<his id>>`.
-> 3. *His name written anywhere.* For each of `settings.names`:
+>    keep hits whose text contains `<@<their id>>`.
+> 3. *Their name written anywhere.* For each of `settings.names`:
 >    `slack search messages "<name> after:<day>" --sort timestamp --limit 100 --json`.
-> 4. *His own messages* (to find promises and replies; never items in
+> 4. *Their own messages* (to find promises and replies; never items in
 >    themselves unless they promise something):
 >    `slack search messages "from:@<handle> after:<day>" --sort timestamp --limit 100 --json`.
 >
@@ -142,22 +142,22 @@ Paste this to the subagent, with the placeholders filled in.
 >   (`slack user info <id> --json`, the display or real name).
 > - `text`: the exact message text. `sentAt`: the ts as an ISO time.
 >
-> When you need the thread around a message (to see whether he already
+> When you need the thread around a message (to see whether they already
 > answered, what was asked, whether a promise was kept), read it:
 > `slack message thread <channel> <threadTs or ts> --json`. Reactions count as
-> answers: his ✅ / 👍 on an ask means he answered it.
+> answers: their ✅ / 👍 on an ask means they answered it.
 >
 > **D. Classify each message** — one item per message, never merged:
 >
-> - **ask**: someone asks him to do, answer, review, decide or send something,
->   and he has not already done it (no reply or reaction from him after it).
-> - **promise**: his own message committing to something ("I'll…", "will do",
->   "let me check", "on it", "I'll send it tomorrow"). The source is his message;
->   the title is what he promised, to whom.
-> - **fyi**: addressed to him or about him, needs no action, but he should know
->   (a decision made, a heads-up, "Jaswanth's change broke X" with no ask).
+> - **ask**: someone asks them to do, answer, review, decide or send something,
+>   and they have not already done it (no reply or reaction from them after it).
+> - **promise**: their own message committing to something ("I'll…", "will do",
+>   "let me check", "on it", "I'll send it tomorrow"). The source is their message;
+>   the title is what they promised, to whom.
+> - **fyi**: addressed to them or about them, needs no action, but they should know
+>   (a decision made, a heads-up, "<name>'s change broke X" with no ask).
 > - **skip**: chit-chat, thanks, bots and automated notices, things already
->   answered, his own messages that promise nothing.
+>   answered, their own messages that promise nothing.
 >
 > `title`: one line, what is asked or promised ("Review Priya's PR #812 —
 > grant export"). `why`: one line, why it is on the list and why that due time
@@ -172,10 +172,10 @@ Paste this to the subagent, with the placeholders filled in.
 > | Case | dueRule | What you set |
 > |---|---|---|
 > | The message names a deadline ("by Friday 3 pm", "before the demo at 14:00") | `message` | `dueAt` = that time (ISO, local zone), `dueReason` = the words |
-> | His promise: "today", "EOD", "tonight" | `promise` | `promise: "eod"` (19:00 that working day) |
-> | His promise: "tomorrow" | `promise` | `promise: "tomorrow"` (next working day 12:00) |
-> | His promise with a time ("by 4 pm", "Monday morning") | `promise` | `promise: "<ISO time>"` |
-> | His promise with no time | `promise` | `promise: "none"` (+24 h) |
+> | Their promise: "today", "EOD", "tonight" | `promise` | `promise: "eod"` (19:00 that working day) |
+> | Their promise: "tomorrow" | `promise` | `promise: "tomorrow"` (next working day 12:00) |
+> | Their promise with a time ("by 4 pm", "Monday morning") | `promise` | `promise: "<ISO time>"` |
+> | Their promise with no time | `promise` | `promise: "none"` (+24 h) |
 > | An ask in a DM or group DM | `dm` | nothing (+4 h) |
 > | An ask by @mention or by name in a channel | `mention` | nothing (+24 h) |
 > | fyi | `fyi` | nothing (+24 h, never past "warm") |
@@ -190,7 +190,7 @@ Paste this to the subagent, with the placeholders filled in.
 > - Key in `knownKeys` and the item is open: include it again only if
 >   something changed (a better title, new links, evidence, now quick, now
 >   linked to a unit). If it has `dueSetByYou: true`, leave `dueAt` and
->   `promise` out — his time stands. Key of an archived item: the
+>   `promise` out — their time stands. Key of an archived item: the
 >   CLI skips it; don't bother.
 > - New key: check its thread with
 >   `ks-flow briefing find --thread <threadUrl, or messageUrl for a root>`.
@@ -199,11 +199,11 @@ Paste this to the subagent, with the placeholders filled in.
 >   item there archived: add it — the CLI sets `linkedTo` to the newest
 >   archived one.
 >
-> **G. Evidence.** When what you read suggests an open item is done (he
-> replied with what was asked, the PR merged, he delivered a promise), add a
+> **G. Evidence.** When what you read suggests an open item is done (they
+> replied with what was asked, the PR merged, they delivered a promise), add a
 > hint — never more than that:
 > `ks-flow briefing evidence <uid> --text "<what you saw, one line>" --url <messageUrl>`.
-> Evidence never closes anything; only Jaswanth archives.
+> Evidence never closes anything; only the user archives.
 >
 > **H. Write.** Put all items in one JSON array (use the Write tool; `echo
 > $TMPDIR` gives a writable folder) at `<TMPDIR>/ks-master/<RUN>/items.json`.

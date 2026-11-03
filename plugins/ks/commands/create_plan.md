@@ -101,6 +101,8 @@ When this command is invoked:
    - Research documents for codebase patterns and insights
    - Do NOT attempt to read `user-stories.md`, `prototype.md`, `tad.md`, `prd.md`, or `linear-tickets.md`
 
+   **Knowledge base (both workflow types):** grep `~/git/ks-docs/content/` for the feature, page, terms and business rules this work touches (or start at `content/index.md`), and read the matching concepts. Use them for the business context of the plan: who uses the feature, which rules and numbers it must respect, what integrations sync. The plan must not rely on broken behavior: name each bullet in those concepts' `## Known issues` sections in "Current State Analysis" and say whether the plan works around it, fixes it, or leaves it alone. A concept without a `verified` key is a lead to confirm in the code, not a fact. Give research agents the relevant concept paths as leads.
+
    **For iteration 2+ (both workflow types):**
    - Previous plan file(s): `{project-directory-path}/resources/implementation-plan-*.md`
    - Read the latest previous plan fully to understand what was already planned and implemented

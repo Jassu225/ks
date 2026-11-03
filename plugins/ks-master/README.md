@@ -1,7 +1,7 @@
 # ks-master
 
 The master session behind ks-flow's **Briefing**: one long-lived Claude session
-that reads Slack every six hours and puts everything that needs Jaswanth on the
+that reads Slack every six hours and puts everything that needs the user on the
 ks-flow board with a due time, runs the day's log-in and log-off, and restarts
 itself before its context fills up. The design and every file format are in
 [`plugins/ks-flow/docs/briefing.md`](../ks-flow/docs/briefing.md); this README
@@ -22,8 +22,9 @@ and its skills only make sense in the master.
 | `skills/start` | `/ks-master:start`: every new master's first message. Reads the newest master handoff (none = first master), finishes what it left half done, reports in two lines. Never resumes a ticket or project workflow |
 | `skills/briefing` | `/ks-master:briefing <trigger> [slot]`: one Slack pass. The master opens and closes the run; a subagent reads Slack and writes the items |
 | `skills/log-in` | `/ks-master:log-in`: catch-up pass, overdue/hot/promises, session roll call, the day's plan, saved to the daily log |
-| `skills/log-off` | `/ks-master:log-off`: last pass, archived/open/slipped, promises due tomorrow, roll call with suggestions, time from `ks-time`, a walk through open items (archive or keep: he archives on the board), daily log, restart |
+| `skills/log-off` | `/ks-master:log-off`: last pass, archived/open/slipped, promises due tomorrow, roll call with suggestions, time from `ks-time`, a walk through open items (archive or keep: the user archives on the board), daily log, restart |
 | `skills/restart` | `/ks-master:restart <reason>`: handoff into the master handoffs folder, then `claude-ks-rc-restart --master --handoff <file>` |
+| `skills/docs-review` | `/ks-master:docs-review [paths]`: strict review of the uncommitted changes in `~/git/ks-docs/content` before the user commits them. A subagent checks OKF format, product knowledge vs code detail, the three gotcha checks (reusable, recurring, not local), and size and duplication. It returns a table with 1–5 scores (product value, reusability, recurrence, conciseness) and keep/trim/discard per file, plus trimmed text for each trim. Report only: it never edits, deletes, verifies or commits. The rubric and the report format are in `references/reviewer.md`; calibration pairs are in `references/examples.md` (add new real cases there) |
 
 ## Starting and restarting
 

@@ -15,7 +15,7 @@ You hand off and get replaced by a fresh master in the same tmux pane. Reason:
   finish`): finish it now — with its counts if the reader reported, else
   `ks-flow briefing run finish <run> --added 0 --updated 0 --failed "restart"`
   so the next pass reads the window again.
-- Anything you were in the middle of with Jaswanth (a log-off walk, a
+- Anything you were in the middle of with the user (a log-off walk, a
   question): note it for the handoff; don't start new work.
 
 ## 2. Write the handoff
@@ -28,10 +28,10 @@ Write it into the master handoffs folder (`$KS_MASTER_HANDOFFS`, run
 (items, runs, cursor and daily logs live in ks-flow; don't copy them):
 
 - **What Happened**: since the last handoff, in 1–3 sentences.
-- **Open with Jaswanth**: questions you asked him and are waiting on, things he
+- **Open with the user**: questions you asked them and are waiting on, things they
   asked you to do later, a log-off walk not finished (which item you were on).
-- **Decisions he made** that change how you brief (a sender to treat as
-  half-time, a channel or person to ignore, a wording he wants).
+- **Decisions they made** that change how you brief (a sender to treat as
+  half-time, a channel or person to ignore, a wording they want).
 - **Resume Point**: the exact next action, or "Nothing open: wait for the next
   wake-up."
 
