@@ -16,7 +16,12 @@
         "name": "Jaswanth Sai Sattenapalli"
       },
       "repository": "https://github.com/karmasuite/ks",
-      "keywords": ["karmasuite", "linear", "workflow", "project-management"]
+      "keywords": [
+        "karmasuite",
+        "linear",
+        "workflow",
+        "project-management"
+      ]
     },
     {
       "name": "ks-flow",
@@ -27,7 +32,13 @@
         "name": "Jaswanth Sai Sattenapalli"
       },
       "repository": "https://github.com/karmasuite/ks",
-      "keywords": ["claude-code", "kanban", "sessions", "notifications", "firestore"]
+      "keywords": [
+        "claude-code",
+        "kanban",
+        "sessions",
+        "notifications",
+        "firestore"
+      ]
     },
     {
       "name": "ks-agent-limit",
@@ -38,7 +49,12 @@
         "name": "Jaswanth Sai Sattenapalli"
       },
       "repository": "https://github.com/karmasuite/ks",
-      "keywords": ["claude-code", "agents", "concurrency", "limit"]
+      "keywords": [
+        "claude-code",
+        "agents",
+        "concurrency",
+        "limit"
+      ]
     },
     {
       "name": "ks-master",
@@ -49,7 +65,29 @@
         "name": "Jaswanth Sai Sattenapalli"
       },
       "repository": "https://github.com/karmasuite/ks",
-      "keywords": ["claude-code", "slack", "briefing", "ks-flow"]
+      "keywords": [
+        "claude-code",
+        "slack",
+        "briefing",
+        "ks-flow"
+      ]
+    },
+    {
+      "name": "ks-browser",
+      "source": "./plugins/ks-browser",
+      "description": "Browser testing on demand: the agent-browser MCP server and a skill that records a test run as a short review video with title cards and chapters",
+      "version": "0.1.0",
+      "author": {
+        "name": "Jaswanth Sai Sattenapalli"
+      },
+      "repository": "https://github.com/karmasuite/ks",
+      "keywords": [
+        "claude-code",
+        "browser",
+        "testing",
+        "video",
+        "agent-browser"
+      ]
     }
   ]
 }

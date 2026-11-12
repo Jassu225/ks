@@ -1,5 +1,10 @@
 # Releases
 
+## 2026-11-04
+
+- **Type checking is no longer a Stop hook**: `quality-typecheck.sh` ran tsc on every Stop and SubagentStop, which got too heavy. Format and lint still run as hooks. Agents now run the type check once per phase during verification (`/ks:implement-plan`, `/ks:build-prototype`), and the phase summary reports it as PASS/FAIL.
+- **ks-docs is updated only after a release**: Phase 10 no longer writes to ks-docs right after the code review. Once the PR is ready, it tells you and waits (`docs: { status: "awaiting-release" }` on the iteration, Phase 10 still in progress) while you merge and deploy. When you say it's released, in that session or a later one through `/ks:project-manager`, it checks the PR is merged, then the writer works from the PR's diff (`gh pr diff`) and checks its claims against the released code on `origin/main`. Then Phase 10 is marked complete and the handoff is written. Agents never merge or deploy.
+
 ## 2026-11-02
 
 - **ks-docs records known issues**: problems KarmaSuite has today that aren't fixed yet go in a `## Known issues` section of the concept they affect, one bullet each: what goes wrong, what a change there must not assume, and the Linear ticket. Phase 2 lists the ones in the areas it researches, Phase 9's plan says whether it works around, fixes or leaves each one, and Phase 10's writer adds problems the work found but didn't fix and removes the ones it fixed. `/ks-master:docs-review` checks each issue is current, in the right concept and linked to a ticket.

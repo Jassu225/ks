@@ -235,7 +235,7 @@ This will:
 
 ### Quality checks
 
-`quality-format.sh` (Prettier), `quality-lint.sh` (ESLint), and `quality-typecheck.sh` (tsc) run automatically on Stop and SubagentStop via `hooks/hooks.json`, and can also be run by hand:
+`quality-format.sh` (Prettier) and `quality-lint.sh` (ESLint) run automatically on Stop and SubagentStop via `hooks/hooks.json`. `quality-typecheck.sh` (tsc) is no longer a hook (too heavy on every stop): agents run it once per phase during verification. All three can be run by hand:
 
 ```bash
 plugins/ks/scripts/quality-format.sh
@@ -261,6 +261,10 @@ Use it only for files that are *already* failing on the main branch — otherwis
 - **`statusline`**: the settings `statusLine` command. It prints session name (`@<name>`), context, branch, the checkout's Linear ticket as an OSC 8 link, and the rate-limit windows. Under `claude-ks` (`KS_MOD_STATUSLINE=1`, exported by `claude-ks`) it stops after session, context and branch: the ks plugin draws the ticket and phase pills and the rate limits under the prompt (`hooks/register.tsx`; see the plugin README, "Statusline").
 - **`workflow-unit`**: prints the ks workflow unit that owns the current checkout, tab-separated: `<state.yaml path>  <ticket|project>  <identifier or ->  <linear url>  <name>`. It matches the `state.yaml` under `workflow/` whose `worktree_dir` is the git root, else (older states) the ticket id in the branch name. Exits 1 outside a workflow checkout. The statusline and `session-title.sh` use it; the plugin's hooks do the same lookup in-process.
 - **`session-title.sh`**: a `SessionStart` hook (startup, resume, clear) that sets `sessionTitle` to the ticket id (`KAR-123`), or a project's workflow folder name. It stays short and space-free because it is also the peer name `ListAgents` prints and `SendMessage` takes. That peer name is fixed at startup, before hooks run, so the hook alone only renames the transcript; `claude-ks` passes `--name "$(session-title.sh --print)"` at launch (skipped when you pass `--name`, `--resume` or `--continue`) so a new session answers to `KAR-123` from the start.
+
+### Browser testing (`claude-ks-test`)
+
+- **`claude-ks-test [<claude-ks args>…]`** runs `claude-ks --local-plugin ks-browser` with every argument passed through: a session with the agent-browser MCP server and the `test-video` skill (see `plugins/ks-browser/README.md`). It finds `claude-ks` next to itself, so it works from any checkout of this repo.
 
 ### Remote Control relaunch (`claude-ks-rc`, `claude-ks-rc-restart`)
 

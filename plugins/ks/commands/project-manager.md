@@ -82,8 +82,8 @@ If the user says no, or the dry run fails (not in tmux, or ks-flow not running),
 
 #### Phase 10: Implementation
 - Supports **iteration** — see Phase 9-10 Iteration below
-- **Last substep, Update ks-docs:** `/ks:implement-plan` ends each iteration by writing what the work taught into the knowledge base `~/git/ks-docs` (uncommitted, for the user to review) and recording the outcome as `docs` on Phase 10's current iteration in `state.yaml` (`status: updated | none-needed | skipped | unavailable`). See its "Update ks-docs" section. It is not a separate phase.
-- **Post-command bookkeeping:** After `/ks:implement-plan` completes (all phases committed, PR created, code review addressed, ks-docs step done), the project-manager checks that Phase 10's current iteration has a `docs` entry. If it is missing (the session ended before that step), run the "Update ks-docs" section of `/ks:implement-plan` now. Then mark phase 10 as `COMPLETED` in `state.yaml` and run `/ks:create_handoff`
+- **Release, then Update ks-docs (last substeps):** after the PR and its code review, `/ks:implement-plan` waits for the user to merge and deploy the change (it never merges or deploys), recording `docs: { status: "awaiting-release" }` on Phase 10's current iteration; Phase 10 stays `IN_PROGRESS`. Only when the user says it's released does it write what the work taught into the knowledge base `~/git/ks-docs` (uncommitted, for the user to review) and record the outcome as `docs` (`status: updated | none-needed | skipped | unavailable`). See its "Wait for the release" and "Update ks-docs" sections. Neither is a separate phase.
+- **Post-command bookkeeping:** Phase 10 is complete only when its current iteration's `docs` has a final status (not `awaiting-release`). When resuming a workflow whose Phase 10 is waiting (`awaiting-release`, or no `docs` entry with the PR already created): show the PR and its state (`gh pr view <number> --json state,mergedAt`) and ask whether it's released. If the user says yes, run the "Update ks-docs" section of `/ks:implement-plan`; if not, leave it waiting. Once the docs step is done, mark phase 10 as `COMPLETED` in `state.yaml` and run `/ks:create_handoff`
 
 ---
 
@@ -207,7 +207,7 @@ The current iteration number is the length of the `iterations` array. Timestamps
       docs: { status: "none-needed", note: "Copy change only", at: "2026-02-01T11:58:00Z" }
 ```
 
-For phases 1-8, timestamps remain at the phase level (`started_at`, `ended_at`) as before. `docs` on a Phase 10 iteration records the ks-docs substep (see Phase 10 above).
+For phases 1-8, timestamps remain at the phase level (`started_at`, `ended_at`) as before. `docs` on a Phase 10 iteration records the ks-docs substep: `awaiting-release` until the user releases the change, then its outcome (see Phase 10 above).
 
 ### Interaction with Revisit
 

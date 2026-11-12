@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "agent-browser": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/agent-browser-mcp"
+    }
+  }
+}

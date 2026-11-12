@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Starts the agent-browser MCP server (stdio) for this checkout.
+#
+# agent-browser launches its own Chrome with a clean profile: none of the
+# user's Chrome profiles, accounts or tabs are reachable from it.
+#
+# - One browser per checkout (AGENT_BROWSER_SESSION, ks-<checkout folder>,
+#   shortened with a hash when long), so ticket sessions testing in
+#   parallel never share a browser or tabs.
+# - A saved sign-in per checkout (AGENT_BROWSER_RESTORE; agent-browser joins
+#   the name with the session's): the user signs in once in a visible
+#   window, agent-browser saves the cookies and storage and loads them on
+#   every launch, encrypted with a key from the login Keychain (below).
+#
+# KS_BROWSER_TOOLS picks the MCP tool profiles (default core,debug,state,tabs:
+# navigation and interaction, recording and batch, saved sign-in state, tabs).
+set -euo pipefail
+
+AGENT_BROWSER_VERSION="0.41.2"
+
+plugin_root="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# Never the user's own Chrome or a copy of one of their profiles, whatever a
+# checkout or the environment says:
+# - the plugin's config file replaces agent-browser's default ones
+#   (~/.agent-browser/config.json and a checkout's ./agent-browser.json);
+# - settings that would attach to a running Chrome or load a profile are
+#   cleared (environment variables override the config file);
+# - a namespace of its own, so a background agent-browser process started
+#   outside this plugin, with other settings, is never reused.
+export AGENT_BROWSER_CONFIG="$plugin_root/agent-browser.json"
+unset AGENT_BROWSER_PROFILE AGENT_BROWSER_AUTO_CONNECT AGENT_BROWSER_CDP AGENT_BROWSER_PIN_TAB AGENT_BROWSER_EXECUTABLE_PATH AGENT_BROWSER_ARGS
+export AGENT_BROWSER_NAMESPACE="ks-browser"
+
+# One browser per checkout. agent-browser's socket path caps the session
+# name, so a long checkout folder is cut to 15 characters plus a hash.
+checkout="$(basename "$root")"
+if [ "${#checkout}" -gt 24 ]; then
+  checkout="${checkout:0:15}-$(printf '%s' "$checkout" | shasum | cut -c1-8)"
+fi
+export AGENT_BROWSER_SESSION="${AGENT_BROWSER_SESSION:-ks-$checkout}"
+export AGENT_BROWSER_RESTORE="${AGENT_BROWSER_RESTORE:-karmasuite}"
+
+# The saved sign-in is encrypted (AES-256-GCM) with a key kept in the login
+# Keychain, generated there on first use, so the file under
+# ~/.agent-browser/sessions/ is never readable on its own. An
+# AGENT_BROWSER_ENCRYPTION_KEY already set wins. Without a key the server
+# doesn't start, rather than save the sign-in in plain text.
+if [ -z "${AGENT_BROWSER_ENCRYPTION_KEY:-}" ]; then
+  kc_service="ks-browser agent-browser sign-in key"
+  key="$(security find-generic-password -a "$USER" -s "$kc_service" -w 2>/dev/null || true)"
+  if [ -z "$key" ]; then
+    # First use. If two servers start at once, one add fails as a duplicate;
+    # both then read back whichever key the Keychain kept.
+    security add-generic-password -a "$USER" -s "$kc_service" -l "$kc_service" \
+      -j "Encrypts agent-browser's saved sign-in for the ks-browser plugin" \
+      -w "$(openssl rand -hex 32)" >/dev/null 2>&1 || true
+    key="$(security find-generic-password -a "$USER" -s "$kc_service" -w 2>/dev/null || true)"
+  fi
+  if [[ ! "$key" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "agent-browser-mcp: couldn't get the sign-in encryption key from the login Keychain (item \"$kc_service\"); not starting, so the sign-in is never saved unencrypted. Unlock the Keychain or allow access, then reconnect this server in /mcp." >&2
+    exit 1
+  fi
+  export AGENT_BROWSER_ENCRYPTION_KEY="$key"
+  unset key
+fi
+
+# Window size: 1512x982 (a 14" MacBook Pro screen, in points), hidden or
+# visible, so every recording is the same size. KS_BROWSER_WINDOW (WxH)
+# overrides.
+window="${KS_BROWSER_WINDOW:-1512x982}"
+[[ "$window" =~ ^[0-9]+x[0-9]+$ ]] || window="1512x982"
+export AGENT_BROWSER_ARGS="--window-size=${window%x*},${window#*x}"$'\n'"--window-position=0,0"
+
+# The test-video title cards (window.__ksVideo) on every page, re-added after
+# each navigation. Defining them shows nothing until the skill calls them.
+export AGENT_BROWSER_INIT_SCRIPTS="$plugin_root/skills/test-video/scripts/title-card.js"
+
+exec npx -y "agent-browser@${AGENT_BROWSER_VERSION}" mcp --tools "${KS_BROWSER_TOOLS:-core,debug,state,tabs}"

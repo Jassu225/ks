@@ -253,6 +253,13 @@ else
     warn "CLAUDE.local.md not found in main repo, skipping"
 fi
 
+# Copy .mcp.json (gitignored: the project's MCP servers) if it exists.
+# The servers are enabled by enabledMcpjsonServers in .claude/settings.local.json, copied below.
+if [[ -f "${MAIN_REPO_DIR}/.mcp.json" ]]; then
+    cp "${MAIN_REPO_DIR}/.mcp.json" "${WORKTREE_PATH}/.mcp.json"
+    success "Copied .mcp.json"
+fi
+
 # Copy hack/ folder and set execute permissions
 info "Copying hack/ folder..."
 if [[ -d "${MAIN_REPO_DIR}/hack" ]]; then

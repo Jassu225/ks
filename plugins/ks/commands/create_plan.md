@@ -396,7 +396,7 @@ cd packages/prisma && pnpm migrate:dev
 
 ## Code Quality Requirements
 
-Formatting, linting, and type checking are handled automatically by hooks on every agent stop — no manual commands needed. Tests must still be run explicitly during phase verification.
+Formatting and linting are handled automatically by hooks on every agent stop — no manual commands needed. Type checking (`quality-typecheck.sh`) and tests must be run explicitly during phase verification.
 
 ## Commit Message Format
 

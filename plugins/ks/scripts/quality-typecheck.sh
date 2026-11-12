@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hook: Type-check changed TypeScript files
-# Runs on Stop and SubagentStop events
+# Run by hand (agents: once per phase during verification); not a Stop hook
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/quality-files.sh"

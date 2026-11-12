@@ -26,7 +26,7 @@ Use the `/ks:create_plan` command for implementation planning. Plans should be a
 
 ## Code Quality
 
-Do not run ESLint, Prettier, or TypeScript type checking manually — hooks handle formatting, linting, and type checking automatically on every Stop and SubagentStop event. The orchestrator (`/ks:implement-plan`) relies on these hooks rather than running formatting or linting explicitly. Tests must still be run explicitly during phase verification since hooks do not cover test execution.
+Do not run ESLint or Prettier manually — hooks handle formatting and linting automatically on every Stop and SubagentStop event. Type checking is not a hook (it was too heavy to run on every stop): run `quality-typecheck.sh` (on `PATH`; it checks only the changed files) once per phase during phase verification, not after every edit. Tests must also be run explicitly during phase verification.
 
 ## Code Review
 

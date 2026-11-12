@@ -32,7 +32,7 @@ Example invocation:
 4. **Ask comprehensive clarifying questions** before writing any code
 5. **Identify the target page** to build the prototype in
 6. **Build a high-quality prototype** following KarmaSuite patterns
-7. **Validate** the code and report any issues (formatting, linting, and type checking are handled by hooks)
+7. **Validate** the code and report any issues (formatting and linting are handled by hooks; run `quality-typecheck.sh` once at the end)
 8. **Create a prototype summary** document at `{project-directory-path}/resources/prototype.md`
 
 ## Phase 1: Requirements Gathering
@@ -263,7 +263,7 @@ Update the todo list as you complete each task:
 
 After implementation is complete:
 
-1. **Formatting, linting, and type checking** are handled automatically by hooks — no manual verification needed.
+1. **Formatting and linting** are handled automatically by hooks. Run `quality-typecheck.sh` once (type checking is not a hook) and fix what it reports.
 
 2. **Provide summary** to the user:
    - Files created/modified

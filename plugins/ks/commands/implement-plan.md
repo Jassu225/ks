@@ -31,7 +31,7 @@ You are the **orchestrator**. You delegate deep analysis and heavy reading to su
 **Output:**
 - Implemented code changes in the KarmaSuite codebase
 - Updated plan (`implementation-plan-{NN}.md`) with completed checkboxes
-- Knowledge-base updates in `~/git/ks-docs/content/` (uncommitted, for the user to review), recorded as `docs` on Phase 10's iteration in `state.yaml`. See [Update ks-docs](#update-ks-docs)
+- Knowledge-base updates in `~/git/ks-docs/content/` once the change is released (uncommitted, for the user to review), recorded as `docs` on Phase 10's iteration in `state.yaml`. See [Update ks-docs](#update-ks-docs)
 
 Example invocation:
 ```
@@ -216,7 +216,8 @@ After all subagents in a batch complete:
 After ALL tasks in a phase are complete:
 
 1. **Run automated verification:**
-   - Formatting, linting, and type checking are handled automatically by hooks — no manual commands needed
+   - Formatting and linting are handled automatically by hooks — no manual commands needed
+   - Run `quality-typecheck.sh` once (type checking is not a hook; it checks only the changed files) and fix what it reports
    - Run existing tests (hooks do not run tests — this must be explicit)
 
 2. **Present phase summary to user:**
@@ -229,7 +230,8 @@ Tasks completed:
 ...
 
 Automated verification:
-- Formatting/Linting/Typecheck: handled by hooks (runs automatically on stop)
+- Formatting/Linting: handled by hooks (runs automatically on stop)
+- [ ] Typecheck: [PASS/FAIL]
 - [ ] Tests: [PASS/FAIL]
 
 Please verify the implementation. Once verified, I'll commit, create a PR (project workflows), and proceed to Phase [N+1].
@@ -277,9 +279,10 @@ Agent(subagent_type: "ks:codebase-pattern-finder", prompt: "Find examples of dra
 
 Before completing each phase, ensure:
 
-1. **Format/Lint/Typecheck**: Handled automatically by hooks on every agent stop — no manual verification needed
-2. **Tests pass**: All existing tests still pass (explicit check required)
-3. **No regressions**: Related features still work
+1. **Format/Lint**: Handled automatically by hooks on every agent stop — no manual verification needed
+2. **Typecheck passes**: `quality-typecheck.sh`, once per phase (explicit check required; not a hook)
+3. **Tests pass**: All existing tests still pass (explicit check required)
+4. **No regressions**: Related features still work
 
 ## Commit Guidelines
 
@@ -336,8 +339,9 @@ Each phase already has its own PR against the project branch. After the final ph
    Agent(subagent_type: "general-purpose", prompt: "Run /code-review to review all changes in the current PR. Report back with any issues found.")
    ```
    Address any high-confidence issues before finalizing.
-3. **Update ks-docs**: see [Update ks-docs](#update-ks-docs) below. The diff is the whole feature: `git diff origin/main...{project-slug}`.
-4. **Congratulate the user**: "Project implementation complete! All phases have been successfully executed."
+3. **Wait for the release**: see [Wait for the release](#wait-for-the-release) below. The PR to release is the final one, to `main`.
+4. **Update ks-docs** once the user says it's released: see [Update ks-docs](#update-ks-docs) below.
+5. **Congratulate the user**: "Project implementation complete! All phases have been successfully executed."
 
 ### Ticket Workflows
 
@@ -348,17 +352,27 @@ Each phase already has its own PR against the project branch. After the final ph
    Agent(subagent_type: "general-purpose", prompt: "Run /code-review to review all changes in the current PR. Report back with any issues found.")
    ```
    Address any high-confidence issues before finalizing.
-3. **Update ks-docs**: see [Update ks-docs](#update-ks-docs) below. The diff is the PR's: `git diff origin/main...HEAD`.
-4. **Congratulate the user**: "Ticket implementation complete! All phases have been successfully executed."
+3. **Wait for the release**: see [Wait for the release](#wait-for-the-release) below.
+4. **Update ks-docs** once the user says it's released: see [Update ks-docs](#update-ks-docs) below.
+5. **Congratulate the user**: "Ticket implementation complete! All phases have been successfully executed."
+
+### Wait for the release
+
+The user merges and deploys; never merge or deploy yourself. ks-docs describes the product as it is live, so it is written only after the release.
+
+1. Tell the user the PR is ready, with its link, and that once they've merged and deployed it they tell you it's released (here, or in a later session through `/ks:project-manager`), and you'll update ks-docs then.
+2. Record `docs: { status: "awaiting-release" }` on Phase 10's current iteration in `state.yaml` (see step 4 of [Update ks-docs](#update-ks-docs)). Phase 10 stays `IN_PROGRESS` until the docs step is done.
+3. If the user asks for changes before releasing, make them (commit, push, re-run the code review on what changed) and wait again.
 
 ### Update ks-docs
 
-KarmaSuite's shared knowledge base is `~/git/ks-docs`, a bundle in the Open Knowledge Format (knowledge in `content/`, the rules for agents in its `CLAUDE.md`). Phase 2 reads it; this step writes back what the work taught, so the next ticket starts from it. It runs once per Phase 10 iteration, after the code-review fixes are pushed, so the docs describe the code as it ships.
+KarmaSuite's shared knowledge base is `~/git/ks-docs`, a bundle in the Open Knowledge Format (knowledge in `content/`, the rules for agents in its `CLAUDE.md`). Phase 2 reads it; this step writes back what the work taught, so the next ticket starts from it. It runs once per Phase 10 iteration, only after the user says the change is released (merged and deployed), so the docs describe what is live.
 
+0. **Check it's released.** The user's word is the trigger: a merged PR alone may not be deployed yet. Confirm each PR of this iteration is merged (`gh pr view <number> --json state,mergedAt`, `state` = `MERGED`). If one isn't, tell the user and wait; don't write anything. Then `git fetch origin`: the released code is `origin/main`.
 1. **Check it's there and clear.**
    - If `~/git/ks-docs/content/index.md` doesn't exist, skip the step and record `status: "unavailable"` (step 4).
    - Run `git status --porcelain -- content` in `~/git/ks-docs` (only `content/` counts: the user's own edits to the tooling don't block). If it prints anything (modified, staged or untracked files), earlier changes are still waiting for the user's review, and ks-docs' `CLAUDE.md` ("Before writing: no unreviewed changes") forbids new writes. Don't spawn the writer. List those files for the user, ask them to review, mark verified and commit, and record `status: "skipped"` with `note: "ks-docs has unreviewed changes"`. Re-run this step once they've committed.
-2. **Spawn the docs writer.** Fill in the paths and the diff command from the workflow step above:
+2. **Spawn the docs writer.** Fill in the paths, the PR numbers and URLs from `state.yaml` `prs[]` (for a project, the final PR to `main`):
 
 ```
 Agent(
@@ -370,8 +384,8 @@ Agent(
 INPUTS
 - Implementation plan: {project-directory-path}/resources/implementation-plan-{NN}.md
 - Codebase research: {project-directory-path}/resources/codebase-research.md
-- The change: run `{diff command}` in {worktree path}; PR(s): {PR URLs from state.yaml prs[]}
-- The code itself, in {worktree path}
+- The change, as released: run `gh pr diff {PR number}` for each PR: {PR URLs}. (After a merge, a branch diff against main is empty or wrong; use the PR's diff.)
+- The code as released: `origin/main` (read a file with `git show origin/main:<path>` in {worktree path}). The worktree holds the merged branch, which may lack later changes on main.
 
 WHAT TO WRITE
 ks-docs is mostly product knowledge and must stay small in detail, but most of the product isn't covered yet. Its CLAUDE.md, \"What belongs here\" and \"Filling gaps: cover the whole flow\", is the standard: follow it strictly.
@@ -381,7 +395,7 @@ ks-docs is mostly product knowledge and must stay small in detail, but most of t
 2a. Known issues (the `## Known issues` section of a concept, see ks-docs' CLAUDE.md \"Known issues\"): if this change fixes one, remove its bullet. If the work found a real problem it didn't fix (out of scope, deferred), add a bullet to the concept of the feature, page or flow it affects: what goes wrong in product terms, when and for whom, what a change there must not assume, and the Linear ticket as a footnote (or \"no ticket yet\"). Confirm it in the code first.
 3. A gotcha only if it passes all three checks: reusable (across features, not one function or one fix), recurring (will trap more than one future change), not local (you'd miss it even after reading the code you're changing). Write it at the level of the rule, not the incident.
 4. Never write code-level detail: function or component names, file paths, CSS values, commit pins, the before/after of this fix. That belongs in the PR description. Never write ticket progress or a summary of the PR.
-5. Check every claim against the code in the worktree. Cite sources where a claim needs one: the Linear ticket or the PR for product behavior, a `blob/main/<path>` link only when the rule can't be stated without the code.
+5. Check every claim against the released code (`origin/main`). Cite sources where a claim needs one: the Linear ticket or the PR for product behavior, a `blob/main/<path>` link only when the rule can't be stated without the code.
 6. When the touched flow is already covered, nothing worth recording is the usual outcome for a bug fix: then write nothing. When it isn't covered, step 1a applies to bug fixes too.
 
 REPORT BACK
@@ -401,7 +415,7 @@ Either a list of every file you created, updated or deprecated under content/ (p
     - started_at: "2026-01-28T10:30:00Z"
       ended_at: null
       docs:
-        status: "updated"        # updated | none-needed | skipped | unavailable
+        status: "updated"        # awaiting-release | updated | none-needed | skipped | unavailable
         files:                   # content/-relative paths; omit when none
           - "codebase/allocation-engine.md"
         note: "Refunds now re-run allocation; added gotcha"   # one line: the writer's reason or the skip reason
