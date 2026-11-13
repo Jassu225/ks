@@ -1,5 +1,10 @@
 # Releases
 
+## 2026-11-13
+
+- **`slack message send/reply/update --text-file <path>`** (`-` for stdin): post text with backticks. A backtick on the command line, even quoted, stops the sandbox from matching `slack` as excluded, so the call ran sandboxed and died with `listen EPERM` before posting; PR-review thread replies with inline code couldn't be sent. The text argument is now optional when `--text-file` is given. `/ks:slack` and the PR-review and release templates say to use it.
+- **Quality hooks work from a subdirectory again**: `quality-files.sh` went back to the caller's directory after collecting the repo-relative file list, so a session whose cwd was a subdirectory (e.g. `apps/www`) matched no files and the format and lint hooks silently did nothing. It now stays at the repo root.
+
 ## 2026-11-04
 
 - **Type checking is no longer a Stop hook**: `quality-typecheck.sh` ran tsc on every Stop and SubagentStop, which got too heavy. Format and lint still run as hooks. Agents now run the type check once per phase during verification (`/ks:implement-plan`, `/ks:build-prototype`), and the phase summary reports it as PASS/FAIL.

@@ -73,6 +73,12 @@ After the user confirms, post the thread reply using the `ts` from Step 2:
 slack message reply C051A3TSM5K <ts> "<thread reply>" --no-unfurl
 ```
 
+Changelog bullets often have inline code. When the reply contains a backtick, write it to a file and post it with `--text-file <absolute path>` instead of the inline text (a backtick on the command line makes the `slack` call run sandboxed, where it fails with `listen EPERM`):
+
+```
+slack message reply C051A3TSM5K <ts> --text-file /abs/path/thread-reply.md --no-unfurl
+```
+
 ## Variables
 
 | Variable | Description | Example |

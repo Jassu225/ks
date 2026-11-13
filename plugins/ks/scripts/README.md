@@ -161,6 +161,12 @@ list. Use `--content-file` for markdown with backticks, as with
 `lib/env.ts`), so `--content-file doc.md`, `slack … -f shot.png` and
 `grain … -o out.mp4` resolve where you ran them.
 
+**Slack text with backticks goes in a file.** `slack message send`, `reply` and
+`update` take `--text-file <path>` (`-` for stdin) instead of the inline text. A
+backtick anywhere on the command line, even quoted, stops the sandbox from
+matching `slack` as excluded, and the CLI then dies with `listen EPERM` before
+posting. A trailing newline in the file is dropped.
+
 ### Grain CLI
 
 CLI for the [Grain public API v2](https://developers.grain.com/) — meeting recordings, transcripts, AI summaries, webhooks. Needs `GRAIN_API_TOKEN` in `.env` (Personal or Workspace token from <https://grain.com/app/settings/integrations?tab=api>).

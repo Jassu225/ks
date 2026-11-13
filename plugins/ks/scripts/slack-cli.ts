@@ -2050,23 +2050,50 @@ channelCmd
 // Message commands
 const messageCmd = program.command('message').description('Message operations');
 
+/**
+ * The message text, given inline or with --text-file (`-` = stdin). The file
+ * form keeps text with backticks (inline code) off the command line: a
+ * backtick there stops the sandbox from matching `slack` as excluded.
+ */
+function messageText(inline: string | undefined, file: string | undefined): string {
+  if (inline !== undefined && file !== undefined) {
+    console.error(chalk.red('Give the text inline or with --text-file, not both'));
+    process.exit(1);
+  }
+  if (file === undefined) {
+    if (inline === undefined) {
+      console.error(chalk.red('Missing the message text: pass it inline or with --text-file <path>'));
+      process.exit(1);
+    }
+    return inline;
+  }
+  try {
+    return readFileSync(file === '-' ? 0 : file, 'utf8').replace(/\n+$/, '');
+  } catch (e) {
+    console.error(chalk.red(`Cannot read --text-file ${file}: ${(e as Error).message}`));
+    process.exit(1);
+  }
+}
+
 messageCmd
-  .command('send <channel> <text>')
+  .command('send <channel> [text]')
   .description('Send a message to a channel')
+  .option('--text-file <path>', 'Read the text from a file ("-" for stdin); use it for text with backticks')
   .option('--thread-ts <ts>', 'Thread timestamp to reply to')
   .option('--blocks <json>', 'Block Kit blocks as JSON string')
   .option('-f, --file <path>', 'Attach a file (repeatable for multiple attachments)', (v: string, acc: string[]) => acc.concat([v]), [] as string[])
   .option('--no-resolve-mentions', 'Leave @handles as literal text (no notification)')
   .option('--no-unfurl', 'No link or media previews on this message (fixed at send; cannot be combined with --file)')
   .option('-j, --json', 'Output as JSON')
-  .action(sendMessage);
+  .action((channel, text, opts) => sendMessage(channel, messageText(text, opts.textFile), opts));
 
 messageCmd
-  .command('update <channel> <ts> <text>')
+  .command('update <channel> <ts> [text]')
   .description('Update a message')
+  .option('--text-file <path>', 'Read the text from a file ("-" for stdin); use it for text with backticks')
   .option('--no-resolve-mentions', 'Leave @handles as literal text (no notification)')
   .option('-j, --json', 'Output as JSON')
-  .action(updateMessage);
+  .action((channel, ts, text, opts) => updateMessage(channel, ts, messageText(text, opts.textFile), opts));
 
 messageCmd
   .command('delete <channel> <ts>')
@@ -2075,12 +2102,13 @@ messageCmd
   .action(deleteMessage);
 
 messageCmd
-  .command('reply <channel> <ts> <text>')
+  .command('reply <channel> <ts> [text]')
   .description('Reply to a message in a thread')
+  .option('--text-file <path>', 'Read the text from a file ("-" for stdin); use it for text with backticks')
   .option('--no-resolve-mentions', 'Leave @handles as literal text (no notification)')
   .option('--no-unfurl', 'No link or media previews on this reply (fixed at send)')
   .option('-j, --json', 'Output as JSON')
-  .action(replyToMessage);
+  .action((channel, ts, text, opts) => replyToMessage(channel, ts, messageText(text, opts.textFile), opts));
 
 messageCmd
   .command('thread <channel> <ts>')

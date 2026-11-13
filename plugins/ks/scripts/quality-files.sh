@@ -23,8 +23,11 @@ if [ -n "$_QF_ROOT" ]; then
   fi
 fi
 
-# Ensure all git commands run from repo root so paths are consistent
-_QF_ORIG_DIR="$PWD"
+# Run from the repo root and STAY there: every path below is repo-relative, and the
+# hooks that source this file pass them straight to prettier / eslint / tsc. Going
+# back to the caller's directory made every path miss the `-f` check whenever the
+# session's cwd was a subdirectory (e.g. apps/www), so the hooks silently processed
+# nothing and still exited 0.
 cd "$(git rev-parse --show-toplevel)" || exit 0
 
 # Get staged TypeScript files
@@ -39,9 +42,6 @@ UNTRACKED_FILES=$(git ls-files --others --exclude-standard 2>/dev/null | grep -E
 # Get files changed on this branch vs main (catches already-committed files)
 DEFAULT_BRANCH="main"
 BRANCH_FILES=$(git diff --name-only "$DEFAULT_BRANCH"...HEAD 2>/dev/null | grep -E '\.(ts|tsx)$' || true)
-
-# Restore original directory
-cd "$_QF_ORIG_DIR"
 
 # Combine, deduplicate, and filter to only existing files
 ALL_FILES=""

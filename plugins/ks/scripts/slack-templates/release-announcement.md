@@ -70,6 +70,8 @@ For more info, please refer to {PROJECT_THREAD}
 
 After the user confirms, post the thread reply using the `ts` from Step 2.
 
+If the reply contains a backtick, write it to a file and post it with `slack message reply <channel> <ts> --text-file <absolute path>` instead of the inline text: a backtick on the command line makes the `slack` call run sandboxed, where it fails with `listen EPERM`.
+
 > **Note:** Omit the `*See it in action:*` line entirely when no demo video is available.
 
 ## Variables

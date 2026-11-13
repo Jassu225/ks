@@ -79,7 +79,12 @@ slack message send general "mention @username in your reply" --no-resolve-mentio
 # No link/media previews on this message (send and reply; not with --file)
 slack message send general "PR: https://github.com/org/repo/pull/1" --no-unfurl
 slack message reply general 1234567890.123456 "see https://example.com" --no-unfurl
+
+# Text with backticks (inline code): put it in a file, pass an absolute path ("-" reads stdin)
+slack message reply general 1234567890.123456 --text-file /abs/path/reply.md --no-unfurl
 ```
+
+**Text with backticks goes in `--text-file`** (`message send`, `reply` and `update`). A backtick anywhere on the command line, even escaped or inside single quotes, stops the sandbox from matching `slack` as excluded, and the CLI then dies with `listen EPERM` before posting. Write the text to a file first (the Write tool, in `$TMPDIR` or the session's scratchpad), then pass its absolute path; the inline text argument is left out. A trailing newline in the file is dropped.
 
 `--no-unfurl` is fixed when the message is posted: Slack has no way to turn a preview on afterwards (only to remove one), so repost to get previews back. `message update` can't change unfurling.
 
