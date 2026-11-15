@@ -704,6 +704,10 @@ export function BriefingPage() {
     const m = new Map<BoardSection, Group[]>();
     for (const s of SECTION_ORDER) m.set(s, []);
     for (const g of groups) m.get(g.section)!.push(g);
+    // Overdue reads newest first: the most recently due ask is the one still
+    // worth answering now; weeks-old ones sink to the bottom. Every other
+    // section stays earliest due first (what comes due next is on top).
+    m.get('overdue')!.reverse();
     return m;
   }, [groups]);
   const firstSection = SECTION_ORDER.find((s) => (bySection.get(s)?.length ?? 0) > 0);

@@ -229,7 +229,7 @@ export function Board({ config }: { config: BoardConfig }) {
             type="button"
             onClick={onKill}
             disabled={killState === 'killing' || killState === 'killed'}
-            title="Stop the daemon + PocketBase. They restart and re-backfill on the next Claude session."
+            title="Stop the daemon (and PocketBase, when it is the store). It restarts and re-backfills on the next Claude session."
             className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
               killState === 'armed'
                 ? 'bg-red-600 text-white'

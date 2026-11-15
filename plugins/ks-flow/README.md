@@ -19,7 +19,7 @@ project_path ─► PROJECT_COMMON_DIR (git rev-parse --git-common-dir)
                                                             │ filter by common-dir, derive, batch upsert
                                                             ▼
 plugin hooks (user scope)                              DB provider (PocketBase default / Firestore)
-  PreToolUse[AskUserQuestion|ExitPlanMode]                 projects/{id}/{workUnits,sessions}
+  PreToolUse[AskUserQuestion|ExitPlanMode]                 {workUnits,sessions,…} (flat)  
   PermissionRequest, Elicitation                           │ real-time (SSE / onSnapshot)
   │ filter on .cwd → terminal-notifier + events.jsonl      ▼
   ▼                                                  Next.js board (ks-flow open)
@@ -92,8 +92,7 @@ CLI on your `PATH` outside a session, and to load ks-flow automatically via the
 | `pocketbase_port` | 8090 | Localhost port for the bundled PocketBase server (`pocketbase` provider). |
 | `firestore_mode` | `emulator` | `emulator` (local, no GCP) or `cloud`. Only used when `db_provider=firestore`. |
 | `gcp_project_id` | — | Required when `cloud`. |
-| `firestore_credentials` | — | Admin SDK service-account JSON (daemon). Optional fallback when `cloud`. |
-| `firebase_api_key` | — | Client SDK API key (board). Required when `cloud`. |
+| `firestore_credentials` | — | Path to the Admin SDK service-account key JSON (daemon, board server, CLIs). Raw env: `FIRESTORE_CREDENTIALS`. Falls back to Application Default Credentials. |
 | `idle_minutes` | 30 | Idle threshold. |
 | `notify_throttle_sec` | 20 | Repeat-notification suppression window. |
 | `board_port` | 4317 | Next.js board port. |
@@ -112,6 +111,91 @@ emulator:
 firebase emulators:start --only firestore
 ```
 
+### Store: Firestore (cloud)
+
+The KarmaSuite setup keeps the store in Firestore: GCP project `ks-flow`, its
+`(default)` database (shared with ks-works' `slack_user_tokens`). The GCP
+project holds one board, so the collections are **flat, at the database root**
+(no per-project level): `meta/project`, `workUnits`, `sessions`, `reminders`,
+`backupUnits`, `backupRuns`, `briefingItems`, `briefingRuns`, `dailyLogs`,
+`masterEvents` and the `slack_names` cache. Pointing a second ks-flow board at
+the same database would mix its data in; give it its own GCP project.
+
+**Every read and write uses the Admin SDK.** That covers the daemon, the CLIs
+and the board's own Next.js server. The browser never talks to Firestore: the
+board server streams it the live collections over Server-Sent Events
+(`/api/store/live?scope=board,briefing,activity`), one stream per tab for all three: a browser keeps at most 6 connections per site, so a stream per page part would starve every other request once two tabs are open. So there is no Firebase Auth,
+no browser API key, and no security-rules deploy.
+
+**Never deploy `firestore.rules` to `ks-flow`.** `firebase deploy --only
+firestore:rules` replaces the whole database's ruleset, and the database is
+shared with ks-works. The file is deny-all for clients, kept for the emulator.
+
+**Writes are whole documents**, like PocketBase's `data` column: a cleared
+field (a note's due time) is gone, not merged back.
+
+**Config:** one source, `$CLAUDE_PLUGIN_DATA/.env`. The daemon, the board server
+and `bootstrap.sh` all read it:
+
+```
+DB_PROVIDER=firestore
+FIRESTORE_MODE=cloud
+FIREBASE_PROJECT_ID=ks-flow
+FIRESTORE_CREDENTIALS=/Users/<you>/Documents/tkns/GCP/ks-flow/ks-flow-store.json
+```
+
+**Credentials:** a dedicated service account, `ks-flow-store@ks-flow`, with
+`roles/datastore.user`. Its key is referenced by path. The private key is
+never copied into the launchd plist.
+
+**Moving from PocketBase:**
+
+1. With PocketBase still the store (and running), copy what the daemon can't
+   rebuild: `ks-flow migrate-store` (dry run: counts per collection), then
+   `ks-flow migrate-store --write --project ks-flow --credentials <key.json>`.
+   It covers:
+   - reminders, including Notes and pause flags
+   - Briefing items, runs and daily logs
+   - master events
+   - backup runs and units (so the next sweep doesn't re-upload everything)
+   - `slack_names`
+
+   It refuses to write if Firestore already holds ks-flow data, unless you pass
+   `--force`.
+2. Add the four `.env` lines, then `ks-flow stop && ks-flow start && ks-flow open`.
+   The daemon's startup backfill writes the cards and sessions.
+3. Keep `pocketbase/pb_data` as a backup for a couple of weeks.
+
+**Rollback:** remove the `.env` lines (or set `DB_PROVIDER=pocketbase`) and
+restart. PocketBase still holds the data as of the switch.
+
+**Offline mode.** firebase-admin keeps no local copy, so ks-flow keeps its own.
+
+- **Writes:** every write gets 8 s. On a network failure, or that timeout, it
+  goes to `<dataDir>/outbox/` instead, one JSON file per write (named
+  `<epoch-ms>-<pid>-<seq>.json`, so it sorts FIFO), and the caller carries on.
+  While the outbox holds anything, new writes queue behind it too, so an old
+  write can never overwrite a newer one.
+- **Sync:** only the daemon syncs. Every 5 s while anything is queued, backing
+  off from 30 s to 5 min while offline. It folds each document's entries into
+  one whole-doc write, applies them in batches, and deletes each file once it
+  lands.
+  - A write Firestore refuses for any other reason (bad data) moves to
+    `outbox/failed/` and is logged.
+  - A write that timed out is given 70 s to settle before anything is synced,
+    because firebase-admin may still deliver it late.
+- **Reads:** the board server keeps the last snapshot of each live scope in
+  `<dataDir>/cache/<scope>.json`. A board opened offline shows that, with the
+  queued writes laid over it, so a note made offline shows at once. Notes and
+  Briefing reads on the server fall back to the same view.
+  - The header shows **offline · N changes waiting to sync** until everything
+    is synced.
+- **Status:** `ks-flow status` prints the store's reachability and the outbox
+  count.
+
+The backup sweep still needs the store (and GCS), and the master's Briefing
+needs Slack, so neither runs offline.
+
 ## CLI (`bin/ks-flow`, on PATH while enabled)
 
 | Command | Purpose |
@@ -120,7 +204,8 @@ firebase emulators:start --only firestore
 | `ks-flow open` | Build and open the board UI in the browser. |
 | `ks-flow close` | Stop the board UI server. |
 | `ks-flow stop` | Stop everything — board UI, daemon, and PocketBase. |
-| `ks-flow status` | Status of all services (daemon, PocketBase, board UI). |
+| `ks-flow status` | Status of all services: daemon, store (PocketBase, or Firestore with its offline outbox count), board UI. |
+| `ks-flow migrate-store` | One-off copy of the PocketBase store into Firestore. Dry run unless `--write`; `--project`, `--credentials`, `--force`. |
 | `ks-flow daemon` | Run the ingester in the foreground (debug). |
 | `ks-flow set-project <path>` | Re-point the tracked project (rewrites `project.conf`, re-backfills). |
 | `ks-flow backup [target] [options]` | **The one uploader.** Targets: nothing = every live worktree; `--unit <id>`; `--worktree <path> [--identifier <id>]` (one worktree, live or about to be deleted); `--completed` (units whose worktree is gone). Options: `--since-hours <n>`, `--force`, `--dry-run`, `--json`, `--reindex` (upload nothing; rebuild the store's backup index from the bucket), `--runs` (upload nothing; print the run history), `--trigger <daily\|manual\|unit\|removal\|completed>` (recorded with the run; inferred from the target when left out). |
@@ -308,7 +393,7 @@ does not silently skip a day.
 
 **Run history (board → Activity Log, Backup rows).** Every real sweep — the daily one, the
 board's buttons, a worktree removal, a run by hand — is one record in the store
-(PocketBase `backup_runs`, or Firestore `projects/{id}/backupRuns`): when it
+(PocketBase `backup_runs`, or Firestore `backupRuns`): when it
 started, what started it, its outcome, how many units it checked and how many
 were already current (nothing to upload, no errors), and per unit every object
 it uploaded — each with its uncompressed and uploaded (zstd) size, totalled per
@@ -496,7 +581,7 @@ GCS — an object's `updated` is when it was uploaded and its `size` is the
 Bookkeeping therefore lives in three places, most convenient first:
 
 1. **The backup index** in the store (PocketBase `backup_units`, or Firestore
-   `projects/{id}/backupUnits`): one doc per unit, the size/mtime/object of each
+   `backupUnits`): one doc per unit, the size/mtime/object of each
    session file it uploaded, its workflow and its time log. It used to be
    `archive-index.json` in the plugin data dir; the first sweep after the move
    imports that file and renames it `archive-index.json.imported`.
@@ -669,7 +754,7 @@ A master Claude session (the `ks-master` plugin, started by `claude-ks-master`) 
 - **Due times:** a deadline in the message as is; a promise as said ("by EOD" 19:00, "tomorrow" 12:00 the next working day); DM +4h; mention +24h; FYI +24h. Something arriving on a weekend starts its clock Monday 09:00, and a due time landing on a weekend moves to Monday at the same time (never a deadline from the message or one you set). Senders on the half-time list get half the time. Change any due time on the card; every change is kept, and pushing one later counts as "pushed N×".
 - **Escalation:** calm (under 50% of the time used), warm (50–80%), hot (80–100%, one notice), overdue (full red, one notice, then a reminder at each scheduled run). FYI never passes warm. Several notices owed at once become one summary. The reminders switch mutes them, and pausing a card mutes items linked to its ticket. The daemon keeps what it sent in its own `<dataDir>/master/notices.json` and never writes an item, so it can't undo an archive or a due change.
 - **Only you archive.** Nothing closes on its own, a reply doesn't close an ask, and the master can only attach "looks done" evidence. Archive asks Done / Not mine / Won't do and an optional note.
-- **The page:** Next up, then Overdue, Hot, Quick replies, Due today, Later, and Worth knowing (folded); nearest due first in each. The sidebar has the master (Brief me now and Restart master while one runs, both disabled or refused while none does; **Start master** while none does, which the daemon launches right away even with the Briefing off; Open in Claude; one viewer window, opened by `claude-ks-master` when none is open, always shows it and reattaches after every restart), the session roll call and today's counts. **Daily log** (`/daily`) shows what `/ks-master:log-off` wrote: archived, slipped, promises due tomorrow, where each session stopped, engaged time.
+- **The page:** Next up, then Overdue, Hot, Quick replies, Due today, Later, and Worth knowing (folded); nearest due first in each, except Overdue, which shows the most recently due first (Next up is its top card). The sidebar has the master (Brief me now and Restart master while one runs, both disabled or refused while none does; **Start master** while none does, which the daemon launches right away even with the Briefing off; Open in Claude; one viewer window, opened by `claude-ks-master` when none is open, always shows it and reattaches after every restart), the session roll call and today's counts. **Daily log** (`/daily`) shows what `/ks-master:log-off` wrote: archived, slipped, promises due tomorrow, where each session stopped, engaged time.
 - **The master:** woken by request files in `<dataDir>/master/requests/` (daemon at each slot, the board's buttons); its mod submits them as turns when it's idle. The daemon starts it when it's down and hard-restarts it when a request sits unanswered for 15 min with no heartbeat for 5 (the launch commands' output goes to `<dataDir>/master/launch.log`). A master counts as running while its process lives (found by pid, or by session id before the pid is recorded) or, for its first 3 minutes, while it is still starting: nothing starts a second one beside it. It restarts itself with a handoff (`/ks-master:restart`) after log-off or past 70% context. Each start, restart and request is kept in the store (`master_events`) and listed in the [Activity Log](#activity-log-activity) with the briefing, log-in and log-off runs. See `plugins/ks-master/README.md`.
 
 ## Development

@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { loadConfig, readProjectConf } from './lib/config.js';
 import { createProvider } from './lib/db/index.js';
+import { startOutboxFlusher } from './lib/db/outbox-flusher.js';
 import type {
   LiveSession,
   ReminderDoc,
@@ -152,7 +153,82 @@ const units = new Map<string, WorkUnitDoc>(); // stateYamlPath → work-unit
 const stateMtimes = new Map<string, number>(); // stateYamlPath → last-parsed mtimeMs (read-I/O gate)
 const lastUnitSig = new Map<string, string>(); // unitId → last-written doc signature (write gate)
 let lastProjectSig: string | null = null; // last-written project doc signature (write gate)
+
+/** Fields that change without the doc changing: the write stamp, and a card's
+ * time of the last Linear read (every 3 minutes, even when nothing in Linear
+ * changed; the project doc's `linearCheckedAt` records that instead, one write
+ * per read rather than one per card). */
+const SIG_IGNORED = new Set(['updatedAt', 'linearSyncedAt']);
+
+/** A doc's write-gate signature: key order and undefined fields don't count, and
+ * neither do SIG_IGNORED fields, so a doc read back from the store matches the
+ * one the daemon would write. */
+function docSig(doc: object): string {
+  const norm = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(norm);
+    if (v && typeof v === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+        const x = (v as Record<string, unknown>)[k];
+        if (x !== undefined && !SIG_IGNORED.has(k)) out[k] = norm(x);
+      }
+      return out;
+    }
+    return v;
+  };
+  return JSON.stringify(norm(doc));
+}
+
+/**
+ * Seed the write gate from what the store already holds, so a restart only
+ * writes the cards that changed while the daemon was down instead of every
+ * card (one network round-trip each with Firestore). Best effort: on any read
+ * error the gate starts empty and everything is written, as before.
+ */
+async function seedWriteGate(): Promise<void> {
+  try {
+    const source = provider.source();
+    // Offline, firebase-admin retries reads until its own deadline; don't hold startup for it.
+    const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timed out after 10s')), 10_000).unref());
+    const [proj, units] = await Promise.race([
+      Promise.all([source.getProject(projectId), source.getWorkUnits(projectId)]),
+      timeout,
+    ]);
+    if (proj) {
+      lastProjectSig = docSig(proj);
+      linearCheckedAt = proj.linearCheckedAt ?? null;
+    }
+    for (const u of units) {
+      lastUnitSig.set(u.unitId, docSig(u));
+      // In-memory facts the cards carry, restored so the first recompute writes
+      // the last known values instead of falling back to state.yaml's (an old
+      // Linear status until the next Linear read) — which also kept every
+      // ticket card failing the write gate.
+      if (u.type === 'ticket' && u.linearSyncedAt && !linearLive.has(u.identifier)) {
+        linearLive.set(u.identifier, {
+          title: u.title,
+          url: u.linearUrl ?? '',
+          // exact stored values (nulls included), so the rebuilt card matches the store
+          priority: (u.priority ?? { value: null, name: '' }) as LinearFacts['priority'],
+          estimate: u.estimate,
+          status:
+            u.linearStatus && u.linearStatusColor
+              ? { name: u.linearStatus, type: u.linearStatusType as string, color: u.linearStatusColor }
+              : null,
+          syncedAt: u.linearSyncedAt,
+        });
+      }
+      if (u.cardRefreshedAt && !cardRefresh.has(u.unitId)) {
+        cardRefresh.set(u.unitId, { at: u.cardRefreshedAt, error: u.cardRefreshError ?? null });
+      }
+    }
+    log(`write gate: ${units.length} card(s) already in the store`);
+  } catch (e) {
+    log('write gate: store not readable, writing every card', (e as Error)?.message);
+  }
+}
 const linearLive = new Map<string, LinearFacts>(); // identifier → last values read from Linear
+let linearCheckedAt: string | null = null; // last successful Linear read of the board's tickets
 let boardTickets: string[] = []; // identifiers of the tickets the board shows as cards
 const lastJoined = new Map<string, WorkUnitDoc>(); // unitId → the card as last computed (sessions joined)
 const cardRefresh = new Map<string, { at: string; error: string | null }>(); // unitId → last card Refresh
@@ -356,6 +432,8 @@ async function readLinear(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const facts = await fetchLinearFacts(ids);
   for (const [id, f] of facts) linearLive.set(id, f);
+  // Only a read that succeeded moves it (a failure throws above).
+  linearCheckedAt = [...facts.values()].reduce<string>((t, f) => (f.syncedAt > t ? f.syncedAt : t), '') || nowIso();
   scheduleProjectRecompute();
 }
 
@@ -514,8 +592,9 @@ async function recomputeProject(): Promise<void> {
     worktreePaths: knownWorktrees,
     inboxUrl,
     inboxRunning: inboxIsRunning,
+    linearCheckedAt,
   };
-  const projectSig = JSON.stringify(projectDoc);
+  const projectSig = docSig(projectDoc);
   if (projectSig !== lastProjectSig) {
     lastProjectSig = projectSig;
     await writer.upsertProject({ ...projectDoc, updatedAt: nowIso() });
@@ -532,7 +611,7 @@ async function recomputeProject(): Promise<void> {
       worktreeDir,
       ...(refreshed ? { cardRefreshedAt: refreshed.at, cardRefreshError: refreshed.error } : {}),
     };
-    const sig = JSON.stringify(doc);
+    const sig = docSig(doc);
     if (lastUnitSig.get(u.unitId) === sig) continue; // unchanged → skip the DB write
     lastUnitSig.set(u.unitId, sig);
     await writer.upsertWorkUnit(projectId, { ...doc, updatedAt: nowIso() });
@@ -1435,6 +1514,10 @@ async function main(): Promise<void> {
   if (cfg.dbProvider === 'pocketbase' && process.env.KS_FLOW_DRYRUN !== '1') {
     pbHandle = await startPocketbase(cfg.pocketbasePort, log);
   }
+  // Offline mode (Firestore): writes that couldn't reach the store wait in
+  // <dataDir>/outbox; the daemon is the one that syncs them.
+  const outbox = provider.outbox?.();
+  if (outbox && process.env.KS_FLOW_BACKFILL_ONLY !== '1') startOutboxFlusher(outbox, log);
   eventsOffset = checkpoints.get(EVENTS_PATH)?.byteOffset ?? 0; // resume, don't replay
   ingestEvents(); // catch up overlay offset
   // A leftover events.jsonl from a previous day (daemon was down across midnight)
@@ -1442,6 +1525,7 @@ async function main(): Promise<void> {
   const evDay = fileDay(EVENTS_PATH);
   if (evDay && evDay !== activeDay) rotateEvents(evDay);
   liveSessions = readLiveSessions(); // before backfill's first recompute
+  await seedWriteGate();
   await backfill();
   // Backfill-only mode: ingest once, flush, exit (deterministic verification /
   // one-shot debug). No watchers, no live tailing.

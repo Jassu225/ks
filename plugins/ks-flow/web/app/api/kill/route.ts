@@ -33,7 +33,8 @@ export async function POST(): Promise<NextResponse> {
       : `error: ${msg.trim()}`;
   }
 
-  // 2. Kill any orphaned PocketBase server (no-op if the daemon already did).
+  // 2. Kill any orphaned PocketBase server (no-op if the daemon already did, or
+  //    when the store is Firestore and none runs: reported as 'none running').
   try {
     await pexec('pkill', ['-f', 'pocketbase serve']);
     result.pocketbase = 'stopped';

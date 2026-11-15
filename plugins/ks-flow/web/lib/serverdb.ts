@@ -10,6 +10,8 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import PocketBase from 'pocketbase';
+import { isNetworkError, outboxEntries, overlay, withTimeout, writeOrQueue, type StoreOp } from './outbox';
+import { readScopeCache } from './storeCache';
 import type { BriefingItemDoc, MasterEventDoc, ReminderDoc } from './types';
 
 const REMINDERS = 'reminders';
@@ -36,8 +38,9 @@ function loadEnvFile(path: string): void {
   }
 }
 
-interface ServerConfig {
+export interface ServerConfig {
   projectId: string;
+  dataDir: string;
   dbProvider: 'pocketbase' | 'firestore';
   pocketbaseUrl: string;
   firestoreMode: 'emulator' | 'cloud';
@@ -47,7 +50,7 @@ interface ServerConfig {
   credentials?: string;
 }
 
-function serverConfig(): ServerConfig {
+export function serverConfig(): ServerConfig {
   const dataDir =
     process.env.KS_FLOW_DATA ||
     process.env.CLAUDE_PLUGIN_DATA ||
@@ -76,6 +79,7 @@ function serverConfig(): ServerConfig {
     process.env.CLAUDE_PLUGIN_OPTION_pocketbase_port || process.env.POCKETBASE_PORT || '8090';
   return {
     projectId,
+    dataDir,
     dbProvider,
     pocketbaseUrl: process.env.POCKETBASE_URL || `http://127.0.0.1:${pbPort}`,
     firestoreMode: mode === 'cloud' ? 'cloud' : 'emulator',
@@ -84,7 +88,8 @@ function serverConfig(): ServerConfig {
       process.env.CLAUDE_PLUGIN_OPTION_firestore_client_email || process.env.FIREBASE_CLIENT_EMAIL,
     privateKey:
       process.env.CLAUDE_PLUGIN_OPTION_firestore_private_key || process.env.FIREBASE_PRIVATE_KEY,
-    credentials: process.env.CLAUDE_PLUGIN_OPTION_firestore_credentials,
+    credentials:
+      process.env.CLAUDE_PLUGIN_OPTION_firestore_credentials || process.env.FIRESTORE_CREDENTIALS,
   };
 }
 
@@ -129,12 +134,19 @@ async function pbDelete(cfg: ServerConfig, uid: string): Promise<void> {
 }
 
 // ── Firestore (firebase-admin) ──────────────────────────────────────────────
-async function fsCol(cfg: ServerConfig) {
-  return fsProjectCol(cfg, REMINDERS);
+/** Firestore refuses `undefined` fields (optional ones left out); a JSON round-trip drops them. */
+function plain<T>(doc: T): T {
+  return JSON.parse(JSON.stringify(doc)) as T;
 }
 
-/** `projects/<projectId>/<name>` through the board's firebase-admin app. */
-async function fsProjectCol(cfg: ServerConfig, name: string) {
+/** `plain` as an outbox entry's data. */
+function plainData(doc: object): Record<string, unknown> {
+  return plain(doc) as Record<string, unknown>;
+}
+
+/** The board server's firebase-admin Firestore (one app, `ks-flow-board`). Used by
+ * the writes below and by the live stream (app/api/store/live). */
+export async function adminFirestore(cfg: ServerConfig = serverConfig()) {
   const { getApps, initializeApp, cert, applicationDefault } = await import('firebase-admin/app');
   const { getFirestore } = await import('firebase-admin/firestore');
   const APP = 'ks-flow-board';
@@ -157,13 +169,61 @@ async function fsProjectCol(cfg: ServerConfig, name: string) {
       app = initializeApp({ credential, projectId: cfg.gcpProjectId }, APP);
     }
   }
-  return getFirestore(app).collection('projects').doc(cfg.projectId).collection(name);
+  return getFirestore(app);
+}
+
+async function fsCol(cfg: ServerConfig) {
+  return fsProjectCol(cfg, REMINDERS);
+}
+
+/** Top-level collection `<name>` through the board's firebase-admin app. The
+ * store is flat (one board per GCP project; see src/lib/db/providers/firestore.ts). */
+async function fsProjectCol(cfg: ServerConfig, name: string) {
+  return (await adminFirestore(cfg)).collection(name);
+}
+
+/** Offline mode (lib/outbox.ts): write through firebase-admin, or queue for
+ * the daemon to sync. */
+async function fsWrite(cfg: ServerConfig, ops: StoreOp[]): Promise<void> {
+  const fs = await adminFirestore(cfg);
+  await writeOrQueue(cfg.dataDir, ops, async (list) => {
+    if (list.length === 1) {
+      const o = list[0];
+      const ref = fs.doc(o.path);
+      if (o.op === 'delete') await ref.delete();
+      else if (o.op === 'merge') await ref.set(o.data ?? {}, { merge: true });
+      else await ref.set(o.data ?? {});
+      return;
+    }
+    const b = fs.batch();
+    for (const o of list) {
+      const ref = fs.doc(o.path);
+      if (o.op === 'delete') b.delete(ref);
+      else if (o.op === 'merge') b.set(ref, o.data ?? {}, { merge: true });
+      else b.set(ref, o.data ?? {});
+    }
+    await b.commit();
+  });
+}
+
+/** A collection's path: flat, at the database root (see src/lib/db/providers/firestore.ts). */
+const projectPath = (_cfg: ServerConfig, name: string): string => name;
+
+/** A Firestore read with the write timeout; on a network failure, `fallback()`
+ * (the live stream's last snapshot plus the queued writes). */
+async function fsRead<T>(read: () => Promise<T>, fallback: () => T): Promise<T> {
+  try {
+    return await withTimeout(read());
+  } catch (e) {
+    if (!isNetworkError(e)) throw e;
+    return fallback();
+  }
 }
 
 // ── briefing_items (docs/briefing.md): the board's due changes and archives ──
 // PocketBase rows mirror key/groupKey/status/dueAt/archivedAt out of `data`
 // (as src/lib/db/providers/pocketbase.ts); Firestore stores the doc itself
-// under projects/<id>/briefingItems/<uid>.
+// under briefingItems/<uid>.
 const BRIEFING_ITEMS = 'briefing_items';
 const FS_BRIEFING_ITEMS = 'briefingItems';
 /** uids per PocketBase OR filter, so the request URL stays short. */
@@ -191,8 +251,19 @@ export async function getBriefingItems(uids: string[]): Promise<BriefingItemDoc[
     return out;
   }
   const col = await fsProjectCol(cfg, FS_BRIEFING_ITEMS);
-  const snaps = await col.firestore.getAll(...unique.map((u) => col.doc(u)));
-  return snaps.filter((s) => s.exists).map((s) => s.data() as BriefingItemDoc);
+  return fsRead(
+    async () => {
+      const snaps = await col.firestore.getAll(...unique.map((u) => col.doc(u)));
+      return snaps.filter((s) => s.exists).map((s) => s.data() as BriefingItemDoc);
+    },
+    () => {
+      const snaps = readScopeCache(cfg.dataDir, 'briefing')?.snaps ?? {};
+      const cached = [...(snaps.recentItems ?? []), ...(snaps.openItems ?? [])] as BriefingItemDoc[];
+      const all = overlay(cached, outboxEntries(cfg.dataDir), projectPath(cfg, FS_BRIEFING_ITEMS), (d) => d.uid);
+      const want = new Set(unique);
+      return all.filter((d) => want.has(d.uid));
+    },
+  );
 }
 
 /** Write one briefing item back (it must exist: the board never creates items). */
@@ -215,74 +286,61 @@ export async function putBriefingItem(doc: BriefingItemDoc): Promise<void> {
     });
     return;
   }
-  await (await fsProjectCol(cfg, FS_BRIEFING_ITEMS)).doc(doc.uid).set(doc);
+  await fsWrite(cfg, [{ op: 'set', path: `${projectPath(cfg, FS_BRIEFING_ITEMS)}/${doc.uid}`, data: plainData(doc) }]);
 }
 
 // ── master_events: the board's own requests to the master (Activity Log) ────
 // Same record shape as src/lib/db/providers/pocketbase.ts (uid, projectKey,
-// mirrored `at`, data) / Firestore projects/<id>/masterEvents/<uid>.
+// mirrored `at`, data) / Firestore masterEvents/<uid>.
 const MASTER_EVENTS = 'master_events';
 const FS_MASTER_EVENTS = 'masterEvents';
 
 /** Record one master event. Firestore refuses undefined fields, so unset optional ones are dropped. */
 export async function addMasterEvent(doc: MasterEventDoc): Promise<void> {
   const cfg = serverConfig();
-  const plain = JSON.parse(JSON.stringify(doc)) as MasterEventDoc;
+  const clean = plain(doc);
   if (cfg.dbProvider === 'pocketbase') {
     await pbClient(cfg)
       .collection(MASTER_EVENTS)
-      .create({ uid: plain.uid, projectKey: cfg.projectId, at: plain.at, data: plain });
+      .create({ uid: clean.uid, projectKey: cfg.projectId, at: clean.at, data: clean });
     return;
   }
-  await (await fsProjectCol(cfg, FS_MASTER_EVENTS)).doc(plain.uid).set(plain);
+  await fsWrite(cfg, [
+    { op: 'set', path: `${projectPath(cfg, FS_MASTER_EVENTS)}/${clean.uid}`, data: plainData(clean) },
+  ]);
 }
 
 // ── public API ────────────────────────────────────────────────────────────────
 export async function upsertReminder(doc: ReminderDoc): Promise<void> {
   const cfg = serverConfig();
   if (cfg.dbProvider === 'pocketbase') return pbUpsert(cfg, doc);
-  await (await fsCol(cfg)).doc(doc.uid).set(doc, { merge: true });
+  // Whole-doc set, as PocketBase replaces `data`: a merge would keep a cleared `dueAt`.
+  await fsWrite(cfg, [{ op: 'set', path: `${projectPath(cfg, REMINDERS)}/${doc.uid}`, data: plainData(doc) }]);
 }
 
 export async function deleteReminder(uid: string): Promise<void> {
   const cfg = serverConfig();
   if (cfg.dbProvider === 'pocketbase') return pbDelete(cfg, uid);
-  await (await fsCol(cfg)).doc(uid).delete();
+  await fsWrite(cfg, [{ op: 'delete', path: `${projectPath(cfg, REMINDERS)}/${uid}` }]);
 }
 
 /** All reminder docs for the current project (the Notes page filters to kind:'note'). */
 export async function listReminders(): Promise<ReminderDoc[]> {
   const cfg = serverConfig();
   if (cfg.dbProvider === 'pocketbase') return pbList(cfg);
-  const snap = await (await fsCol(cfg)).get();
-  return snap.docs.map((d) => d.data() as ReminderDoc);
+  const col = await fsCol(cfg);
+  return fsRead(
+    async () => (await col.get()).docs.map((d) => d.data() as ReminderDoc),
+    () => {
+      const cached = (readScopeCache(cfg.dataDir, 'board')?.snaps.reminders ?? []) as ReminderDoc[];
+      return overlay(cached, outboxEntries(cfg.dataDir), projectPath(cfg, REMINDERS), (d) => d.uid);
+    },
+  );
 }
 
 // ── slack_names cache (workspace-global id→name: users U…, channels C…) ───────
 async function fsSlackCol(cfg: ServerConfig) {
-  const { getApps, initializeApp, cert, applicationDefault } = await import('firebase-admin/app');
-  const { getFirestore } = await import('firebase-admin/firestore');
-  const APP = 'ks-flow-board';
-  let app = getApps().find((a) => a.name === APP);
-  if (!app) {
-    if (cfg.firestoreMode === 'emulator') {
-      if (!process.env.FIRESTORE_EMULATOR_HOST) process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
-      app = initializeApp({ projectId: cfg.gcpProjectId }, APP);
-    } else {
-      const credential =
-        cfg.clientEmail && cfg.privateKey
-          ? cert({
-              projectId: cfg.gcpProjectId,
-              clientEmail: cfg.clientEmail,
-              privateKey: cfg.privateKey.replace(/\\n/g, '\n'),
-            })
-          : cfg.credentials
-            ? cert(JSON.parse(readFileSync(cfg.credentials, 'utf8')))
-            : applicationDefault();
-      app = initializeApp({ credential, projectId: cfg.gcpProjectId }, APP);
-    }
-  }
-  return getFirestore(app).collection(SLACK_NAMES);
+  return (await adminFirestore(cfg)).collection(SLACK_NAMES);
 }
 
 /** The full Slack id→name cache (users + channels). */
@@ -295,8 +353,10 @@ export async function getSlackNames(): Promise<Record<string, string>> {
     for (const r of recs) if (r.uid && r.name) out[r.uid as string] = r.name as string;
     return out;
   }
-  const snap = await (await fsSlackCol(cfg)).get();
-  for (const d of snap.docs) {
+  const col = await fsSlackCol(cfg);
+  // Offline: no names (they are only a display cache; raw ids still render).
+  const docs = await fsRead(async () => (await col.get()).docs, () => []);
+  for (const d of docs) {
     const v = d.data() as { uid?: string; name?: string };
     if (v.uid && v.name) out[v.uid] = v.name;
   }
@@ -322,6 +382,8 @@ export async function putSlackNames(map: Record<string, string>): Promise<void> 
     }
     return;
   }
-  const col = await fsSlackCol(cfg);
-  await Promise.all(entries.map(([uid, name]) => col.doc(uid).set({ uid, name }, { merge: true })));
+  await fsWrite(
+    cfg,
+    entries.map(([uid, name]) => ({ op: 'set' as const, path: `${SLACK_NAMES}/${uid}`, data: { uid, name } })),
+  );
 }

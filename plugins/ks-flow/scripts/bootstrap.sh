@@ -121,6 +121,11 @@ fi
 # src/lib/config.ts): explicit db_provider wins; else firestore iff a cloud
 # project is configured; else pocketbase (the zero-config local default).
 PB_VERSION=0.39.2
+# The raw names in $DATA_DIR/.env count too (the daemon and board load that file).
+envval() { [ -f "$DATA_DIR/.env" ] && sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*['\"]\{0,1\}\([^'\"]*\)['\"]\{0,1\}[[:space:]]*$/\1/p" "$DATA_DIR/.env" | tail -1; }
+: "${CLAUDE_PLUGIN_OPTION_db_provider:=$(envval DB_PROVIDER)}"
+: "${CLAUDE_PLUGIN_OPTION_firestore_mode:=$(envval FIRESTORE_MODE)}"
+: "${CLAUDE_PLUGIN_OPTION_gcp_project_id:=$(envval FIREBASE_PROJECT_ID)}"
 DBP="${CLAUDE_PLUGIN_OPTION_db_provider:-}"
 if [ -z "$DBP" ]; then
   if [ "${CLAUDE_PLUGIN_OPTION_firestore_mode:-emulator}" = "cloud" ] \
@@ -187,8 +192,12 @@ DAEMON_JS="$DAEMON_DIR/dist/daemon.js"
 
 emit_env() {
   local k v
+  # firestore_client_email / firestore_private_key are left out on purpose: the
+  # plist is a plain-text file, and a private key doesn't belong in it. Point
+  # firestore_credentials (or FIRESTORE_CREDENTIALS in $CLAUDE_PLUGIN_DATA/.env,
+  # which the daemon loads itself) at the key file instead.
   for k in project_path workflow_user db_provider firestore_mode gcp_project_id \
-           firestore_client_email firestore_private_key firestore_credentials \
+           firestore_credentials \
            pocketbase_port idle_minutes notify_throttle_sec board_port; do
     v="$(eval "printf '%s' \"\${CLAUDE_PLUGIN_OPTION_${k}:-}\"")"
     [ -n "$v" ] || continue

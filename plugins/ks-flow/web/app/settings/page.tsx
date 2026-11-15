@@ -24,7 +24,6 @@ interface BriefingSettingsForm {
   schedule: string[];
   names: string[];
   halfTime: string[];
-  slackUserId: string | null;
 }
 
 export default function Settings() {
@@ -78,7 +77,6 @@ export default function Settings() {
   const [brSlot, setBrSlot] = useState('09:00');
   const [brNames, setBrNames] = useState('Jaswanth');
   const [brHalfTime, setBrHalfTime] = useState('');
-  const [brSlackUserId, setBrSlackUserId] = useState('');
   const [brSaving, setBrSaving] = useState(false);
   const [brSaved, setBrSaved] = useState(false);
   const [brError, setBrError] = useState<string | null>(null);
@@ -107,7 +105,6 @@ export default function Settings() {
             schedule: brSchedule,
             names: splitList(brNames),
             halfTime: splitList(brHalfTime),
-            slackUserId: brSlackUserId.trim() || null,
           },
         }),
       });
@@ -127,7 +124,6 @@ export default function Settings() {
     if (Array.isArray(b.schedule)) setBrSchedule(b.schedule);
     if (Array.isArray(b.names)) setBrNames(b.names.join(', '));
     if (Array.isArray(b.halfTime)) setBrHalfTime(b.halfTime.join(', '));
-    setBrSlackUserId(b.slackUserId ?? '');
   };
 
   const checkReminderPreflight = async (): Promise<void> => {
@@ -865,26 +861,6 @@ export default function Settings() {
                   Slack user ids look like U012ABCDEF (not names).
                 </p>
               )}
-            </div>
-
-            <div>
-              <label htmlFor="br-userid" className="block text-xs text-slate-400">
-                Your Slack user id
-              </label>
-              <input
-                id="br-userid"
-                type="text"
-                value={brSlackUserId}
-                onChange={(e) => {
-                  setBrSlackUserId(e.target.value);
-                  setBrSaved(false);
-                }}
-                placeholder="U0…"
-                className="mt-1 w-56 rounded border border-slate-700 bg-slate-800 px-3 py-2 font-mono text-sm text-slate-100 focus:border-indigo-500 focus:outline-none"
-              />
-              <p className="mt-1 text-[11px] text-slate-500">
-                Finds your @mentions and your own messages (promises). Optional; empty until set.
-              </p>
             </div>
 
             {brError && (

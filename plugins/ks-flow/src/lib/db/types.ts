@@ -5,6 +5,7 @@
 // (SessionWriter on the daemon side, SessionSource on the board side).
 // The daemon imports only SessionWriter; the board imports only
 // SessionSource; derive.ts / jsonl.ts / hooks import neither.
+import type { Outbox } from './outbox.js';
 
 export type PhaseStatus =
   | 'NOT_STARTED'
@@ -92,6 +93,8 @@ export interface ProjectDoc {
   /** The Plannotator Inbox's address (its port changes on restart) and whether it answers. */
   inboxUrl?: string | null;
   inboxRunning?: boolean;
+  /** When the daemon last read the board's tickets from Linear (successfully). */
+  linearCheckedAt?: string | null;
   updatedAt: string;
 }
 
@@ -505,4 +508,7 @@ export interface DbProvider {
   source(): SessionSource;
   backups(): BackupStore;
   briefing(): BriefingStore;
+  /** Offline mode (lib/db/outbox.ts): the write queue. Firestore only; the
+   * daemon flushes it. */
+  outbox?(): Outbox;
 }

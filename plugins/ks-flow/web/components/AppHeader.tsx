@@ -69,6 +69,29 @@ export function MasterChip() {
   );
 }
 
+/** Firestore offline mode: shown only while the store can't be reached or
+ * writes are waiting to sync (the daemon syncs them; see lib/outbox.ts). */
+function StoreChip() {
+  const { board } = useShared();
+  const st = board.storeStatus;
+  if (!st || (st.online && st.pending === 0)) return null;
+  const waiting = st.pending ? `${st.pending} change${st.pending === 1 ? '' : 's'} waiting to sync` : '';
+  const text = st.online ? `syncing · ${waiting}` : ['offline', waiting].filter(Boolean).join(' · ');
+  return (
+    <span
+      className="flex items-center gap-1.5 rounded-md border border-amber-900 px-2.5 py-1.5 text-xs text-amber-300"
+      title={
+        st.online
+          ? 'Back online: the daemon is syncing the changes made while offline.'
+          : 'Firestore is unreachable: showing the last known state. Changes are kept on this Mac and synced once back online.'
+      }
+    >
+      <span className="h-2 w-2 rounded-full bg-amber-500" aria-hidden="true" />
+      {text}
+    </span>
+  );
+}
+
 export function AppHeader({ toolbar }: { toolbar?: ReactNode }) {
   const pathname = usePathname() ?? '/';
   const { config, board, notesEnabled, bellCount, inboxCount } = useShared();
@@ -173,6 +196,7 @@ export function AppHeader({ toolbar }: { toolbar?: ReactNode }) {
               {inboxInner}
             </button>
           )}
+          <StoreChip />
           <MasterChip />
           {iconLink('/processes', 'Running processes', <ProcessesIcon />)}
           {iconLink('/settings', 'Settings', <GearIcon />)}

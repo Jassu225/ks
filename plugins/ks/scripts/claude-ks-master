@@ -180,7 +180,12 @@ ensure_viewer() {
   local app=""
   for a in /Applications/Ghostty.app "$HOME/Applications/Ghostty.app"; do [ -d "$a" ] && app="$a" && break; done
   if [ -n "$app" ]; then
-    open -na "$app" --args -e "$viewer" "$MASTER_DIR" >/dev/null 2>&1 \
+    # A new Ghostty instance (-n) restores the person's saved windows when their
+    # config has window-save-state = always: blank extra windows beside the
+    # viewer. This instance only ever holds the viewer, so it neither restores
+    # nor saves window state, and it quits when the viewer window closes.
+    open -na "$app" --args --window-save-state=never --quit-after-last-window-closed=true \
+      -e "$viewer" "$MASTER_DIR" >/dev/null 2>&1 \
       && echo "claude-ks-master: opened the viewer in Ghostty" \
       || echo "claude-ks-master: could not open Ghostty for the viewer (run: $viewer $MASTER_DIR)" >&2
   else

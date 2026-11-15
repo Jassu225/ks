@@ -1,11 +1,12 @@
 #!/bin/bash
 # ks-flow — CLI on PATH while the plugin is enabled.
 #
-#   ks-flow start             start the daemon (+ PocketBase); builds/installs on first run
+#   ks-flow start             start the daemon (+ PocketBase when it is the store); builds/installs on first run
 #   ks-flow open              build and open the board UI in the browser
 #   ks-flow close             stop the board UI server
-#   ks-flow stop              stop everything — board UI, daemon, and PocketBase
-#   ks-flow status            print daemon + ingestion status
+#   ks-flow stop              stop everything — board UI, daemon, and PocketBase (if running)
+#   ks-flow status            print daemon, store (PocketBase or Firestore + offline outbox) and board status
+#   ks-flow migrate-store     copy the PocketBase store into Firestore (dry run; --write, --project, --credentials)
 #   ks-flow daemon            run the ingester in the foreground (debug)
 #   ks-flow set-project PATH  re-point the tracked project (rewrites project.conf)
 #   ks-flow archive PATH      archive one worktree's transcript+workflow to GCS
@@ -175,13 +176,19 @@ case "$cmd" in
       echo "  not loaded"
     fi
 
-    echo "pocketbase (port $PB_PORT):"
-    if curl -fsS "http://127.0.0.1:$PB_PORT/api/health" >/dev/null 2>&1; then
-      echo "  healthy"
-    elif pgrep -f "pocketbase serve" >/dev/null 2>&1; then
-      echo "  running (starting up…)"
+    echo "store:"
+    if [ -f "$DAEMON_DIR/dist/store-check.js" ]; then
+      node "$DAEMON_DIR/dist/store-check.js" 2>&1 || true
     else
-      echo "  not running"
+      echo "  (daemon not built yet)"
+    fi
+    if pgrep -f "pocketbase serve" >/dev/null 2>&1; then
+      echo "pocketbase (port $PB_PORT):"
+      if curl -fsS "http://127.0.0.1:$PB_PORT/api/health" >/dev/null 2>&1; then
+        echo "  healthy"
+      else
+        echo "  running (starting up…)"
+      fi
     fi
 
     echo "board UI (port $BOARD_PORT):"
@@ -267,13 +274,23 @@ case "$cmd" in
     exec node "$DAEMON_DIR/dist/migrate-legacy-archives.js" "$@"
     ;;
 
+  migrate-store)
+    # One-off: copy the PocketBase store (reminders + Notes, Briefing, Activity,
+    # backup index, Slack names) into Firestore before switching db_provider.
+    # Dry run unless --write; PocketBase must be running. See the README,
+    # "Store: Firestore (cloud)".
+    shift
+    exec node "$DAEMON_DIR/dist/migrate-pocketbase-to-firestore.js" "$@"
+    ;;
+
   install-daemon)
     # Back-compat alias for `start`.
     exec "$PLUGIN_ROOT/scripts/bootstrap.sh"
     ;;
 
   stop)
-    # Stop everything: board UI, daemon (launchd), and PocketBase.
+    # Stop everything: board UI, daemon (launchd), and PocketBase if it runs
+    # (only when it is the store; nothing to stop with Firestore).
     PIDS="$(lsof -ti tcp:"$BOARD_PORT" 2>/dev/null || true)"
     if [ -n "$PIDS" ]; then
       echo "$PIDS" | xargs kill 2>/dev/null && echo "board stopped" || echo "could not stop board" >&2
@@ -292,7 +309,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|briefing <command>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]}" >&2
+    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|briefing <command>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]|migrate-store [--write]}" >&2
     exit 1
     ;;
 esac

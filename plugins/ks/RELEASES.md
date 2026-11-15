@@ -1,5 +1,18 @@
 # Releases
 
+## 2026-11-14
+
+- **ks-flow's store moves to Firestore (GCP project `ks-flow`)**: the board, Briefing, Notes, Activity Log and backup index can now live in the `ks-flow` project's `(default)` database, the one ks-works uses for Slack tokens, instead of the local PocketBase. Its collections sit flat at the database root (`meta/project`, `workUnits`, `sessions`, `reminders`, …), with no per-project level: the GCP project holds one board.
+  - **The browser never touches Firestore:** the board's own server reads it with the Admin SDK and streams it to the page (`/api/store/live`). So there is no Firebase sign-in, no browser API key and no rules deploy. Don't deploy `firestore.rules` there: it would replace ks-works' rules.
+  - **Writes replace whole documents**, as PocketBase did. Notes with no due time, "clear due" and reminders with no note no longer fail, and a cleared field no longer comes back.
+  - **One config file:** `$CLAUDE_PLUGIN_DATA/.env` (`DB_PROVIDER`, `FIRESTORE_MODE`, `FIREBASE_PROJECT_ID`, `FIRESTORE_CREDENTIALS`), read by the daemon, the board and `bootstrap.sh`. The private key is no longer copied into the launchd plist.
+  - **`ks-flow migrate-store`** copies what the daemon can't rebuild (dry run unless `--write`): reminders and Notes, Briefing, master events, the backup index and runs, and Slack names.
+  - **`ks-flow status`** shows which store is in use and whether it answers.
+  - PocketBase stays available; going back is a config change.
+- **ks-flow works offline**: with Firestore, a write that can't reach it (8 s, or a network error) waits in `<dataDir>/outbox/`, and the daemon syncs it once the Mac is back online. Several writes to the same document are combined into one, and a write Firestore refuses moves to `outbox/failed/`. While anything waits, new writes queue behind it, so an old write never overwrites a newer one. The board shows the last known state plus your unsynced changes, with an **offline · N changes waiting to sync** chip, and `ks-flow status` prints the count.
+- **ks-flow: fewer Firestore writes and no stuck jobs.** The 3-minute Linear read no longer rewrites every live card just to stamp its time: the board's last Linear read is kept once on the project (`linearCheckedAt`), and a card is written only when its Linear values change. A restart rewrites only the cards that changed while the daemon was down. The daemon's Firestore reads give up after 15 s instead of hanging (seen at 15 min after the Mac woke). The board opens one live stream per tab, not three (a browser allows 6 connections per site, so two tabs left Notes stuck on "Loading…").
+- **ks-master viewer opens alone**: `claude-ks-master` starts its Ghostty viewer with `--window-save-state=never`, so a Ghostty config that restores windows no longer opens blank windows beside it.
+
 ## 2026-11-13
 
 - **`slack message send/reply/update --text-file <path>`** (`-` for stdin): post text with backticks. A backtick on the command line, even quoted, stops the sandbox from matching `slack` as excluded, so the call ran sandboxed and died with `listen EPERM` before posting; PR-review thread replies with inline code couldn't be sent. The text argument is now optional when `--text-file` is given. `/ks:slack` and the PR-review and release templates say to use it.

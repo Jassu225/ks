@@ -5,18 +5,9 @@
 // components provider-agnostic: they never import a backend. Which backend it
 // talks to is decided by cfg.dbProvider (resolved identically on the daemon):
 //   - pocketbase (default): REST initial load + SSE realtime, local server.
-//   - firestore: client-SDK onSnapshot (cloud or emulator).
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  where,
-} from 'firebase/firestore';
+//   - firestore: the board server's live stream (app/api/store/live, firebase-admin).
 import { useEffect, useRef, useState } from 'react';
-import { getDb } from './firebase';
+import { openLive, type LiveStatus } from './liveStore';
 import { getPb } from './pocketbase';
 import type { BoardConfig, ProjectDoc, ReminderDoc, SessionDoc, WorkUnitDoc } from './types';
 
@@ -26,6 +17,9 @@ export interface BoardData {
   sessions: SessionDoc[];
   reminders: ReminderDoc[];
   connected: boolean;
+  /** Firestore offline mode: are the live listeners up, and how many writes
+   * wait in the outbox. null with PocketBase. */
+  storeStatus: LiveStatus | null;
   /** Re-pull everything from the store. Reusable by any UI action (e.g. after
    * removing a worktree) and by the header's manual refresh button. The live
    * subscription still pushes on its own; this is an explicit on-demand pull. */
@@ -38,6 +32,7 @@ export function useBoard(cfg: BoardConfig): BoardData {
   const [sessions, setSessions] = useState<SessionDoc[]>([]);
   const [reminders, setReminders] = useState<ReminderDoc[]>([]);
   const [connected, setConnected] = useState(false);
+  const [storeStatus, setStoreStatus] = useState<LiveStatus | null>(null);
   // Populated by whichever backend subscribes; the returned refresh() proxies
   // to it so callers get a stable function identity.
   const reloadRef = useRef<() => Promise<void>>(async () => {});
@@ -45,7 +40,7 @@ export function useBoard(cfg: BoardConfig): BoardData {
   useEffect(() => {
     // No project configured yet: nothing to subscribe to (the pages say so).
     if (!cfg.projectId) return;
-    const setters = { setProject, setWorkUnits, setSessions, setReminders, setConnected };
+    const setters = { setProject, setWorkUnits, setSessions, setReminders, setConnected, setStoreStatus };
     const register = (fn: () => Promise<void>): void => {
       reloadRef.current = fn;
     };
@@ -61,6 +56,7 @@ export function useBoard(cfg: BoardConfig): BoardData {
     sessions,
     reminders,
     connected,
+    storeStatus,
     refresh: () => reloadRef.current(),
   };
 }
@@ -71,6 +67,7 @@ interface Setters {
   setSessions: (s: SessionDoc[]) => void;
   setReminders: (r: ReminderDoc[]) => void;
   setConnected: (c: boolean) => void;
+  setStoreStatus: (st: LiveStatus | null) => void;
 }
 
 type RegisterReload = (fn: () => Promise<void>) => void;
@@ -136,49 +133,19 @@ function subscribePocketbase(cfg: BoardConfig, s: Setters, register: RegisterRel
   };
 }
 
-/** Firestore: live per-doc deltas via onSnapshot (no polling). */
+/** Firestore: the board's server streams the store (app/api/store/live); the
+ * browser never talks to Firestore itself. */
 function subscribeFirestore(cfg: BoardConfig, s: Setters, register: RegisterReload): () => void {
-  const db = getDb(cfg);
-  const base = `projects/${cfg.projectId}`;
-
-  // Manual pull (onSnapshot is already live; this backs refresh()/actions).
-  register(async () => {
-    try {
-      const [proj, units, sess, rems] = await Promise.all([
-        getDoc(doc(db, base)),
-        getDocs(collection(db, `${base}/workUnits`)),
-        getDocs(query(collection(db, `${base}/sessions`), where('inProject', '==', true))),
-        getDocs(collection(db, `${base}/reminders`)),
-      ]);
-      s.setConnected(true);
-      s.setProject(proj.exists() ? (proj.data() as ProjectDoc) : null);
-      s.setWorkUnits(units.docs.map((d) => d.data() as WorkUnitDoc));
-      s.setSessions(sess.docs.map((d) => d.data() as SessionDoc));
-      s.setReminders(rems.docs.map((d) => d.data() as ReminderDoc));
-    } catch {
-      s.setConnected(false);
-    }
+  const live = openLive('board', {
+    onSnap: (key, docs) => {
+      if (key === 'project') s.setProject((docs[0] as ProjectDoc | undefined) ?? null);
+      else if (key === 'workUnits') s.setWorkUnits(docs as WorkUnitDoc[]);
+      else if (key === 'sessions') s.setSessions(docs as SessionDoc[]);
+      else if (key === 'reminders') s.setReminders(docs as ReminderDoc[]);
+    },
+    onConnected: (ok) => s.setConnected(ok),
+    onStatus: (st) => s.setStoreStatus(st),
   });
-
-  const unsubProject = onSnapshot(doc(db, base), (snap) => {
-    s.setConnected(true);
-    s.setProject(snap.exists() ? (snap.data() as ProjectDoc) : null);
-  });
-  const unsubUnits = onSnapshot(collection(db, `${base}/workUnits`), (snap) => {
-    s.setWorkUnits(snap.docs.map((d) => d.data() as WorkUnitDoc));
-  });
-  const unsubSessions = onSnapshot(
-    query(collection(db, `${base}/sessions`), where('inProject', '==', true)),
-    (snap) => s.setSessions(snap.docs.map((d) => d.data() as SessionDoc)),
-  );
-  const unsubReminders = onSnapshot(collection(db, `${base}/reminders`), (snap) =>
-    s.setReminders(snap.docs.map((d) => d.data() as ReminderDoc)),
-  );
-
-  return () => {
-    unsubProject();
-    unsubUnits();
-    unsubSessions();
-    unsubReminders();
-  };
+  register(live.reload);
+  return live.close;
 }

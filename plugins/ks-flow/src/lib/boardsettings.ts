@@ -72,8 +72,6 @@ export interface BriefingSettings {
   names: string[];
   /** Slack user ids whose asks get half the usual window. */
   halfTime: string[];
-  /** The person's own Slack user id, once known. */
-  slackUserId: string | null;
 }
 
 const BRIEFING_DEFAULTS: BriefingSettings = {
@@ -81,7 +79,6 @@ const BRIEFING_DEFAULTS: BriefingSettings = {
   schedule: ['00:00', '06:00', '12:00', '18:00'],
   names: ['Jaswanth'],
   halfTime: [],
-  slackUserId: null,
 };
 
 let cachedBriefing: BriefingSettings = BRIEFING_DEFAULTS;
@@ -112,7 +109,6 @@ export function briefingSettings(): BriefingSettings {
       schedule: [...new Set(strings(b.schedule, BRIEFING_DEFAULTS.schedule, slot))].sort(),
       names: strings(b.names, BRIEFING_DEFAULTS.names, (x) => x.trim() !== ''),
       halfTime: strings(b.halfTime, BRIEFING_DEFAULTS.halfTime),
-      slackUserId: typeof b.slackUserId === 'string' && b.slackUserId ? b.slackUserId : null,
     };
   } catch {
     cachedBriefing = BRIEFING_DEFAULTS;
