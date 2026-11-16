@@ -17,7 +17,7 @@
 #   ks-flow card-owner UNIT   which device a card is on; --json
 #   ks-flow card-move UNIT    move a card to this device (only once its owner no longer works it)
 #   ks-flow briefing CMD      the master's Briefing CLI: context, find, add, evidence, run, daily
-#   ks-flow update            update ks-flow to the newest release, rebuild, restart daemon + board (--dry-run)
+#   ks-flow update            update ks-flow to the newest release, rebuild, restart daemon + board (--dry-run; --no-fetch: rebuild + restart only)
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -277,9 +277,11 @@ case "$cmd" in
 
   update)
     # Bring this device's ks-flow up to the newest release (README "Versioning"):
-    # an installed copy through `claude plugin update` (in the KarmaSuite
-    # checkout), a clone with `git pull --ff-only` (main and clean only), then
-    # rebuild and restart the daemon and the board. The daemon also starts it on
+    # ks's `ks-setup update --no-restart` fetches every KS plugin (an older ks
+    # without it: `claude plugin update` in the KarmaSuite checkout, or a clone's
+    # `git pull --ff-only`; a clone only on main and clean), then rebuild and
+    # restart the daemon and the board. --no-fetch: rebuild and restart only
+    # (ks-setup update runs that after it fetched). The daemon also starts it on
     # its own, at most once an hour, when the store holds a newer version.
     shift
     [ -f "$DAEMON_DIR/dist/update.js" ] || { echo "ks-flow: the daemon isn't built yet (ks-flow start)" >&2; exit 1; }
@@ -356,7 +358,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|device-id [--json]|card-owner <unit> [--json]|card-move <unit> [--json]|briefing <command>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]|migrate-store [--write]|update [--dry-run]}" >&2
+    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|device-id [--json]|card-owner <unit> [--json]|card-move <unit> [--json]|briefing <command>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]|migrate-store [--write]|update [--dry-run] [--no-fetch]}" >&2
     exit 1
     ;;
 esac

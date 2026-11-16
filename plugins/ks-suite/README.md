@@ -10,7 +10,7 @@ claude plugin install --scope local ks-suite@karmasuite
 # then, in Claude: /ks:setup
 ```
 
-`ks-master` and `ks-browser` are on-demand plugins (`defaultEnabled: false`):
-install them the same way (`claude plugin install --scope local ks-master@karmasuite` /
-`ks-browser@karmasuite`, in the checkout); `claude-ks-master` and `claude-ks-test` turn them on for
-their own session only. `ks-agent-limit` is disabled and not part of the set.
+`ks-master` and `ks-browser` are on-demand plugins (`defaultEnabled: false`) and are never
+installed: `claude-ks-master` and `claude-ks-test` load them for their own session only, with
+`--plugin-dir` from the karmasuite marketplace's copy of the repo (any machine that has the
+marketplace has them). An installed copy would block that, so `ks-setup doctor` warns about one. `ks-agent-limit` is disabled and not part of the set.

@@ -20,14 +20,23 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 for t in node jq git; do
   command -v "$t" >/dev/null 2>&1 || { echo "[ks-flow] $t not found on PATH — ks-flow is not set up (brew install $t, then /ks:setup)" >&2; exit 0; }
 done
-# Record this plugin's folder for the KS registry (ks-root, shims, the board
-# after an update moved the version folder). Best effort.
+# Record this plugin's folder in the KS registry, for a clone only (as the ks
+# plugin's ks_register_root): an installed copy lives in a versioned cache folder
+# that an update leaves behind, so it is never recorded — ks-root and
+# lib/ksroot.ts derive it from Claude Code's installed_plugins.json each time.
+# `mode: marketplace` entries (written before that) are dropped. Best effort.
 KS_REG="${KS_CONFIG_DIR:-$HOME/.config/ks}/plugins.json"
-if mkdir -p "$(dirname "$KS_REG")" 2>/dev/null; then
-  case "$PLUGIN_ROOT" in "$HOME/.claude/plugins/cache/"*) KS_MODE=marketplace ;; *) KS_MODE=local ;; esac
+KS_REG_ROOT="$PLUGIN_ROOT"
+case "$PLUGIN_ROOT" in
+  "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/"*|"$HOME/.claude/plugins/cache/"*) KS_REG_ROOT="" ;;
+esac
+if { [ -n "$KS_REG_ROOT" ] || jq -e 'any(.[]?; .mode? == "marketplace")' "$KS_REG" >/dev/null 2>&1; } \
+   && mkdir -p "$(dirname "$KS_REG")" 2>/dev/null; then
   { [ -s "$KS_REG" ] && cat "$KS_REG" || echo '{}'; } 2>/dev/null \
-    | jq --arg r "$PLUGIN_ROOT" --arg m "$KS_MODE" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '.["ks-flow"] = {root: $r, mode: $m, seenAt: $t}' >"$KS_REG.tmp.$$" 2>/dev/null \
+    | jq --arg r "$KS_REG_ROOT" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+        with_entries(select(.value.mode? != "marketplace"))
+        | if $r == "" then . else .["ks-flow"] = {root: $r, mode: "local", seenAt: $t} end' \
+        >"$KS_REG.tmp.$$" 2>/dev/null \
     && mv "$KS_REG.tmp.$$" "$KS_REG" 2>/dev/null || rm -f "$KS_REG.tmp.$$" 2>/dev/null
 fi
 
@@ -93,6 +102,8 @@ version_line() {
   [ -f "$f" ] || return 0
   msg="$(jq -r '
     def failed: ((.update.state // "") as $s | $s == "failed" or $s == "refused");
+    # The daemon'"'"'s hourly release check (`ks-setup update --check`): what is newer.
+    def newrel: [.release.plugins[]? | select(.latest != null and .installed != .latest)];
     if (.versionBehind or .schemaBehind) then
       "ks-flow on this device is "
       + (if .versionBehind then "behind (\(.version) → \(.storeVersion))"
@@ -101,6 +112,10 @@ version_line() {
       + (if .dev then ": run `ks-flow update` (dev build: \(.devReason // "not a release"))"
          elif failed then ": run `ks-flow update` (\(.update.reason // "see update.log"))"
          else ": it is updating itself (ks-flow update)" end)
+    elif ((.release.state // "") == "available") and (newrel | length > 0) then
+      "a new KS release for this device (" + ([newrel[] | "\(.plugin) \(.latest)"] | join(", ")) + ")"
+      + (if failed then ": run `ks-setup update` (\(.update.reason // "see update.log"))"
+         else ": it is updating itself (ks-setup update)" end)
     elif failed then "ks-flow on this device could not update: run `ks-flow update` (\(.update.reason // "see update.log"))"
     else empty end' "$f" 2>/dev/null)" || return 0
   [ -n "$msg" ] && jq -nc --arg m "$msg" '{systemMessage: $m}'

@@ -46,7 +46,8 @@ why in one line, and wait for it before step 2.
   checks). If it says Homebrew is missing, give the user https://brew.sh: its
   installer needs their password.
 - **`ks-setup apply`**: no question needed. It creates `~/.config/ks/`, records
-  the plugin folders, writes command shims to `~/.local/bin` and adds that
+  a clone's plugin folders (installed ones are found live), writes command
+  shims to `~/.local/bin` and adds that
   folder to PATH in the shell's startup file (zsh: `~/.zshrc`; bash:
   `~/.bash_profile` on macOS, else `~/.bashrc`), installs the CLI dependencies
   in a clone and copies the plugin switches into existing worktrees. For a
@@ -82,6 +83,13 @@ why in one line, and wait for it before step 2.
 - **ks-flow's daemon** (`ks-flow:daemon`, `ks-flow:version`): ask, then
   `ks-flow start` (after a store change, `ks-flow stop && ks-flow start`), and
   `ks-flow open` for the board.
+- **Updating** (`plugins:copies`, `ks-flow:release`, a version behind, or asked
+  to update): ask, then `ks-setup update`. It updates every KS plugin in the
+  checkout and each worktree (a clone: `git pull --ff-only`, only on a clean
+  `main`), rewrites the shims and restarts ks-flow; `ks-setup update --check`
+  only looks. Exit 3 means another update is running: wait and check again.
+  Open sessions reload themselves when idle; one that shows "run
+  /reload-plugins" needs the user to run it.
 
 Plugins are installed **per project, never user-wide**: inside the KarmaSuite
 checkout, with `--scope local`, so only that checkout loads them (the switch

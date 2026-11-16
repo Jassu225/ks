@@ -26,6 +26,16 @@
 #   ks-setup version [--json]      each KS plugin's version: the copy the commands run,
 #                                  the one Claude loads, the marketplace's newest, and
 #                                  ks-flow's daemon and store; with the fix when behind
+#   ks-setup update [--check] [--no-restart] [--json] [--auto]   bring every KS plugin
+#                                  on this machine to the newest release: installed, each
+#                                  out-of-date install (the checkout and every worktree)
+#                                  through `claude plugin update`; a clone on a clean
+#                                  main, `git pull --ff-only`. Then the shims, and
+#                                  ks-flow restarts when it changed (not with --no-restart).
+#                                  --check only looks. Exit 0 updated / current /
+#                                  available, 1 refused or failed, 2 usage, 3 another
+#                                  update is running. Log: ~/.config/ks/update.log
+#   ks-setup shims                 quiet: rewrite the ~/.local/bin shims, prune the registry
 #   ks-setup tools [--yes] [name...]   install the missing tools setup checks (node,
 #                                  git, jq, tmux, terminal-notifier, zstd, ffmpeg, gh)
 #                                  with Homebrew; only those, after a yes
@@ -180,6 +190,19 @@ version_check() { # data-dir
   local level ok msg fix
   IFS=$'\t' read -r level ok msg fix <<<"$row"
   check ks-flow:version "$level" "$ok" "$msg" "$fix"
+  # The daemon's hourly release check (`ks-setup update --check`), when it has run.
+  row="$(jq -r '
+    (.release // null) as $r | select($r | type == "object")
+    | ($r.checkedAt // "" | tostring | .[0:16] | sub("T"; " ")) as $at
+    | ([$r.plugins[]? | select(.installed != .latest) | "\(.plugin) \(.installed // "?") → \(.latest // "?")"] | join(", ")) as $new
+    | if $r.state == "available" then ["warn", 0, "a new KS release: \($new)\(if $at != "" then " (checked \($at))" else "" end)", "ks-setup update   (ks-flow also runs it itself)"]
+      elif $r.state == "current" then ["info", 1, "KS plugins are the newest release\(if $at != "" then " (checked \($at))" else "" end)", ""]
+      elif $r.state == "failed" then ["info", 0, "the release check failed: \($r.reason // "see ~/.config/ks/update.log")", "ks-setup update --check"]
+      elif $r.state == "refused" then ["info", 1, "no release check: \($r.reason // "refused")", ""]
+      else empty end | @tsv' "$f" 2>/dev/null)"
+  [ -n "$row" ] || return 0
+  IFS=$'\t' read -r level ok msg fix <<<"$row"
+  check ks-flow:release "$level" "$ok" "$msg" "$fix"
 }
 
 # The sandbox is on in any of Claude's settings files (user, the KS project's,
@@ -244,10 +267,23 @@ doctor() {
          "ks-setup apply --dev   (clone)  or, in your KarmaSuite checkout:  claude plugin install --scope local ks-suite@$MARKETPLACE" ;;
   esac
   local p root
-  for p in ks:error ks-flow:warn ks-master:info ks-browser:info; do
+  for p in ks:error ks-flow:warn; do
     lvl="${p#*:}"; p="${p%%:*}"
     if root="$(ks_root "$p")"; then check "plugin:$p" "$lvl" 1 "$p at $root"
     else check "plugin:$p" "$lvl" 0 "$p not found" "in your KarmaSuite checkout: claude plugin install --scope local $p@$MARKETPLACE"; fi
+  done
+  # On-demand plugins are never installed: their launchers load them with
+  # --plugin-dir from the marketplace's copy of the repo. An install of one
+  # (any scope) blocks that copy, and enabling one via settings made Claude
+  # Code install it user-wide.
+  local ip; ip="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"
+  for p in ks-master ks-browser; do
+    if root="$(ksr_marketplace_root "$p")"; then check "plugin:$p" info 1 "$p loads on demand from $root"
+    else check "plugin:$p" info 0 "$p is not in the $MARKETPLACE marketplace's folder" "claude plugin marketplace update $MARKETPLACE"; fi
+    local where; where="$(jq -r --arg id "$p@$MARKETPLACE" '(.plugins[$id] // [])[] | "\(.scope)\(if .projectPath then " " + .projectPath else "" end)"' "$ip" 2>/dev/null | paste -sd ';' -)"
+    [ -z "$where" ] || check "plugin:$p:installed" warn 0 \
+      "$p is installed ($where), but it loads on demand: an installed copy can stop the launcher's from loading" \
+      "! claude plugin uninstall $p@$MARKETPLACE --scope <scope>   (run in the folder named, for a local install)"
   done
   if [ "$(jq -r --arg m "$MARKETPLACE" '.enabledPlugins["ks-agent-limit@"+$m] // false' "$SETTINGS" 2>/dev/null)" = true ] \
     || [[ " ${KS_EXTRA_PLUGINS:-$(ksc_get KS_EXTRA_PLUGINS 2>/dev/null)} " == *" ks-agent-limit "* ]]; then
@@ -271,16 +307,17 @@ doctor() {
     esac
   done
 
-  if [ -s "$(ksr_registry)" ]; then
-    local rp rr ri stale=()
-    for rp in ks ks-flow ks-master ks-browser; do
-      rr="$(jq -r --arg n "$rp" '.[$n].root // empty' "$(ksr_registry)" 2>/dev/null)"; ri="$(installed_root "$rp")"
-      [ -n "$rr" ] && [ -n "$ri" ] && [ "$rr" != "$ri" ] && [ "$(plugin_version "$rr")" != "$(plugin_version "$ri")" ] \
-        && stale+=("$rp $(plugin_version "$rr") (Claude loads $(plugin_version "$ri"))")
-    done
-    if [ ${#stale[@]} = 0 ]; then check registry info 1 "registry $(ksr_registry)"
-    else check registry warn 0 "the KS commands run an older copy than Claude loads: ${stale[*]}" "ks-setup apply"; fi
-  else check registry info 0 "no plugin registry yet" "ks-setup apply"; fi
+  # The copy the KS commands run here (ksr_live_root, as the shims resolve it) against
+  # the one Claude loads in the checkout (installed_root). They differ when this
+  # folder's install (a worktree's) is behind the checkout's, or KS_ROOT_* points elsewhere.
+  local rp lr ir drift=()
+  for rp in ks ks-flow ks-master ks-browser; do
+    lr="$(ksr_live_root "$rp" 2>/dev/null || true)"; ir="$(installed_root "$rp")"
+    [ -n "$lr" ] && [ -n "$ir" ] && [ "$lr" != "$ir" ] && [ "$(plugin_version "$lr")" != "$(plugin_version "$ir")" ] \
+      && drift+=("$rp $(plugin_version "$lr") (Claude loads $(plugin_version "$ir"))")
+  done
+  if [ ${#drift[@]} = 0 ]; then check plugins:copies info 1 "the KS commands run the copies Claude loads"
+  else check plugins:copies warn 0 "the KS commands here run another copy than Claude loads in the checkout: ${drift[*]}" "ks-setup update"; fi
 
   # Token files must not sit in a plugin folder: a marketplace install copies the
   # whole folder (gitignored files included) into ~/.claude/plugins/cache.
@@ -500,46 +537,73 @@ remote_control_settings() {
 }
 
 # ── versions ────────────────────────────────────────────────────────────────
-# Three copies of a plugin can differ: the one the KS commands run (the folder in
-# ~/.config/ks/plugins.json, which the shims follow), the one Claude loads in the
+# Three copies of a plugin can differ: the one the KS commands run (ksr_live_root in
+# lib/ks-root.sh, as the shims resolve it), the one Claude loads in the
 # KarmaSuite checkout (its install), and the newest the karmasuite marketplace
 # offers (as of its last update). ks-flow adds its daemon's and the store's.
-PLUGIN_LIST_JSON=""
-plugin_list_json() { # cached `claude plugin list --json`
-  [ -n "$PLUGIN_LIST_JSON" ] || PLUGIN_LIST_JSON="$(claude plugin list --json 2>/dev/null || echo '[]')"
-  printf '%s' "$PLUGIN_LIST_JSON"
-}
 plugin_version() { jq -r '.version // empty' "$1/.claude-plugin/plugin.json" 2>/dev/null; }
-# The folder Claude loads <plugin> from for the KarmaSuite checkout (a directory
-# marketplace: the clone's folder; an install: its cache copy), else empty.
-installed_root() {
-  local proj; proj="$(ksc_project_root 2>/dev/null || true)"
-  plugin_list_json | jq -r --arg id "$1@$MARKETPLACE" --arg p "$proj" '
-    [ .[]? | select(.id == $id) | select(.scope == "user" or .scope == "managed" or (.projectPath // "") == $p) ]
-    | sort_by(.lastUpdated // "") | last
-    | if . == null then empty else (.readFromFolder // .installPath // empty) end' 2>/dev/null
+claude_plugins_dir() { printf '%s/plugins' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; }
+# installed_plugins.json's entries for <plugin>@karmasuite, one JSON object per line
+# ({scope, projectPath?, installPath, version, ...}; v2: an array per id).
+ip_entries() {
+  jq -c --arg id "$1@$MARKETPLACE" '.plugins[$id] // empty | if type == "array" then .[] else . end | objects' \
+    "$(claude_plugins_dir)/installed_plugins.json" 2>/dev/null
 }
-marketplace_dir() { jq -r --arg m "$MARKETPLACE" '.[$m].installLocation // empty' "$HOME/.claude/plugins/known_marketplaces.json" 2>/dev/null; }
-marketplace_version() { # plugin → the version the marketplace lists
-  local d; d="$(marketplace_dir)"; [ -n "$d" ] || return 0
-  jq -r --arg n "$1" '.plugins[]? | select(.name == $n) | .version // empty' "$d/.claude-plugin/marketplace.json" 2>/dev/null
+# The version of one entry (scope + projectPath) now, re-read from the file.
+ip_entry_version() { # plugin scope projectPath
+  ip_entries "$1" | jq -r --arg s "$2" --arg pp "$3" 'select(.scope == $s and (.projectPath // "") == $pp) | .version // empty' 2>/dev/null | head -1
+}
+# The folder Claude loads <plugin> from for the KarmaSuite checkout, read from
+# Claude's own files (never spawns `claude`): a directory marketplace, the
+# clone's folder; else the checkout's installed_plugins.json entry
+# (local/project), else a user/managed one, highest version first; else empty.
+installed_root() {
+  local n="$1" proj d l
+  proj="$(ksc_project_root 2>/dev/null || true)"; proj="${proj%/}"
+  d="$(jq -r --arg m "$MARKETPLACE" '.[$m] | objects | select(.source.source? == "directory") | (.installLocation // .source.path) // empty' \
+    "$(claude_plugins_dir)/known_marketplaces.json" 2>/dev/null)"
+  if [ -n "$d" ]; then
+    d="${d%/}/plugins/$n"
+    if [ -d "$d" ] && [ "$(ksr_declared_name "$d")" = "$n" ]; then printf '%s' "$d"; return 0; fi
+  fi
+  while IFS= read -r l; do
+    [ -n "$l" ] && [ -d "$l" ] && { printf '%s' "$l"; return 0; }
+  done < <(ip_entries "$n" | jq -rs --arg p "$proj" '
+    map(select(.installPath | type == "string")
+        | .r = (if $p != "" and ((.projectPath // "") | rtrimstr("/")) == $p then 0
+                elif .scope == "user" or .scope == "managed" then 1 else empty end))
+    | sort_by(.r, ([.version // "0" | tostring | splits("[.+-]") | tonumber? // 0] | map(-.)))
+    | .[].installPath' 2>/dev/null)
+  return 0
+}
+marketplace_dir() { jq -r --arg m "$MARKETPLACE" '.[$m].installLocation // empty' "$(claude_plugins_dir)/known_marketplaces.json" 2>/dev/null; }
+# plugin → the version the marketplace offers (as of its last refresh): the
+# plugin.json in its source folder (what an install records), else the version
+# its marketplace.json lists.
+marketplace_version() {
+  local d src v=""; d="$(marketplace_dir)"; [ -n "$d" ] || return 0
+  src="$(jq -r --arg n "$1" '.plugins[]? | select(.name == $n) | .source | strings' "$d/.claude-plugin/marketplace.json" 2>/dev/null | head -1)"
+  case "$src" in ./*|../*) v="$(plugin_version "$d/${src#./}")" ;; esac
+  [ -n "$v" ] || v="$(jq -r --arg n "$1" '.plugins[]? | select(.name == $n) | .version // empty' "$d/.claude-plugin/marketplace.json" 2>/dev/null | head -1)"
+  printf '%s' "$v"
 }
 ver_lt() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
+# <installed> needs <latest>: older, or not a version at all.
+ver_behind() { [ -n "$2" ] && [ "$1" != "$2" ] && { ! [[ "$1" =~ ^[0-9] ]] || ver_lt "$1" "$2"; }; }
 
 versions() {
   local json=0 a p reg inst cmdv clv latest rows=() dd vs
   for a in "$@"; do [ "$a" = --json ] && json=1; done
   for p in ks ks-flow ks-master ks-browser; do
-    reg="$(jq -r --arg n "$p" '.[$n].root // empty' "$(ksc_dir)/plugins.json" 2>/dev/null)"
-    [ -d "$reg" ] || reg="$(ks_root "$p" 2>/dev/null || true)"
+    reg="$(ksr_live_root "$p" 2>/dev/null || true)" # what the shims run
     inst="$(installed_root "$p")"
     cmdv="$([ -n "$reg" ] && plugin_version "$reg")"
     clv="$([ -n "$inst" ] && plugin_version "$inst")"
     latest="$(marketplace_version "$p")"
     local state="up to date" fix=""
     if [ -z "$inst" ] && [ -z "$reg" ]; then state="not installed"
-    elif [ -n "$inst" ] && ver_lt "$clv" "$latest"; then state="Claude loads $clv, the marketplace has $latest"; fix="/plugin → Installed → $p → Update (or restart Claude with marketplace auto-update on)"
-    elif [ -n "$inst" ] && [ "$reg" != "$inst" ] && [ "$cmdv" != "$clv" ]; then state="the commands run $cmdv, Claude loads $clv"; fix="ks-setup apply"
+    elif [ -n "$inst" ] && ver_lt "$clv" "$latest"; then state="Claude loads $clv, the marketplace has $latest"; fix="ks-setup update"
+    elif [ -n "$inst" ] && [ "$reg" != "$inst" ] && [ "$cmdv" != "$clv" ]; then state="the commands run $cmdv, Claude loads $clv"; fix="ks-setup update"
     fi
     rows+=("$(jq -nc --arg p "$p" --arg c "$cmdv" --arg cr "$reg" --arg l "$clv" --arg lr "$inst" --arg m "$latest" --arg s "$state" --arg f "$fix" \
       '{plugin:$p, commands:{version:$c, root:$cr}, claude:{version:$l, root:$lr}, marketplace:$m, state:$s, fix:(if $f=="" then null else $f end)}')")
@@ -548,7 +612,7 @@ versions() {
   local flow; flow="$(ks_root ks-flow 2>/dev/null || true)"
   dd=""; [ -n "$flow" ] && dd="$(ksc_project_root >/dev/null 2>&1 && node "$flow/src/lib/datadir.mjs" --project "$(ksc_project_root)" 2>/dev/null || true)"
   vs='null'; [ -n "$dd" ] && [ -f "$dd/version-status.json" ] && vs="$(jq -c '{daemon:.version, store:.storeVersion, schema:.schemaVersion, storeSchema:.storeSchemaVersion, dev:.dev, devReason:.devReason, behind:(.versionBehind or .schemaBehind), update:.update.state}' "$dd/version-status.json" 2>/dev/null || echo null)"
-  local mdate; mdate="$(jq -r --arg m "$MARKETPLACE" '.[$m].lastUpdated // empty' "$HOME/.claude/plugins/known_marketplaces.json" 2>/dev/null)"
+  local mdate; mdate="$(jq -r --arg m "$MARKETPLACE" '.[$m].lastUpdated // empty' "$(claude_plugins_dir)/known_marketplaces.json" 2>/dev/null)"
   local all; all="$(printf '%s\n' "${rows[@]}" | jq -s --argjson f "$vs" --arg md "$mdate" --arg mode "$(load_mode)" \
     '{mode:$mode, marketplaceUpdated:$md, plugins:., ksFlow:$f}')"
   if [ "$json" = 1 ]; then printf '%s\n' "$all"; return 0; fi
@@ -572,18 +636,306 @@ versions() {
     else "ks-flow: no version yet (the daemon writes it on start)" end'
 }
 
+# ── update ──────────────────────────────────────────────────────────────────
+# `ks-setup update [--check] [--no-restart] [--json] [--auto]`: every KS plugin
+# on this machine to the newest release, the way `plannotator update` does it:
+# one run at a time (${KS_CONFIG_DIR}/update.lock: a folder holding pid and
+# startedAt; stale when its pid is gone or after 2 h), logged to
+# ${KS_CONFIG_DIR}/update.log.
+#   installed (the folder the commands run is in the plugin cache):
+#     `claude plugin marketplace update karmasuite`, then for ks-suite, ks,
+#     ks-flow, ks-master and ks-browser, each installed_plugins.json entry
+#     behind the marketplace: `claude plugin update <p>@karmasuite --scope
+#     <scope> --json`, run IN the entry's projectPath (`--scope local` resolves
+#     from the cwd; one entry per worktree). A worktree that is gone is skipped,
+#     a managed entry too; entries are never created.
+#   a clone (a directory marketplace, KS_ROOT_*, --plugin-dir): only on branch
+#     main with no uncommitted changes to tracked files (else refused), then
+#     `git pull --ff-only`.
+#   then the NEW copy's `ks-setup shims`, and (not with --no-restart) when
+#     ks-flow changed, `ks-flow update --no-fetch` (rebuild, restart; no browser).
+# --check fetches (the marketplace refresh / `git fetch`) and installs nothing.
+# --json: the lines for a person go to stderr; stdout gets one JSON object:
+#   {state: updated|current|available|refused|failed|busy, mode: marketplace|clone|null,
+#    plugins: [{plugin, from, to, projects: [{path, scope, from, to, ok}]}],
+#    reason: string|null, log: <update.log>, by: manual|auto, restarted: bool}
+#   (projects: the installs, marketplace mode only; ok = at the newest now.)
+# Exit: 0 updated / current / available, 1 refused / failed, 2 usage, 3 busy.
+UPD_PLUGINS=(ks-suite ks ks-flow ks-master ks-browser)
+U_JSON=0 U_LOG="" U_LOCK="" U_STATE="" U_MODE="" U_REASON="" U_PLUG="" U_PROJ="" U_CHANGED=0 U_FLOW_CHANGED=0 U_FAILS=""
+U_CLAUDE="${KS_CLAUDE_BIN:-claude}"
+
+ulog() { # a line for the person (stderr with --json) and update.log
+  printf '[%s] [ks-setup update] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$U_LOG" 2>/dev/null
+  if [ "$U_JSON" = 1 ]; then printf '%s\n' "$*" >&2; else printf '%s\n' "$*"; fi
+}
+ulog_out() { # a command's output: update.log only, indented
+  [ -n "$1" ] && printf '%s\n' "$1" | sed 's/^/    /' >>"$U_LOG" 2>/dev/null
+  return 0
+}
+u_tail() { printf '%s' "$1" | tail -3 | tr '\n' ' ' | sed 's/ *$//' | cut -c1-300; }
+u_fail() { U_FAILS="${U_FAILS:+$U_FAILS; }$*"; }
+
+# Take update.lock. 1 = held by a live run (its pid alive and under 2 h old).
+update_lock() {
+  local l="$U_LOCK" pid i
+  mkdir -p "$(dirname "$l")" 2>/dev/null
+  for i in 1 2; do
+    if mkdir "$l" 2>/dev/null; then
+      printf '%s\n' "$$" >"$l/pid"; date -u +%Y-%m-%dT%H:%M:%SZ >"$l/startedAt"
+      return 0
+    fi
+    pid="$(cat "$l/pid" 2>/dev/null)"
+    if [ -z "$pid" ]; then
+      # Just taken, its pid not written yet: held, unless it is old.
+      [ -n "$(find "$l" -maxdepth 0 -mmin -1 2>/dev/null)" ] && return 1
+    elif kill -0 "$pid" 2>/dev/null && [ -z "$(find "$l/pid" -mmin +120 2>/dev/null)" ]; then
+      return 1
+    fi
+    ulog "a stale update lock (pid ${pid:-none}, started $(cat "$l/startedAt" 2>/dev/null || echo '?')) was released"
+    rm -rf "$l"
+  done
+  return 1
+}
+update_unlock() { [ "$(cat "$U_LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$U_LOCK"; return 0; }
+
+u_plug() { # plugin from to
+  U_PLUG="$U_PLUG$(jq -nc --arg p "$1" --arg f "$2" --arg t "$3" '{plugin:$p, from:(if $f == "" then null else $f end), to:(if $t == "" then null else $t end)}')"$'\n'
+}
+u_proj() { # plugin path scope from to ok(true|false)
+  U_PROJ="$U_PROJ$(jq -nc --arg p "$1" --arg d "$2" --arg s "$3" --arg f "$4" --arg t "$5" --argjson ok "$6" \
+    '{plugin:$p, path:(if $d == "" then null else $d end), scope:$s, from:(if $f == "" then null else $f end), to:(if $t == "" then null else $t end), ok:$ok}')"$'\n'
+}
+
+update_marketplace() { # check(0|1)
+  local check="$1" proj out rc p latest scope pp ver orig nv dir pfrom n any=0
+  proj="$(ksc_project_root 2>/dev/null || true)"
+  if ! command -v "$U_CLAUDE" >/dev/null 2>&1; then
+    U_STATE=refused U_REASON="claude is not on PATH"; return
+  fi
+  ulog "refreshing the $MARKETPLACE marketplace"
+  out="$(cd "${proj:-$HOME}" 2>/dev/null; "$U_CLAUDE" plugin marketplace update "$MARKETPLACE" </dev/null 2>&1)"; rc=$?
+  ulog_out "$out"
+  if [ "$rc" != 0 ]; then
+    U_STATE=failed U_REASON="claude plugin marketplace update $MARKETPLACE failed (exit $rc)${out:+: $(u_tail "$out")}"; return
+  fi
+  for p in "${UPD_PLUGINS[@]}"; do
+    latest="$(marketplace_version "$p")"
+    pfrom="" n=0
+    while IFS=$'\037' read -r scope pp ver; do
+      case "$scope" in
+        managed) ulog "$p: a managed install, not updated here"; continue ;;
+        user) dir="$HOME" pp="" ;;
+        local|project)
+          if [ -z "$pp" ] || [ ! -d "$pp" ]; then ulog "$p: ${pp:-an install} is gone; skipped"; continue; fi
+          dir="$pp" ;;
+        *) continue ;;
+      esac
+      if [ -z "$latest" ]; then ulog "$p: the $MARKETPLACE marketplace doesn't offer it; skipped"; break; fi
+      n=$((n + 1))
+      if [ -z "$pfrom" ] || ver_lt "$ver" "$pfrom"; then pfrom="$ver"; fi
+      if ! ver_behind "$ver" "$latest"; then u_proj "$p" "$pp" "$scope" "$ver" "$ver" true; continue; fi
+      any=1
+      if [ "$check" = 1 ]; then ulog "$p: $ver → $latest available in $dir ($scope)"; u_proj "$p" "$pp" "$scope" "$ver" "$latest" false; continue; fi
+      # An earlier update (ks-suite brings its dependencies) may have done it already.
+      orig="$ver"; ver="$(ip_entry_version "$p" "$scope" "$pp")"
+      if ! ver_behind "$ver" "$latest"; then
+        u_proj "$p" "$pp" "$scope" "$orig" "$ver" true
+        U_CHANGED=1; [ "$p" = ks-flow ] && U_FLOW_CHANGED=1
+        continue
+      fi
+      ulog "$p: $ver → $latest in $dir ($scope)"
+      out="$(cd "$dir" && "$U_CLAUDE" plugin update "$p@$MARKETPLACE" --scope "$scope" --json </dev/null 2>&1)"; rc=$?
+      ulog_out "$out"
+      nv="$(ip_entry_version "$p" "$scope" "$pp")"
+      [ "$nv" != "$orig" ] && { U_CHANGED=1; [ "$p" = ks-flow ] && U_FLOW_CHANGED=1; }
+      if [ "$rc" = 0 ] && ! ver_behind "$nv" "$latest"; then
+        u_proj "$p" "$pp" "$scope" "$orig" "$nv" true
+      else
+        u_proj "$p" "$pp" "$scope" "$orig" "$nv" false
+        if [ "$rc" != 0 ]; then u_fail "$p in $dir: claude plugin update failed (exit $rc)${out:+: $(u_tail "$out")}"
+        else u_fail "$p in $dir: still ${nv:-unknown} after the update, the marketplace has $latest"; fi
+        ulog "$p in $dir: the update failed (see the log)"
+      fi
+    done < <(ip_entries "$p" | jq -r '[.scope // "", (.projectPath // "" | rtrimstr("/")), (.version // "" | tostring)] | join("\u001f")' 2>/dev/null)
+    [ "$n" -gt 0 ] && u_plug "$p" "$pfrom" "$latest"
+  done
+  if [ -n "$U_FAILS" ]; then U_STATE=failed U_REASON="$U_FAILS"
+  elif [ "$check" = 1 ]; then if [ "$any" = 1 ]; then U_STATE=available; else U_STATE=current; fi
+  elif [ "$U_CHANGED" = 1 ]; then U_STATE=updated
+  else U_STATE=current; fi
+}
+
+update_clone() { # root check(0|1)
+  local root="$1" check="$2" repo br up out rc p f t head0 head1 any=0 plugs=()
+  if ! repo="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" || [ -z "$repo" ]; then
+    U_STATE=refused U_REASON="$root is neither an installed plugin nor a git clone"; return
+  fi
+  br="$(git -C "$repo" symbolic-ref --short -q HEAD 2>/dev/null)"
+  if [ "$br" != main ]; then
+    if [ -n "$br" ]; then U_STATE=refused U_REASON="the clone $repo is on branch $br, not main"
+    else U_STATE=refused U_REASON="the clone $repo is not on a branch (detached HEAD)"; fi
+    return
+  fi
+  if [ -n "$(git -C "$repo" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    U_STATE=refused U_REASON="the clone $repo has uncommitted changes"; return
+  fi
+  if ! up="$(git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)" || [ -z "$up" ]; then
+    U_STATE=refused U_REASON="main in $repo has no upstream branch to pull from"; return
+  fi
+  for p in "${UPD_PLUGINS[@]}"; do [ -f "$repo/plugins/$p/.claude-plugin/plugin.json" ] && plugs+=("$p"); done
+  if [ "$check" = 1 ]; then
+    ulog "fetching $up in $repo"
+    out="$(git -C "$repo" fetch --quiet </dev/null 2>&1)"; rc=$?
+    ulog_out "$out"
+    if [ "$rc" != 0 ]; then U_STATE=failed U_REASON="git fetch failed (exit $rc)${out:+: $(u_tail "$out")}"; return; fi
+    for p in ${plugs[@]+"${plugs[@]}"}; do
+      f="$(plugin_version "$repo/plugins/$p")"
+      t="$(git -C "$repo" show "$up:plugins/$p/.claude-plugin/plugin.json" 2>/dev/null | jq -r '.version // empty' 2>/dev/null)"
+      [ -n "$t" ] || t="$f"
+      ver_behind "$f" "$t" && { any=1; ulog "$p: $f → $t available"; }
+      u_plug "$p" "$f" "$t"
+    done
+    if [ "$any" = 1 ]; then U_STATE=available; else U_STATE=current; fi
+    return
+  fi
+  local before=() i=0
+  for p in ${plugs[@]+"${plugs[@]}"}; do before+=("$(plugin_version "$repo/plugins/$p")"); done
+  head0="$(git -C "$repo" rev-parse HEAD 2>/dev/null)"
+  ulog "git pull --ff-only in $repo ($up)"
+  out="$(git -C "$repo" pull --ff-only </dev/null 2>&1)"; rc=$?
+  ulog_out "$out"
+  if [ "$rc" != 0 ]; then U_STATE=failed U_REASON="git pull --ff-only failed (exit $rc)${out:+: $(u_tail "$out")}"; return; fi
+  head1="$(git -C "$repo" rev-parse HEAD 2>/dev/null)"
+  for p in ${plugs[@]+"${plugs[@]}"}; do
+    t="$(plugin_version "$repo/plugins/$p")"
+    u_plug "$p" "${before[$i]}" "$t"
+    [ "${before[$i]}" != "$t" ] && ulog "$p: ${before[$i]} → $t"
+    i=$((i + 1))
+  done
+  if [ "$head0" = "$head1" ]; then U_STATE=current; return; fi
+  U_STATE=updated U_CHANGED=1
+  git -C "$repo" diff --quiet "$head0" "$head1" -- plugins/ks-flow 2>/dev/null || U_FLOW_CHANGED=1
+  ulog "pulled ${head0:0:7}..${head1:0:7}"
+}
+
+update_cmd() {
+  local check=0 restart=1 by=manual a restarted=false
+  for a in "$@"; do
+    case "$a" in
+      --check) check=1 ;; --no-restart) restart=0 ;; --json) U_JSON=1 ;; --auto) by=auto ;;
+      *) echo "ks-setup update: unknown option $a (usage: ks-setup update [--check] [--no-restart] [--json] [--auto])" >&2; return 2 ;;
+    esac
+  done
+  local cfg; cfg="$(ksc_dir)"
+  mkdir -p "$cfg" 2>/dev/null
+  U_LOG="$cfg/update.log" U_LOCK="$cfg/update.lock"
+  if ! update_lock; then
+    U_STATE=busy U_REASON="another update is running (pid $(cat "$U_LOCK/pid" 2>/dev/null || echo '?'), started $(cat "$U_LOCK/startedAt" 2>/dev/null || echo '?'))"
+    ulog "$U_REASON"
+    update_report "$by" false; return 3
+  fi
+  trap update_unlock EXIT
+  ulog "start ($by$([ "$check" = 1 ] && echo ', check only'))"
+  local root proj
+  root="$(ksr_live_root ks 2>/dev/null)" || root="$KS_ROOT_DIR"
+  proj="$(ksc_project_root 2>/dev/null || true)"
+  case "$root" in
+    "$(ksr_cache_dir)"*|"$HOME/.claude/plugins/cache/"*) U_MODE=marketplace; update_marketplace "$check" ;;
+    *) U_MODE=clone; update_clone "$root" "$check" ;;
+  esac
+
+  if [ "$check" = 0 ] && [ "$U_CHANGED" = 1 ]; then
+    # The shims as the NEW copy writes them (its ks-setup, not this one).
+    local new out rc
+    new="$(cd "${proj:-$PWD}" 2>/dev/null; ksr_live_root ks 2>/dev/null)" || new=""
+    if [ -n "$new" ] && [ -x "$new/scripts/ks-setup" ]; then
+      out="$(cd "${proj:-$PWD}" 2>/dev/null; "$new/scripts/ks-setup" shims </dev/null 2>&1)"; rc=$?
+    else
+      out="$(shims_refresh 2>&1)"; rc=$?
+    fi
+    ulog_out "$out"
+    if [ "$rc" = 0 ]; then ulog "shims refreshed${new:+ from $new}"; else ulog "refreshing the shims failed (exit $rc): run ks-setup apply"; fi
+    if [ "$restart" = 1 ] && [ "$U_FLOW_CHANGED" = 1 ]; then
+      local flow; flow="$(cd "${proj:-$PWD}" 2>/dev/null; ksr_live_root ks-flow 2>/dev/null)" || flow=""
+      if [ -n "$flow" ] && [ -x "$flow/bin/ks-flow" ]; then
+        ulog "restarting ks-flow: ks-flow update --no-fetch"
+        out="$(cd "${proj:-$PWD}" 2>/dev/null; KS_FLOW_NO_BROWSER=1 "$flow/bin/ks-flow" update --no-fetch </dev/null 2>&1)"; rc=$?
+        ulog_out "$out"
+        if [ "$rc" = 0 ]; then restarted=true
+        else
+          U_REASON="${U_REASON:+$U_REASON; }ks-flow update --no-fetch failed (exit $rc)${out:+: $(u_tail "$out")}"
+          [ "$U_STATE" = updated ] && U_STATE=failed
+        fi
+      fi
+    fi
+  fi
+  update_report "$by" "$restarted"
+  case "$U_STATE" in updated|current|available) return 0 ;; *) return 1 ;; esac
+}
+
+update_report() { # by restarted
+  local all
+  all="$(jq -n --arg state "$U_STATE" --arg mode "$U_MODE" --arg reason "$U_REASON" --arg log "$U_LOG" --arg by "$1" \
+    --argjson restarted "$2" \
+    --argjson pl "$(printf '%s' "$U_PLUG" | jq -sc . 2>/dev/null || echo '[]')" \
+    --argjson pr "$(printf '%s' "$U_PROJ" | jq -sc . 2>/dev/null || echo '[]')" '
+    {state: $state, mode: (if $mode == "" then null else $mode end),
+     plugins: [$pl[] | . as $p | . + {projects: [$pr[] | select(.plugin == $p.plugin) | del(.plugin)]}],
+     reason: (if $reason == "" then null else $reason end), log: $log, by: $by, restarted: $restarted}')"
+  local line
+  line="$(jq -r '
+    ([.plugins[] | select(.from != .to) | "\(.plugin) \(.from // "?") → \(.to // "?")"] | join(", ")) as $c
+    | if .state == "updated" then "updated: \($c)" + (if .restarted then "; ks-flow restarted" else "" end)
+      elif .state == "available" then "a new release: \($c) (install: ks-setup update)"
+      elif .state == "current" then "every KS plugin is the newest release"
+      else "\(.state): \(.reason // "")" end' <<<"$all")"
+  ulog "done: $line"
+  if [ "$U_STATE" = updated ] && [ "$U_JSON" = 0 ]; then
+    if [ "$U_MODE" = clone ]; then say "Running sessions pick it up on /reload-plugins; new sessions start on it."
+    else say "Running sessions keep the old copy until /reload-plugins or a restart; new sessions start on it."; fi
+  fi
+  [ "$U_JSON" = 1 ] && jq -c . <<<"$all"
+  return 0
+}
+
 # ── apply ───────────────────────────────────────────────────────────────────
-write_shim() { # plugin cmd fallback-root
-  local f="$LOCAL_BIN/$2" sub=bin
-  cat >"$f" <<EOF
-#!/bin/bash
-# ks shim (ks-setup apply): runs the $1 plugin's $2 from wherever the plugin is
-# now (the registry follows installs and updates), else from $3.
-r="\$(jq -r '.["$1"].root // empty' "\${KS_CONFIG_DIR:-\$HOME/.config/ks}/plugins.json" 2>/dev/null)"
-[ -x "\$r/$sub/$2" ] || r="$3"
-exec "\$r/$sub/$2" "\$@"
-EOF
-  chmod +x "$f"
+write_shim() { # plugin cmd: a self-contained shim (lib/ks-root.sh ksr_write_shim) that
+  # finds the plugin's current folder on every run, never a baked-in versioned one
+  ksr_write_shim "$1" "$2" "$LOCAL_BIN"
+}
+write_shims() { # resolver (ks_root, or ksr_live_root: never spawns claude)
+  local s plug cmd root
+  mkdir -p "$LOCAL_BIN"
+  for s in "${SHIMS[@]}"; do
+    plug="${s%%:*}"; cmd="${s#*:}"
+    root="$("$1" "$plug" 2>/dev/null)" || continue
+    [ -x "$root/bin/$cmd" ] && write_shim "$plug" "$cmd"
+  done
+  return 0
+}
+
+# `ks-setup shims` (quiet; `ks-setup update` runs it from the NEW copy): the
+# shims as this version writes them, and the registry pruned to clone roots
+# that still exist.
+shims_refresh() {
+  local p root reg tmp
+  for p in ks ks-flow ks-master ks-browser; do
+    root="$(ksr_live_root "$p" 2>/dev/null)" && ks_register_root "$p" "$root"
+  done
+  reg="$(ksr_registry)"
+  if [ -s "$reg" ]; then
+    local gone=() k
+    while IFS= read -r k; do
+      [ -n "$k" ] || continue
+      [ -d "$(jq -r --arg k "$k" '.[$k].root // empty' "$reg" 2>/dev/null)" ] || gone+=("$k")
+    done < <(jq -r 'keys[]?' "$reg" 2>/dev/null)
+    if [ ${#gone[@]} -gt 0 ]; then
+      tmp="$reg.tmp.$$"
+      jq --args 'delpaths([$ARGS.positional[] | [.]])' "${gone[@]}" <"$reg" >"$tmp" 2>/dev/null && mv "$tmp" "$reg" || rm -f "$tmp"
+    fi
+  fi
+  write_shims ksr_live_root
 }
 
 add_path_line() {
@@ -640,23 +992,16 @@ apply() {
 
   say "== plugin registry"
   local p root
-  # The copy Claude loads in the checkout first: the registry's own entry would
-  # keep pointing at an older version's folder after an update (ks_root reads
-  # the registry before Claude's install list, and old folders stay in the cache).
+  # The folder each plugin runs from now (lib/ks-root.sh: directory marketplace,
+  # installed_plugins.json, ...). The registry keeps only clone (local) roots:
+  # ks_register_root skips a plugin-cache folder and drops old marketplace entries.
   for p in ks ks-flow ks-master ks-browser; do
-    root="$(installed_root "$p")"
-    { [ -n "$root" ] && [ -d "$root" ]; } || root="$(ks_root "$p" 2>/dev/null)" || continue
+    root="$(ks_root "$p" 2>/dev/null)" || continue
     ks_register_root "$p" "$root"; say "  $p → $root ($(plugin_version "$root"))"
   done
 
   say "== commands on PATH ($LOCAL_BIN)"
-  mkdir -p "$LOCAL_BIN"
-  local s plug cmd
-  for s in "${SHIMS[@]}"; do
-    plug="${s%%:*}"; cmd="${s#*:}"
-    root="$(ks_root "$plug")" || continue
-    [ -x "$root/bin/$cmd" ] && write_shim "$plug" "$cmd" "$root"
-  done
+  write_shims ks_root
   say "  shims written"
   add_path_line
 
@@ -832,6 +1177,10 @@ case "$sub" in
   version|versions) versions "$@" ;;
   tools) tools_install "$@" ;;
   remote-control) remote_control_settings "$@" ;;
-  -h|--help|help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//' ;;
+  update) update_cmd "$@" ;;
+  shims) shims_refresh ;;
+  -h|--help|help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0" ;;
   *) echo "ks-setup: unknown command $sub (try: ks-setup help)" >&2; exit 2 ;;
-esac
+# `exit` on the same line as `esac`: `ks-setup update` may rewrite this file
+# (git pull), and bash reads a script as it runs it.
+esac; exit $?

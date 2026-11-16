@@ -1,7 +1,11 @@
 import { atom, read, update } from 'claude-code'
-import type { Elements, EngineInterface, McpToolResult, Register, RenderChildren, RenderSurface, TextProps } from 'claude-code'
+import type { Elements, EngineInterface, McpToolResult, Register, RenderChildren, RenderSurface, TextProps, Timer } from 'claude-code'
 
 import type { PreviewDeploy, ProjectInfo, StatusFacts, WorkflowUnit } from '../types'
+import { AUTO_RELOAD_ARGS, AUTO_RELOAD_COMMAND, AutoReload, hidesReloadOutput } from './reload/auto-reload'
+import type { LoadedPluginInfo } from './reload/auto-reload'
+import { currentPlugins, liveRoot, offerLabel, reloadOffer, targetOf, versionAt } from './reload/installed'
+import type { PluginSet, ReloadOffer, RootContext } from './reload/installed'
 import { linearStatus, textOn } from './live/linear'
 import { scheduler } from './live/schedule'
 import type { Scheduler } from './live/schedule'
@@ -27,6 +31,12 @@ import type { Progress } from './statusline/workflow'
 //
 // Every refresh runs off one clock (live/schedule): a tick every TICK_MS runs
 // the jobs whose interval has passed.
+//
+// The KS plugins reload themselves after an update (reload/auto-reload.ts, a
+// port of Plannotator's): every minute the mod compares what it loaded with
+// what is on disk (reload/installed.ts), and at an idle moment, with an empty
+// prompt box, runs `/reload-plugins ks` once per target. When that cannot
+// work, a pill in the hint row says to run /reload-plugins by hand.
 
 const unitAtom = atom({ plugin: 'ks', key: 'workflowUnit' } as const, null)
 const factsAtom = atom({ plugin: 'ks', key: 'statusFacts' } as const, null)
@@ -35,6 +45,7 @@ const linearAtom = atom({ plugin: 'ks', key: 'linearStatus' } as const, null)
 const deployAtom = atom({ plugin: 'ks', key: 'previewDeploys' } as const, null)
 const paneOpenAtom = atom({ plugin: 'ks', key: 'paneOpen' } as const, false)
 const phaseTimeAtom = atom({ plugin: 'ks', key: 'phaseTime' } as const, null)
+const reloadNoticeAtom = atom({ plugin: 'ks', key: 'reloadNotice' } as const, null)
 
 const PANE = 'ks-project'
 const PANE_COMMAND = 'ks-project'
@@ -57,6 +68,8 @@ const PUSH_WINDOW_MS = 90_000
 const SWEEP_LIMIT = 20
 /** How far before the last poll the next one reaches: Vercel's clock is not this machine's. */
 const SWEEP_SKEW_MS = 60_000
+/** How often the plugins on disk are compared with what this module loaded (the auto reload's offer). */
+const RELOAD_CHECK_MS = 60_000
 
 /**
  * The Vercel MCP server's names: the vercel plugin's, then `vercel`, a project's
@@ -307,6 +320,8 @@ async function discoverUnit($: EngineInterface): Promise<void> {
 
 // What the scheduler's intervals read; the atoms hold the same for drawing.
 let jobs: Scheduler | null = null
+/** The clock timers the last session.start started: the one clock tick and the pulse. */
+const timers: Timer[] = []
 let paneIsOpen = false
 let deployActive = false
 let pushedAt = -Infinity
@@ -495,10 +510,156 @@ async function previewAlias($: EngineInterface, deploymentId: string, branch: st
   return alias
 }
 
+// The auto reload (reload/auto-reload.ts). The module re-runs on each reload,
+// so all of this starts over in the module a reload loaded.
+/** What this module loaded, read once at its first session.start. */
+let loadedPlugins: Promise<{ set: PluginSet; info: LoadedPluginInfo }> | null = null
+/** Where the plugins are looked up: the session's env, folders and `$.fs`. */
+let rootCtx: RootContext | null = null
+/** The plugins compared: ks, ks-flow (no module: read from disk), ks-master in a master session. */
+let reloadNames: string[] = ['ks', 'ks-flow']
+let autoReload: AutoReload | null = null
+/** The last offer read, for the notice's words. */
+let reloadOfferNow: ReloadOffer | null = null
+/** Main-loop turns running (turn.start without agentId, until its turn.complete). */
+const mainTurns = new Set<string>()
+/** False while session.start waits on the hooks beneath: `$.command.run` is refused inside it. */
+let sessionStarted = false
+/** Targets a toast was shown for: once each in this module. */
+const toastedTargets = new Set<string>()
+
+async function rootContextOf($: EngineInterface, cwd: string): Promise<RootContext> {
+  // Each variable by its literal name: validate lists what a module reads.
+  const set = (value: string | undefined): string | undefined => value || undefined
+  const home = set(await $.env.get('HOME')) ?? ''
+  const root = String($.plugin.root).replace(/\/+$/, '')
+  return {
+    home,
+    configDir: set(await $.env.get('KS_CONFIG_DIR')) ?? `${home}/.config/ks`,
+    claudeDir: set(await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${home}/.claude`,
+    cwd,
+    projectPath: set(await $.env.get('KS_PROJECT_ROOT_PATH')),
+    pluginsDir: root.slice(0, root.lastIndexOf('/')) || null,
+    env: {
+      KS_ROOT_KS: set(await $.env.get('KS_ROOT_KS')),
+      KS_ROOT_KS_FLOW: set(await $.env.get('KS_ROOT_KS_FLOW')),
+      KS_ROOT_KS_MASTER: set(await $.env.get('KS_ROOT_KS_MASTER')),
+    },
+    fs: {
+      read: path =>
+        $.fs.read(path).then(
+          t => (typeof t === 'string' ? t : null),
+          () => null,
+        ),
+      isDir: path =>
+        $.fs.stat(path).then(
+          s => s?.kind === 'dir',
+          () => false,
+        ),
+    },
+  }
+}
+
+/**
+ * What this module loaded: ks from its own folder, the others (ks-flow has
+ * no module) as found on disk now. Read once per module, at its first
+ * session.start; `loaded_at` is that moment on `$.clock`.
+ */
+function loadedSnapshot($: EngineInterface): Promise<{ set: PluginSet; info: LoadedPluginInfo }> {
+  loadedPlugins ??= (async () => {
+    const at = await $.clock.now()
+    const root = String($.plugin.root).replace(/\/+$/, '') || null
+    const set: PluginSet = {}
+    try {
+      const ctx = rootCtx
+      if (ctx) {
+        set.ks = { root, version: await versionAt(ctx.fs, root) }
+        for (const name of reloadNames.filter(n => n !== 'ks')) {
+          const found = await liveRoot(name, ctx)
+          set[name] = { root: found, version: await versionAt(ctx.fs, found) }
+        }
+      }
+    } catch {
+      // Unread: no version, so nothing is offered or run.
+    }
+    return { set, info: { version: targetOf(set, reloadNames), root, loaded_at: at } }
+  })()
+  return loadedPlugins
+}
+
+/** The plugins on disk against the loaded ones: the offer the auto reload acts on, and the notice cleared when it no longer applies. */
+async function checkPlugins($: EngineInterface): Promise<void> {
+  const ctx = rootCtx
+  if (!ctx || !autoReload) return
+  const { set } = await loadedSnapshot($)
+  const offer = reloadOffer(set, await currentPlugins(reloadNames, ctx, set), reloadNames)
+  reloadOfferNow = offer
+  autoReload.setOffer(offer?.target ?? null)
+  const notice = await read($, reloadNoticeAtom)
+  if (notice && notice.target !== offer?.target) await update($, reloadNoticeAtom, () => null)
+}
+
+/** The auto reload gave up on `target`: the manual notice, a pill in the hint row and one toast. */
+async function showReloadNotice($: EngineInterface, target: string): Promise<void> {
+  const offer = reloadOfferNow?.target === target ? reloadOfferNow : null
+  const label = offer ? offerLabel(offer) : target.replace(/@/g, ' ').replace(/,/g, ', ')
+  await update($, reloadNoticeAtom, () => ({ target, label }))
+  if (toastedTargets.has(target)) return
+  toastedTargets.add(target)
+  $.ui.toast(`ks: ${label} is installed; run /reload-plugins to load it`)
+}
+
+/** This session's auto reload: a new one per session id (a /clear moves it), the module's memory shared. */
+async function startAutoReload($: EngineInterface, cwd: string): Promise<void> {
+  rootCtx = await rootContextOf($, cwd)
+  reloadNames = (await $.env.get('KS_MASTER_DIR')) ? ['ks', 'ks-flow', 'ks-master'] : ['ks', 'ks-flow']
+  autoReload?.dispose()
+  const sessionId = String(await $.session.id())
+  const debug = (text: string): void => {
+    try {
+      $.ui.log(text, { to: 'debug' })
+    } catch {
+      // A log line is never worth a failure.
+    }
+  }
+  const reload = new AutoReload({
+    sessionId,
+    now: () => $.clock.now(),
+    storeGet: key => $.store.get(key),
+    storeSet: (key, value) => $.store.set(key, value),
+    loaded: async () => (await loadedSnapshot($)).info,
+    promptText: async () => {
+      const box = await $.prompt.read()
+      return box && typeof box.text === 'string' ? box.text : ''
+    },
+    // From the mod's clock only, never from a hook a turn waits on; never --force.
+    run: () => $.command.run({ command: AUTO_RELOAD_COMMAND, args: AUTO_RELOAD_ARGS }),
+    busyReason: () => (!sessionStarted ? 'the session is starting' : mainTurns.size > 0 ? 'a turn runs' : null),
+    after: (ms, fn) => {
+      $.clock.after(ms, fn)
+    },
+    debug,
+    gaveUp: target => {
+      void showReloadNotice($, target).catch(() => undefined)
+    },
+  })
+  autoReload = reload
+  // A notice from before this module (a state that outlived the reload) is looked at afresh;
+  // a /clear in the same module keeps it (this module's memory still holds the run).
+  if (loadedPlugins === null) await update($, reloadNoticeAtom, () => null)
+  await loadedSnapshot($)
+  // A module the auto reload loaded says so first; off the hook's path.
+  void reload.checkIn().catch(() => null)
+}
+
 /** Every refresh the mod makes, on the one clock. */
 function makeJobs($: EngineInterface): Scheduler {
   return scheduler({
     workflowUnit: { every: () => TICK_MS, run: () => loadUnit($) },
+    // The plugins on disk against the ones loaded: the auto reload's offer.
+    pluginVersions: { every: () => RELOAD_CHECK_MS, run: () => checkPlugins($) },
+    // The auto reload's look: cheap when nothing is offered. Never inside a hook (a $.clock tick).
+    autoReload: { every: () => TICK_MS, run: async () => autoReload?.tick() },
     usage: { every: () => TICK_MS, run: () => loadFacts($) },
     linearStatus: { every: () => (paneIsOpen ? LINEAR_MS : null), run: () => loadLinear($) },
     phaseTime: { every: () => (paneIsOpen ? PHASE_TIME_MS : null), run: () => loadPhaseTime($) },
@@ -532,7 +693,9 @@ export const register: Register = on => {
       name: PANE_COMMAND,
       description: "Show this checkout's ks workflow: ticket, phases, Slack threads, PRs and its folder",
     })
+    sessionStarted = false
     await hostOffset($)
+    await startAutoReload($, typeof e.cwd === 'string' ? e.cwd : '').catch(() => undefined)
     await Promise.all([discoverUnit($), loadFacts($)])
     // The pane outlives a reload (and a resume reopens it): start from where it stands.
     paneIsOpen = (await $.ui.panes().catch(() => [])).some(p => p.id === PANE)
@@ -540,21 +703,65 @@ export const register: Register = on => {
     jobs = makeJobs($)
     const tick = jobs.tick
     tick(await $.clock.now())
-    $.clock.every(TICK_MS, () => {
-      void $.clock.now().then(tick)
-    })
-    // The pulse repaints one cell every 80ms: an animation, not a refresh, so not on the one clock.
-    $.clock.every(PULSE_MS, () => {
-      void pulseTick($)
-    })
-    return next(e)
+    // session.start fires again in the same module (a /clear, a resume): the previous
+    // session's timers stop first, so each job runs at its own rate, not once per start.
+    for (const timer of timers.splice(0)) timer.cancel()
+    timers.push(
+      $.clock.every(TICK_MS, () => {
+        void $.clock.now().then(tick)
+      }),
+      // The pulse repaints one cell every 80ms: an animation, not a refresh, so not on the one clock.
+      $.clock.every(PULSE_MS, () => {
+        void pulseTick($)
+      }),
+    )
+    try {
+      return await next(e)
+    } finally {
+      sessionStarted = true
+    }
   })
 
   // A checkout can change under the session (a branch switch, a worktree made
   // mid-session), and a turn moves the context figure: look again after each.
   on('turn.complete', async ($, e, next) => {
+    if (e.agentId === undefined) mainTurns.delete(e.turnId)
     await Promise.all([discoverUnit($), loadFacts($)])
     return next(e)
+  })
+
+  // The auto reload waits while a main-loop turn runs. Subagents (agentId) do not hold it:
+  // /reload-plugins leaves them running.
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) {
+      mainTurns.add(e.turnId)
+      autoReload?.onInputMoved()
+    }
+    return next(e)
+  })
+
+  // A prompt on its way in holds the auto reload: inside prompt.submit with no time
+  // limit, then until its turn starts (Plannotator's notePromptSubmitting / notePromptLeft).
+  on('prompt.submit', async ($, e, next) => {
+    const reload = autoReload
+    reload?.notePromptSubmitting()
+    let entered
+    try {
+      entered = await next(e)
+    } catch (err) {
+      reload?.notePromptLeft('dropped')
+      throw err
+    }
+    reload?.notePromptLeft(entered && typeof entered.text === 'string' ? (e.turnId ? 'into-turn' : 'new-turn') : 'dropped')
+    return entered
+  })
+
+  // Our own `/reload-plugins ks` run's plain "Reloaded: …" row draws as nothing; a warning,
+  // an error or a reload the person typed draws as always.
+  on('ui.render', { component: 'CommandOutput', props: { command: 'reload-plugins' } }, ($, e, next) => {
+    if (!hidesReloadOutput(e.props)) return next(e)
+    const { Box } = $.ui.resolve(e)
+    return <Box />
   })
 
   // A push starts a Vercel build: watch closely now (while the pane shows it) rather than at the next idle interval.
@@ -585,8 +792,13 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     const own = await next(e)
-    const [unit, facts, isPaneOpen] = await Promise.all([read($, unitAtom), read($, factsAtom), read($, paneOpenAtom)])
-    if (!unit && !facts) return own
+    const [unit, facts, isPaneOpen, reloadNotice] = await Promise.all([
+      read($, unitAtom),
+      read($, factsAtom),
+      read($, paneOpenAtom),
+      read($, reloadNoticeAtom),
+    ])
+    if (!unit && !facts && !reloadNotice) return own
 
     const els = $.ui.resolve(e)
     const { Box, Text, Button } = els
@@ -632,6 +844,12 @@ export const register: Register = on => {
                 dimColor
                 onPress={() => (isPaneOpen ? closePane($) : openPane($))}
               />
+            </Box>
+          )}
+          {/* The auto reload gave up: the plugins on disk wait for a /reload-plugins by hand. */}
+          {reloadNotice && (
+            <Box key="reload" flexShrink={0} marginLeft={unit ? 1 : 0}>
+              {pill(els, 'reload-pill', `⟳ ${reloadNotice.label} — run /reload-plugins`, { bg: '#b45309', fg: PILL_TEXT })}
             </Box>
           )}
           <Box flexGrow={1} />

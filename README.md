@@ -20,9 +20,9 @@ KarmaSuite checkout:
 cd <your KarmaSuite checkout>
 claude plugin marketplace add <path or URL of this repo>
 claude plugin install --scope local ks-suite@karmasuite      # ks + ks-flow (dependencies)
-claude plugin install --scope local ks-master@karmasuite     # optional, on demand
-claude plugin install --scope local ks-browser@karmasuite    # optional, on demand
 ```
+
+`ks-master` and `ks-browser` are not installed: `claude-ks-master` and `claude-ks-test` load them for their own session from the marketplace's copy of this repo.
 
 Then, in Claude: `/ks:setup`.
 
@@ -48,6 +48,15 @@ After either, a plain `claude` — and the desktop app and IDEs — gets the
 plugins, the KS rules (SessionStart context), a task list per worktree
 (`.claude/settings.local.json`) and the tokens. `claude-ks` is deprecated.
 
+**Updating.** `ks-setup update` brings every KS plugin on the machine to the
+newest release: installed, each out-of-date install (the checkout and every
+worktree) through `claude plugin update`; a clone, `git pull --ff-only` on a
+clean `main` only. It then rewrites the command shims and restarts ks-flow.
+`ks-setup update --check` only looks. You rarely run it: ks-flow's daemon checks
+for a release hourly and runs the same update, and open sessions reload
+themselves (`/reload-plugins`) at the next idle moment, or show a "run
+/reload-plugins" pill when they can't.
+
 ### How config and secrets work
 
 | What | Where | Read by |
@@ -55,7 +64,7 @@ plugins, the KS rules (SessionStart context), a task list per worktree
 | Tokens (Linear, Slack, Grain, backup key) | macOS Keychain, service `ks.<tool>` | the CLIs, the ks-flow daemon and board |
 | Plain settings (project path, …) | `~/.config/ks/<tool>.env` | the same, plus hooks and launchers |
 | ks-flow store settings | `<ks-flow data dir>/.env` (per project) | ks-flow |
-| Plugin folders | `~/.config/ks/plugins.json` (each plugin's SessionStart records itself) | `ks-root`, the `~/.local/bin` shims, ks-flow |
+| Plugin folders | found live from Claude Code's `known_marketplaces.json` and `installed_plugins.json`; `~/.config/ks/plugins.json` records only clones | `ks-root`, the `~/.local/bin` shims, ks-flow |
 
 `ks-config` (and the `/ks:config` skill) reads and changes them; tokens are
 typed with hidden input (`ks-config secret linear.LINEAR_API_KEY`), never in

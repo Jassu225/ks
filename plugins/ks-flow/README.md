@@ -80,8 +80,9 @@ the Slack and Linear tokens in the Keychain (`ks-config secret …`).
 
 The daemon, the store and the board are self-bootstrapping — no build step.
 On a session start `bootstrap.sh` builds the daemon into the data dir,
-registers the always-on launchd agent, and records the plugin's folder in
-`~/.config/ks/plugins.json`. It tracks `project_path`, else
+registers the always-on launchd agent, and, for a clone, records the plugin's
+folder in `~/.config/ks/plugins.json` (an installed copy is found live from
+Claude Code's own plugin files, as `ks-root` does). It tracks `project_path`, else
 `KS_PROJECT_ROOT_PATH`, else the one project already set up. PocketBase is only
 downloaded and started when it is the store. `ks-setup store` picks the store
 (`pocketbase`, or `firestore --project <id> --credentials <key.json>`).
@@ -100,8 +101,10 @@ For a new person on a new Mac, from nothing. Each step is safe to re-run.
    cd <your KarmaSuite checkout>
    claude plugin marketplace add <path or URL of the ks repo>
    claude plugin install --scope local ks-suite@karmasuite     # ks + ks-flow
-   claude plugin install --scope local ks-master@karmasuite    # on the master device
    ```
+
+   `ks-master` is not installed, on the master device either: its launcher loads it
+   from the marketplace's copy of the repo, so any device can be the master.
 
    Nothing is enabled user-wide: the switch lives in the checkout's gitignored
    `.claude/settings.local.json`.
@@ -497,33 +500,50 @@ shows **dev build** next to the device chip, and Settings → Devices marks it.
 
 **Behind only on `version`:** it keeps working, with a banner.
 
-**Auto-update, always on** (no setting). A device behind on either starts
-`ks-flow update` as a detached process (its own session, so the daemon restart
-can't kill it), at most once an hour, output in `<dataDir>/update.log`, the
-outcome in `<dataDir>/update-state.json`. A dev build never updates itself.
-`ks-flow update` (also by hand; `--dry-run` prints the plan):
+**New release.** The store only says another device runs something newer, so
+the daemon also looks for a new KS release itself: at most once an hour it runs
+ks's `ks-setup update --check` (again right after an update, ten minutes later
+when another update is running, never from a dev build or while an update
+runs). The answer is kept in `<dataDir>/release-check.json` and shown as
+`release` in `version-status.json`; when it says a newer ks, ks-flow,
+ks-master, ks-browser or ks-suite is out, the daemon starts the same update.
 
-1. **New code.** Installed (the plugin folder is under
-   `~/.claude/plugins/cache/`): `claude plugin marketplace update karmasuite`,
-   then `claude plugin update ks-flow@karmasuite --scope local` and the same for
-   ks, run in the KarmaSuite checkout. A clone: `git pull --ff-only`, only on
-   `main` with no uncommitted changes; otherwise it refuses and says why (a
-   safety check, not a setting).
+**Auto-update, always on** (no setting). A device behind on either, or with a
+new release, starts `ks-flow update` as a detached process (its own session,
+so the daemon restart can't kill it), at most once an hour, output in
+`<dataDir>/update.log`, the outcome in `<dataDir>/update-state.json`. A dev
+build never updates itself. `ks-flow update` (also by hand; `--dry-run` prints
+the plan):
+
+1. **New code**, fetched by ks's `ks-setup update` (see the ks scripts README):
+   installed, it updates every KS plugin in the KarmaSuite checkout and each of
+   its worktrees; a clone, `git pull --ff-only`, only on `main` with no
+   uncommitted changes; otherwise it refuses and says why (a safety check, not a
+   setting). An older ks without `ks-setup update` gets the old steps
+   (`claude plugin update` for ks-flow and ks in the checkout). Another update
+   already running is **busy**: nothing is done, the state says `busy` (not a
+   failure), and the daemon tries again ten minutes later.
 2. **Rebuild:** the new folder's `scripts/bootstrap.sh`, with the launchd job's
    settings carried over.
 3. **Restart:** `launchctl kickstart -k` the daemon, then the board if it was
    running (no new browser tab).
 
-**Notices**, as soon as a device is behind or an update fails:
+`ks-flow update --no-fetch` is steps 2 and 3 only: what `ks-setup update` runs
+once it has fetched a new ks-flow (the two never call each other back).
+
+**Notices**, as soon as a device is behind, a new release is out or an update
+fails:
 
 - a macOS notification, once per state: "ks-flow on <name> is behind (1.4.2 →
-  1.5.0): updating", or "…: run `ks-flow update` (<reason>)";
+  1.5.0): updating", "a new KS release on <name> (ks 1.1.0, ks-flow 0.3.0):
+  updating", or "…: run `ks-flow update` (<reason>)";
 - a banner on every board naming each device behind (its `daemonVersion`
   against `meta/settings.version`, and whether it is a dev build), red on the
   device's own board while it is read-only;
 - one line from the ks-flow SessionStart hook on that device;
 - `ks-setup doctor`'s `ks-flow:version` check (an error when behind on the data
-  format, a warning when behind on the release or after a failed update).
+  format, a warning when behind on the release or after a failed update) and
+  its `ks-flow:release` line (the last release check).
 
 Settings → Devices shows each device's version, amber when it is behind.
 
@@ -535,7 +555,7 @@ Settings → Devices shows each device's version, amber when it is behind.
 | `ks-flow open` | Build and open the board UI in the browser. |
 | `ks-flow close` | Stop the board UI server. |
 | `ks-flow stop` | Stop everything — board UI, daemon, and PocketBase. |
-| `ks-flow update [--dry-run]` | Update this device's ks-flow to the newest release (installed: `claude plugin update`, in the KarmaSuite checkout; a clone: `git pull --ff-only` on a clean `main` only), rebuild, restart the daemon and the board. The daemon runs it on its own when the store holds a newer version. See [Versioning](#versioning). |
+| `ks-flow update [--dry-run] [--no-fetch]` | Update this device's ks-flow to the newest release (the fetch is ks's `ks-setup update`: every KS plugin, in the KarmaSuite checkout and its worktrees; a clone: `git pull --ff-only` on a clean `main` only), rebuild, restart the daemon and the board. `--no-fetch`: rebuild and restart only. The daemon runs it on its own when the store holds a newer version or its hourly check finds a new release. See [Versioning](#versioning). |
 | `ks-flow status` | Status of all services: daemon, store (PocketBase, or Firestore with its offline outbox count), board UI. |
 | `ks-flow migrate-store` | One-off copy of the PocketBase store into Firestore. Dry run unless `--write`; `--project`, `--credentials`, `--force`. |
 | `ks-flow daemon` | Run the ingester in the foreground (debug). |

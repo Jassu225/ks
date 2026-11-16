@@ -1,23 +1,29 @@
 #!/usr/bin/env node
 // update.ts — `ks-flow update`: bring this device's ks-flow up to the newest
-// release (lib/update.ts has the steps and the clone's safety checks).
+// release (lib/update.ts has the steps and the clone's safety checks). The new
+// code is fetched by ks's `ks-setup update` (every KS plugin, every worktree);
+// an older ks without it → the old claude / git steps, run here.
 //
 //   ks-flow update             update now (by hand)
 //   ks-flow update --dry-run   print what it would do, change nothing
+//   ks-flow update --no-fetch  rebuild and restart only (ks-setup update runs this after it fetched)
 //   (--auto: started by the daemon when the store holds a newer version)
 //
 // It logs to stdout (the daemon points that at <dataDir>/update.log), writes
 // <dataDir>/update-state.json, and exits 0 when updated, 1 when refused or
-// failed. One run at a time: a second one exits while the first one's pid lives.
+// failed. One run at a time: a second one exits while the first one's pid lives;
+// another update holding ks-setup's lock → "another update is running", exit 0,
+// state "busy" (not a failure: the daemon retries later).
 //
 // The daemon copy is rebuilt while this runs (from the new plugin folder): it
 // is loaded whole at start and imports nothing later, so that is safe.
 import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dataDir, readProjectConf } from './lib/config.js';
-import { fromPluginList, ksPluginRoot } from './lib/ksroot.js';
+import { ksPluginRoot, liveRoot, rootContext, type RootContext } from './lib/ksroot.js';
 import { pluginVersion, readBuildFile, realGit } from './lib/build-info.js';
 import { newestCachedRoot, planUpdate, runUpdate, type RunResult, type Step } from './lib/update.js';
 import { readUpdateState, writeUpdateState } from './lib/versioning.js';
@@ -54,6 +60,23 @@ const pluginRoot = build?.pluginRoot || ksPluginRoot('ks-flow');
 const fromVersion = build?.version || (pluginRoot ? pluginVersion(pluginRoot) : null) || 'unknown';
 const projectPath = readProjectConf()?.projectPath ?? null;
 
+/** The resolver's context as seen from the KarmaSuite checkout (its installed entries win). */
+function checkoutContext(): RootContext {
+  const ctx = rootContext();
+  return {
+    ...ctx,
+    cwd: projectPath && existsSync(projectPath) ? projectPath : ctx.cwd,
+    projectPath: process.env.KS_PROJECT_ROOT_PATH || projectPath || undefined,
+  };
+}
+
+/** ks's scripts/ks-setup, or null (ks not found, or no ks-setup there). */
+function findKsSetup(): string | null {
+  const ks = liveRoot('ks', checkoutContext()) ?? ksPluginRoot('ks');
+  const bin = ks ? join(ks, 'scripts', 'ks-setup') : null;
+  return bin && existsSync(bin) ? bin : null;
+}
+
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -64,12 +87,14 @@ function alive(pid: number): boolean {
 }
 
 function run(s: Step): RunResult {
+  // ks-setup updates every plugin in every worktree: give it longer.
+  const timeout = (s.ksSetup ? 30 : 10) * 60_000;
   const r = s.login
-    ? spawnSync('/bin/zsh', ['-c', `${LOGIN_PRELUDE} exec "$0" "$@"`, s.cmd, ...s.args], { cwd: s.cwd, encoding: 'utf8', timeout: 10 * 60_000 })
-    : spawnSync(s.cmd, s.args, { cwd: s.cwd, encoding: 'utf8', timeout: 10 * 60_000 });
+    ? spawnSync('/bin/zsh', ['-c', `${LOGIN_PRELUDE} exec "$0" "$@"`, s.cmd, ...s.args], { cwd: s.cwd, encoding: 'utf8', timeout })
+    : spawnSync(s.cmd, s.args, { cwd: s.cwd, encoding: 'utf8', timeout });
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? r.error.message : ''}`;
   if (out.trim()) process.stdout.write(out.endsWith('\n') ? out : `${out}\n`);
-  return { code: r.status ?? 1, out };
+  return { code: r.status ?? 1, out, stdout: r.stdout ?? '' };
 }
 
 /** The launchd job's CLAUDE_PLUGIN_OPTION_* settings, so bootstrap renders the same plist from a plain shell. */
@@ -91,17 +116,9 @@ function plistOptions(): Record<string, string> {
 
 function newRoot(plan: Parameters<Parameters<typeof runUpdate>[0]['newRoot']>[0]): string | null {
   if (plan.mode === 'clone') return pluginRoot;
-  // The installed copy this project now uses, else the newest in the cache.
-  if (projectPath) {
-    const r = spawnSync('/bin/zsh', ['-c', `${LOGIN_PRELUDE} exec claude plugin list --json`], {
-      cwd: projectPath,
-      encoding: 'utf8',
-      timeout: 60_000,
-    });
-    const root = r.status === 0 ? fromPluginList('ks-flow', r.stdout ?? '') : null;
-    if (root) return root;
-  }
-  return newestCachedRoot(plan.marketplace, 'ks-flow', home);
+  // The installed copy the KarmaSuite checkout now loads (read fresh from Claude
+  // Code's records, never spawning claude), else the newest in the cache.
+  return liveRoot('ks-flow', checkoutContext()) ?? newestCachedRoot(plan.marketplace, 'ks-flow', home);
 }
 
 function bootstrap(root: string): RunResult {
@@ -137,9 +154,11 @@ function restartBoard(root: string): RunResult | null {
 }
 
 function main(): number {
-  const plan = planUpdate({ pluginRoot, projectPath, git: realGit, home });
+  const noFetch = has('--no-fetch');
+  const ksSetup = noFetch ? null : findKsSetup();
+  const plan = planUpdate({ pluginRoot, projectPath, git: realGit, home, ksSetup, auto: by === 'auto', noFetch });
   if (has('--dry-run')) {
-    console.log(JSON.stringify({ dataDir: DATA_DIR, pluginRoot, fromVersion, projectPath, plan }, null, 2));
+    console.log(JSON.stringify({ dataDir: DATA_DIR, pluginRoot, fromVersion, projectPath, ksSetup, noFetch, plan }, null, 2));
     return plan.ok ? 0 : 1;
   }
   const last = readUpdateState(DATA_DIR);
@@ -159,6 +178,7 @@ function main(): number {
     writeState: (s) => writeUpdateState(DATA_DIR, s),
     log,
   });
+  if (out.state === 'busy') return 0; // logged by runUpdate: "another update is running"
   if (out.state !== 'ok') console.error(`ks-flow update ${out.state}: ${out.reason ?? ''}`);
   return out.state === 'ok' ? 0 : 1;
 }

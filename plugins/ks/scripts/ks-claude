@@ -9,8 +9,11 @@
 # usual per-project install, the checkout's .claude/settings*.json): runs
 # plain `claude`. The plugins, the KS rules (SessionStart context), the task
 # list (the worktree's settings.local.json) and the tokens (Keychain) come
-# from the plugin system; an on-demand plugin (ks-master, ks-browser) is turned
-# on for this session only with --settings enabledPlugins.
+# from the plugin system; an on-demand plugin (ks-master, ks-browser) loads for
+# this session only with --plugin-dir, from the karmasuite marketplace's copy
+# of the repo (a clone: its own folder). It is never installed: enabling one
+# with --settings made Claude Code install it user-wide on every launch, and an
+# installed-but-off copy of the same name blocks the --plugin-dir one.
 #
 # Not installed yet (the old clone setup): the legacy launch — --plugin-dir for
 # ks, KS_EXTRA_PLUGINS and each --local-plugin, the rules as
@@ -39,8 +42,10 @@ enabled() {
   done
   [ "$en" = true ]
 }
+# Has an install entry anywhere (Claude Code's installed_plugins.json; no `claude` spawn).
 installed() {
-  claude plugin list --json 2>/dev/null | jq -e --arg id "$1@$MARKETPLACE" 'any(.[]?; .id == $id)' >/dev/null 2>&1
+  jq -e --arg id "$1@$MARKETPLACE" '(.plugins[$id] // []) | length > 0' \
+    "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json" >/dev/null 2>&1
 }
 
 ON_DEMAND=()
@@ -61,15 +66,20 @@ export KS_MOD_STATUSLINE=1
 
 ARGS=()
 if enabled ks; then
-  # Installed: only the on-demand plugins need anything.
+  # Installed: only the on-demand plugins need anything. Each loads from the
+  # marketplace's copy of the repo (same folder on every machine's kind of
+  # install), whatever is or isn't installed.
+  # A --plugin-dir plugin is `<name>@inline`, and with "defaultEnabled": false it
+  # loads switched off: switch it on by that id for this session (an inline id
+  # has no marketplace, so Claude Code never installs it).
   SESSION_PLUGINS="{}"
   for p in "${ON_DEMAND[@]}"; do
-    if installed "$p"; then
-      SESSION_PLUGINS="$(jq -c --arg id "$p@$MARKETPLACE" '.[$id] = true' <<<"$SESSION_PLUGINS")"
-    elif root="$(ks_root "$p")"; then
+    if root="$(ksr_marketplace_root "$p")" || root="$(ks_root "$p")"; then
       ARGS+=(--plugin-dir "$root")
+      SESSION_PLUGINS="$(jq -c --arg id "$p@inline" '.[$id] = true' <<<"$SESSION_PLUGINS")"
+      installed "$p" && echo "ks-claude: $p is also installed; that copy can stop this one loading: claude plugin uninstall $p@$MARKETPLACE (in the folder it was installed for)" >&2
     else
-      echo "ks-claude: plugin $p not found (claude plugin install $p@$MARKETPLACE)" >&2
+      echo "ks-claude: plugin $p not found in the $MARKETPLACE marketplace (claude plugin marketplace update $MARKETPLACE)" >&2
     fi
   done
   [ "$SESSION_PLUGINS" = "{}" ] || ARGS+=(--settings "{\"enabledPlugins\":$SESSION_PLUGINS}")

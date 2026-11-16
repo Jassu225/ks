@@ -1,8 +1,12 @@
 #!/bin/bash
 # ks-root <plugin> — print a KS plugin's folder (clone or installed); exit 1 when
-# it can't be found. Order: KS_ROOT_<NAME>, ~/.config/ks/plugins.json, the
-# sibling folder, `claude plugin list --json`. See lib/ks-root.sh.
-#   ks-root --register <plugin> <folder>   record a folder in the registry
+# it can't be found. Resolved live on every call: KS_ROOT_<NAME>, the directory
+# marketplace's folder, Claude Code's installed_plugins.json entry (the cwd's
+# project, then the KS checkout, user scope, highest version), the registry
+# ~/.config/ks/plugins.json (clones only), the sibling folder, then
+# `claude plugin list --json`. See lib/ks-root.sh.
+#   ks-root --register <plugin> <folder>   record a clone's folder in the registry
+#                                          (plugin-cache folders are ignored)
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/ks-root.sh"
 if [ "${1:-}" = "--register" ]; then ks_register_root "${2:-}" "${3:-}"; exit 0; fi
 [ -n "${1:-}" ] || { echo "usage: ks-root <plugin> | ks-root --register <plugin> <folder>" >&2; exit 2; }

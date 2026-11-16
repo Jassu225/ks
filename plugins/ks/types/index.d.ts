@@ -92,6 +92,18 @@ export type PreviewDeploy = {
   checkedMinute: number
 }
 
+/**
+ * The manual reload notice: the KS plugins on disk differ from what this
+ * session loaded, and the mod's own `/reload-plugins` gave up (it did not
+ * take, it was refused, the store failed, or this session already tried it).
+ */
+export type ReloadNotice = {
+  /** The target a reload would load: `ks@1.0.7,ks-flow@0.3.0`. */
+  target: string
+  /** The changed plugins as the pill shows them: `ks 1.0.7, ks-flow 0.3.0`. */
+  label: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     ks: {
@@ -109,6 +121,8 @@ declare module 'claude-code' {
        * in all, overlaps counted once (so not the sum of the phases).
        */
       phaseTime: { byPhase: Record<string, number>; engaged: number; agent: number } | null
+      /** Set when the KS plugins should be reloaded by hand: a pill in the prompt hint row. */
+      reloadNotice: ReloadNotice | null
     }
   }
 }

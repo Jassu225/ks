@@ -25,7 +25,11 @@ ks-config list
   device's ks-flow against the store's ([Versioning](../../ks-flow/README.md#versioning),
   from the daemon's `version-status.json`), an error while it is behind on the
   data format (its board is read-only), a warning when behind on the release
-  or after a failed update, the fix `ks-flow update`. **`ks-setup apply [--dev] [--yes]`** — config folder, registry,
+  or after a failed update, the fix `ks-flow update`; `ks-flow:release`: the
+  daemon's last release check (a warning when a new KS release is out, the fix
+  `ks-setup update`); and `plugins:copies`: a warning when the KS commands here
+  run another version than Claude loads in the checkout, the fix `ks-setup
+  update`. **`ks-setup apply [--dev] [--yes]`** — config folder, registry (clone roots only),
   `~/.local/bin` shims, a PATH line in the shell's startup file (zsh
   `~/.zshrc`, bash `~/.bash_profile` on macOS / `~/.bashrc`; printed when it
   can't tell or write), deps, project path, legacy import; `--dev` loads the
@@ -52,11 +56,25 @@ ks-config list
   so agents on different Macs can message each other. Claude honours
   `remoteControlAtStartup: true` only in user settings, never a project's.
   **`ks-setup version [--json]`** — each KS plugin's version three ways: the copy
-  the commands run (the registry, which the shims follow), the one Claude loads
-  in the checkout, and the marketplace's newest (as of its last update), plus
-  ks-flow's daemon and the store, with the fix for whatever is behind. `apply`
-  points the registry at the copy Claude loads, so an update can't leave the
-  commands on the old version (the doctor's `registry` check warns when it has).
+  the commands run (resolved live, as the shims do), the one Claude loads in the
+  checkout, and the marketplace's newest (as of its last update), plus
+  ks-flow's daemon and the store, with the fix for whatever is behind (usually
+  `ks-setup update`).
+  **`ks-setup update [--check] [--no-restart] [--json] [--auto]`** — brings every
+  KS plugin on this machine (ks-suite, ks, ks-flow, ks-master, ks-browser) to the
+  newest release. Installed: `claude plugin marketplace update karmasuite`, then
+  `claude plugin update` for each out-of-date install entry, run from its own
+  folder (the checkout and every worktree; a removed worktree is skipped). A
+  clone: `git pull --ff-only`, only on a clean `main`, else it refuses. Then the
+  new copy rewrites the shims and, unless `--no-restart`, restarts ks-flow
+  (`ks-flow update --no-fetch`) when it changed. `--check` only looks; `--json`
+  prints one JSON line. One run at a time (a lock in `~/.config/ks`), logged to
+  `~/.config/ks/update.log`. Exit 0 updated / current / available, 1 refused or
+  failed, 2 usage, 3 another update is running. ks-flow's daemon runs
+  `--check` hourly and the update itself; open sessions then reload on their own
+  (see the plugin README). **`ks-setup shims`** — quiet: rewrites the
+  `~/.local/bin` shims and prunes the registry (what `update` runs from the new
+  copy).
   **`ks-setup tools [--yes] [name…]`** — installs the missing tools the doctor
   checks (node, git, jq, tmux, terminal-notifier, zstd, ffmpeg, gh) with
   Homebrew, after a yes; only those. Fixes without a leading `!` are ones
@@ -67,14 +85,26 @@ ks-config list
   `ks.<namespace>`; plain values: `~/.config/ks/<namespace>.env`. Lookup:
   real env → store → legacy `scripts/.env` / `../.config`. Readers:
   `lib/ks-config.sh` (shell), `lib/env.ts` (TS CLIs).
-- **`ks-root <plugin>`** — a KS plugin's folder (`KS_ROOT_<NAME>` →
-  `~/.config/ks/plugins.json` → sibling folder → `claude plugin list --json`
-  `readFromFolder`/`installPath`). Never use `../<plugin>` paths.
+- **`ks-root <plugin>`** — a KS plugin's folder, resolved live on every call
+  from Claude Code's own `known_marketplaces.json` and `installed_plugins.json`
+  (`lib/ks-root.sh`): `KS_ROOT_<NAME>` → a directory marketplace's folder (a
+  clone read in place) → the `installed_plugins.json` entry for the cwd's
+  project (a worktree's own), then the KS checkout's, then user scope, highest
+  version first (an entry whose folder is gone is skipped) → the registry
+  `~/.config/ks/plugins.json`, which keeps only clone roots → the sibling folder
+  → `claude plugin list --json`. Never use `../<plugin>` paths, and never store a
+  versioned plugin-cache path: an update leaves the old folder behind. The
+  `~/.local/bin` shims (`# ks-shim v2`) carry the same resolver inline, with no
+  folder baked in and no `claude` call; the SessionStart hook rewrites older
+  shims once.
 - **`ks-claude`** — the launcher behind `claude-ks-rc`, `claude-ks-master`,
   `claude-ks-test` and `ks-start-ticket`: plain `claude` once the plugins are
-  installed (an on-demand plugin enabled for that session with `--settings`),
-  the old `--plugin-dir` launch before. **`claude-ks`** is a deprecated alias.
-- **Hooks:** `ensure-setup.sh` (SessionStart: registry, deps into
+  installed (in the checkout's `.claude/settings*.json` or user-wide), the old
+  `--plugin-dir` launch before. An on-demand plugin (ks-master, ks-browser) is
+  never installed: it loads for that session with `--plugin-dir` from the
+  karmasuite marketplace's copy of the repo (`ksr_marketplace_root`). **`claude-ks`** is a deprecated alias.
+- **Hooks:** `ensure-setup.sh` (SessionStart: registry for a clone, old shims
+  upgraded, deps into
   `${CLAUDE_PLUGIN_DATA}/deps` for an installed copy, the KS rules as context,
   a setup notice) and `worktree-create.sh` (WorktreeCreate: ticket names in the
   KarmaSuite checkout go through `create-worktree`, others get Claude's default

@@ -120,7 +120,8 @@ export interface SettingsDoc {
 
 /** `ks-flow update`'s record (<dataDir>/update-state.json). */
 export interface UpdateState {
-  state: 'running' | 'ok' | 'failed' | 'refused';
+  /** busy: another update held ks-setup's lock, nothing was done (the daemon retries). */
+  state: 'running' | 'ok' | 'failed' | 'refused' | 'busy';
   startedAt: string;
   endedAt?: string | null;
   from?: string | null;
@@ -128,6 +129,14 @@ export interface UpdateState {
   reason?: string | null;
   pid?: number | null;
   by?: 'auto' | 'manual';
+}
+
+/** The daemon's release check (src/lib/versioning.ts ReleaseStatus; `ks-setup update --check`). */
+export interface ReleaseStatus {
+  checkedAt: string;
+  state: 'available' | 'current' | 'failed' | 'refused';
+  plugins: { plugin: string; installed: string | null; latest: string | null }[];
+  reason: string | null;
 }
 
 /** <dataDir>/version-status.json: this device's daemon's view (src/lib/versioning.ts). GET /api/version. */
@@ -146,6 +155,8 @@ export interface VersionStatus {
   /** No store writes from this device: the board answers 409 to every store write. */
   readOnly: boolean;
   update: UpdateState | null;
+  /** The daemon's last release check; null: none, out of date, or a dev build (absent from an older daemon). */
+  release?: ReleaseStatus | null;
   notified?: string | null;
   updatedAt: string;
 }

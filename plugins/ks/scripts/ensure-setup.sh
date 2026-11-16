@@ -2,8 +2,9 @@
 # ensure-setup.sh — the ks plugin's SessionStart hook (startup, resume, clear,
 # compact). Makes any session — a plain `claude`, the desktop app, an IDE — get
 # what only the claude-ks launcher used to give it:
-#   1. records this plugin's folder in ~/.config/ks/plugins.json (follows
-#      marketplace version updates; read by ks-root, the shims, ks-flow)
+#   1. records this plugin's folder in ~/.config/ks/plugins.json when it is a
+#      clone (never a plugin-cache folder; see lib/ks-root.sh), and rewrites
+#      ~/.local/bin shims from before v2, which fell back to a versioned folder
 #   2. no node_modules: a clone runs npm ci in place; an installed copy installs into
 #      ${CLAUDE_PLUGIN_DATA}/deps (kept across updates, reinstalled only when
 #      package-lock.json changes) and links scripts/node_modules to them
@@ -16,7 +17,13 @@ ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SCRIPTS="$ROOT/scripts"
 cat >/dev/null # the hook's stdin JSON is not needed
 
-. "$SCRIPTS/lib/ks-root.sh" 2>/dev/null && ks_register_root ks "$ROOT"
+if . "$SCRIPTS/lib/ks-root.sh" 2>/dev/null; then
+  ks_register_root ks "$ROOT"
+  # One grep per session; the rewrite runs once (every shim gets the v2 marker).
+  if [ -f "$HOME/.local/bin/ks-root" ] && ! grep -qF "$KSR_SHIM_MARK" "$HOME/.local/bin/ks-root" 2>/dev/null; then
+    ksr_upgrade_shims "$HOME/.local/bin" >/dev/null 2>&1
+  fi
+fi
 
 # 2. dependencies (an installed plugin's folder ships without node_modules).
 # A clone read in place (directory marketplace) installs into its own scripts/,

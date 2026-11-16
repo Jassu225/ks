@@ -17,6 +17,7 @@ import {
   realpathSync,
   statSync,
 } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -77,15 +78,23 @@ import { pruneFired, readFired, recordFired, shouldFire, writeFired } from './li
 import { CardOwners } from './lib/ownership.js';
 import { activeRun, doneSweeps, listRuns, type BackupRun } from './lib/backup-runs.js';
 import { notify, terminalNotifierAvailable } from './lib/notify.js';
-import { ksPluginRoot } from './lib/ksroot.js';
+import { ksPluginRoot, liveRoot, rootContext } from './lib/ksroot.js';
+import { parseKsSetup } from './lib/update.js';
 import { detectBuild } from './lib/build-info.js';
 import {
+  currentRelease,
+  decideRelease,
   decideVersion,
+  newInRelease,
   raisePatch,
+  readReleaseCheck,
   readUpdateState,
   readVersionStatus,
+  releaseCheckFrom,
+  RELEASE_CHECK_FILE,
   SCHEMA_VERSION,
   startupStatus,
+  writeReleaseCheck,
   writeUpdateState,
   writeVersionStatus,
   type CodeVersion,
@@ -211,6 +220,7 @@ let versionStatus: VersionStatus = startupStatus(
     devReason: CODE.devReason,
     mode: BUILD.mode,
     update: readUpdateState(DATA_DIR),
+    release: currentRelease(readReleaseCheck(DATA_DIR), readUpdateState(DATA_DIR), CODE),
   },
   new Date().toISOString(),
 );
@@ -241,6 +251,7 @@ function versionTick(settings: SettingsDoc | null): void {
     code: CODE,
     mode: BUILD.mode,
     update: readUpdateState(DATA_DIR),
+    release: readReleaseCheck(DATA_DIR),
     now: Date.now(),
     alive: pidAlive,
   });
@@ -257,7 +268,101 @@ function versionTick(settings: SettingsDoc | null): void {
     log(`version: ${d.notice}`);
     notify('ks-flow-version', 'ks-flow update', d.notice);
   }
-  if (d.launchUpdate) launchUpdate();
+  // Not while the release check holds ks-setup's lock (the update would find it
+  // busy); the next tick, right after the check, starts it.
+  if (d.launchUpdate && !releaseChecking) launchUpdate();
+}
+
+// ── the release check (lib/versioning.ts decideRelease) ─────────────────────
+// The store's version only moves when another device runs something newer;
+// a new KS release is found here: at most hourly, ks's `ks-setup update --check
+// --json` (through the login shell, for claude on PATH; in the KarmaSuite
+// checkout, where its installs are resolved), its answer kept in
+// <dataDir>/release-check.json. "available" → versionTick starts `ks-flow
+// update` (mayAutoUpdate's hourly limit applies, as for the store).
+const LOGIN_PRELUDE =
+  '{ [ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile"; ' +
+  '[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"; } 2>/dev/null;';
+const RELEASE_CHECK_TIMEOUT_MS = 10 * 60_000;
+let releaseChecking = false;
+
+/** The KarmaSuite checkout, when it exists (the cwd ks-setup and the resolver see). */
+function checkoutDir(): string | null {
+  return projectPath && existsSync(projectPath) ? projectPath : null;
+}
+
+/** ks's scripts/ks-setup, as `ks-flow update` finds it (src/update.ts), or null. */
+function findKsSetup(): string | null {
+  const ctx = rootContext();
+  const cwd = checkoutDir();
+  const ks =
+    liveRoot('ks', { ...ctx, cwd: cwd ?? ctx.cwd, projectPath: process.env.KS_PROJECT_ROOT_PATH || projectPath || undefined }) ??
+    ksPluginRoot('ks');
+  const bin = ks ? join(ks, 'scripts', 'ks-setup') : null;
+  return bin && existsSync(bin) ? bin : null;
+}
+
+/** Start the release check when it is due (async; its end re-runs versionTick). */
+function releaseTick(): void {
+  if (releaseChecking || BUILD.mode === 'unknown') return;
+  const prev = readReleaseCheck(DATA_DIR);
+  if (!decideRelease(prev, Date.now(), CODE, readUpdateState(DATA_DIR), pidAlive)) return;
+  const save = (c: ReturnType<typeof releaseCheckFrom>): void => {
+    try {
+      writeReleaseCheck(DATA_DIR, c);
+    } catch (e) {
+      log(`version: ${RELEASE_CHECK_FILE} not written`, (e as Error)?.message);
+    }
+  };
+  const ksSetup = findKsSetup();
+  if (!ksSetup) {
+    // Kept as the answer, so it is tried again in an hour, not every minute.
+    save({ checkedAt: nowIso(), state: 'refused', plugins: [], reason: "ks's scripts/ks-setup was not found" });
+    log("version: release check skipped: ks's scripts/ks-setup was not found");
+    return;
+  }
+  releaseChecking = true;
+  let stdout = '';
+  let stderr = '';
+  let done = false;
+  let timer: NodeJS.Timeout | undefined;
+  const finish = (code: number, err?: string): void => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    releaseChecking = false;
+    const out = `${stderr}${err ? `\n${err}` : ''}`;
+    const c = releaseCheckFrom({ code, json: parseKsSetup(stdout), out }, readReleaseCheck(DATA_DIR), nowIso());
+    save(c);
+    if (c.busyAt && c.busyAt !== prev?.busyAt) log('version: release check: another update is running (retried in 10 min)');
+    else if (c.state === 'available') {
+      log(`version: release check: a new KS release (${newInRelease(c).map((p) => `${p.plugin} ${p.installed ?? '?'} → ${p.latest}`).join(', ')})`);
+    } else if (c.state !== 'current') log(`version: release check ${c.state}: ${c.reason ?? ''}`);
+    // The answer reaches the status file, the notice and the update now.
+    try {
+      versionTick(sharedSettings);
+    } catch (e) {
+      log('version: tick after the release check failed', (e as Error)?.message);
+    }
+  };
+  try {
+    const child = spawn('/bin/zsh', ['-c', `${LOGIN_PRELUDE} exec "$0" "$@"`, ksSetup, 'update', '--check', '--json', '--auto'], {
+      cwd: checkoutDir() ?? homedir(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stdout?.on('data', (b: Buffer) => {
+      stdout = (stdout + b.toString()).slice(-64_000);
+    });
+    child.stderr?.on('data', (b: Buffer) => {
+      stderr = (stderr + b.toString()).slice(-8_000);
+    });
+    child.on('error', (e) => finish(1, e.message));
+    child.on('close', (code, signal) => finish(code ?? 1, signal ? `killed by ${signal}` : undefined));
+    timer = setTimeout(() => child.kill('SIGTERM'), RELEASE_CHECK_TIMEOUT_MS);
+    timer.unref();
+  } catch (e) {
+    finish(1, (e as Error)?.message);
+  }
 }
 
 /** Start `ks-flow update` detached (its own session), so the daemon restart it does can't kill it. */
@@ -280,7 +385,7 @@ function launchUpdate(): void {
       state: 'running',
       startedAt: nowIso(),
       from: CODE.version,
-      to: versionStatus.storeVersion,
+      to: versionStatus.storeVersion ?? newInRelease(versionStatus.release).find((p) => p.plugin === 'ks-flow')?.latest ?? null,
       reason: null,
       pid: child.pid ?? null,
       by: 'auto',
@@ -472,6 +577,8 @@ async function deviceHeartbeat(): Promise<void> {
   await checkDeviceMode();
   // Every minute: an update's outcome (update-state.json) reaches the status file and the notice.
   versionTick(sharedSettings);
+  // And the release check, when it is due (at most hourly).
+  releaseTick();
   if (!deviceMode) return;
   const beat: Partial<DeviceDoc> = {
     defaultName: SELF.defaultName,

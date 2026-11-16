@@ -1,7 +1,7 @@
 // lib/versioning.ts — the board's side of versioning (src/lib/versioning.ts
 // has the rules; README "Versioning"). Pure: the header's banner uses it in the
 // browser. compareSemver is a twin of the daemon's; keep the two in step.
-import type { DeviceDoc, SettingsDoc, VersionStatus } from './types';
+import type { DeviceDoc, ReleaseStatus, SettingsDoc, VersionStatus } from './types';
 
 interface Semver {
   major: number;
@@ -48,6 +48,10 @@ export interface VersionNotice {
   text: string;
 }
 
+/** The plugins a release brings: newer than the copy installed. */
+const newInRelease = (r: ReleaseStatus): ReleaseStatus['plugins'] =>
+  (r.plugins ?? []).filter((p) => p.latest && compareSemver(p.latest, p.installed) > 0);
+
 const nameOf = (d: Pick<DeviceDoc, 'name' | 'defaultName'> | null | undefined, id: string): string =>
   d?.name?.trim() || d?.defaultName || id.slice(0, 8);
 
@@ -87,6 +91,15 @@ export function versionNotices(input: {
       });
     } else if (local.versionBehind) {
       out.push({ key: 'self', tone: 'amber', text: `ks-flow on this device is behind (${local.version} → ${local.storeVersion}): ${how}.` });
+    } else if (local.release?.state === 'available' && newInRelease(local.release).length) {
+      // The daemon's release check found one (it starts the update itself).
+      const what = newInRelease(local.release).map((p) => `${p.plugin} ${p.latest}`).join(', ');
+      const doing = local.dev
+        ? `run ks-setup update (dev build: ${local.devReason ?? 'not a release'})`
+        : fail
+          ? `run ks-setup update (${fail})`
+          : 'updating';
+      out.push({ key: 'self-release', tone: 'amber', text: `A new KS release for this device (${what}): ${doing}.` });
     } else if (fail) {
       out.push({ key: 'self-update', tone: 'amber', text: `ks-flow update failed on this device: ${fail}. Run ks-flow update.` });
     }
