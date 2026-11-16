@@ -23,6 +23,9 @@
 #                                  share the ks-flow board: a `claude` shell function
 #                                  that adds --rc in the KarmaSuite checkout and its
 #                                  worktrees, so agents can message across machines
+#   ks-setup tools [--yes] [name...]   install the missing tools setup checks (node,
+#                                  git, jq, tmux, terminal-notifier, zstd, ffmpeg, gh)
+#                                  with Homebrew; only those, after a yes
 #   ks-setup store pocketbase | firestore --project <gcp id> --credentials <key.json>
 #                                  ks-flow's store, written to its per-project .env
 #
@@ -196,6 +199,12 @@ flow_enabled() {
   done
   return 1
 }
+# The fix for a missing Claude setting: Claude runs it once you agree, unless the
+# sandbox still holds ks-setup (then the --self step, which you run, comes first).
+cs_fix() {
+  if sandbox_enabled && ! is_excluded "$SELF_EXCLUDED"; then echo "! ks-setup claude-settings --self, then ks-setup claude-settings --yes"
+  else echo "ks-setup claude-settings --yes   (Claude runs it once you agree)"; fi
+}
 is_excluded() { # cmd → both "cmd" and "cmd *" in the user settings
   jq -e --arg c "$1" '(.sandbox.excludedCommands // []) | (index($c) != null) and (index($c + " *") != null)' "$SETTINGS" >/dev/null 2>&1
 }
@@ -215,13 +224,13 @@ doctor() {
   if have node; then
     local v; v="$(node -p 'process.versions.node' 2>/dev/null)"
     if node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>18||(a===18&&b>=17)?0:1)'
-    then check tool:node error 1 "node $v"; else check tool:node error 0 "node $v is older than 18.17" "brew install node"; fi
-  else check tool:node error 0 "node is missing" "brew install node"; fi
+    then check tool:node error 1 "node $v"; else check tool:node error 0 "node $v is older than 18.17" "ks-setup tools --yes node"; fi
+  else check tool:node error 0 "node is missing" "ks-setup tools --yes node"; fi
   local t lvl
   for t in npm:error git:error jq:error tmux:warn terminal-notifier:warn zstd:warn ffmpeg:info gh:info; do
     lvl="${t#*:}"; t="${t%%:*}"
     if have "$t"; then check "tool:$t" "$lvl" 1 "$t found"
-    else check "tool:$t" "$lvl" 0 "$t is missing" "brew install $([ "$t" = node ] && echo node || echo "$t")"; fi
+    else check "tool:$t" "$lvl" 0 "$t is missing" "ks-setup tools --yes $(tool_formula "$t")"; fi
   done
 
   local mode; mode="$(load_mode)"
@@ -295,7 +304,7 @@ doctor() {
     jq -e --arg r "$dn" '(.permissions.deny // []) | index($r) != null' "$SETTINGS" >/dev/null 2>&1 || dmiss+=("$dn")
   done
   if [ ${#dmiss[@]} = 0 ]; then check secrets:deny warn 1 "the agent may not run security (Keychain reads)"
-  else check secrets:deny warn 0 "the agent may run security and read the KS tokens (missing deny: ${dmiss[*]})" "! ks-setup claude-settings"; fi
+  else check secrets:deny warn 0 "the agent may run security and read the KS tokens (missing deny: ${dmiss[*]})" "$(cs_fix)"; fi
 
   local flow; flow="$(ks_root ks-flow 2>/dev/null)"
   if [ -n "$flow" ] && [ -n "$proj" ]; then
@@ -328,9 +337,9 @@ doctor() {
   fi
   if have tmux && { [ -d /Applications/Ghostty.app ] || [ -d /System/Applications/Utilities/Terminal.app ]; }; then
     check master info 1 "master can run (tmux + a viewer app)"
-  else check master info 0 "the master needs tmux and Ghostty or Terminal.app" "brew install tmux"; fi
+  else check master info 0 "the master needs tmux and Ghostty or Terminal.app" "ks-setup tools --yes tmux"; fi
   if [ "$(jq -r '.env.KS_MOD_STATUSLINE // empty' "$SETTINGS" 2>/dev/null)" = 1 ]; then check settings:statusline info 1 "statusline split for the ks mod"
-  else check settings:statusline info 0 "env KS_MOD_STATUSLINE not set (only claude-ks set it)" "! ks-setup claude-settings"; fi
+  else check settings:statusline info 0 "env KS_MOD_STATUSLINE not set (only claude-ks set it)" "$(cs_fix)"; fi
   statusline_check
   remote_control_check
 
@@ -362,8 +371,8 @@ is_ks_statusline() { case "$1" in "$STATUSLINE_CMD"*|*/.local/bin/statusline*|st
 statusline_check() {
   local c; c="$(effective_statusline || true)"
   if [ -n "$c" ] && is_ks_statusline "$c"; then check statusline:project info 1 "KS status line on in the project"
-  elif [ -n "$c" ]; then check statusline:project info 0 "the project uses another status line ($c); the KS one is optional" "! ks-setup statusline --yes"
-  else check statusline:project info 0 "no status line in the project; the KS one is optional" "! ks-setup statusline --yes"; fi
+  elif [ -n "$c" ]; then check statusline:project info 0 "the project uses another status line ($c); the KS one is optional" "ks-setup statusline --yes"
+  else check statusline:project info 0 "no status line in the project; the KS one is optional" "ks-setup statusline --yes"; fi
 }
 
 statusline_settings() {
@@ -383,7 +392,7 @@ statusline_settings() {
     local user; user="$(jq -r '.statusLine.command // empty' "$SETTINGS" 2>/dev/null)"
     [ -n "$user" ] && say "  (your ~/.claude/settings.json status line, $user, stays for every other folder)"
     if ! ask "Apply?"; then
-      interactive || say "Run it yourself:  ! ks-setup statusline --yes"
+      interactive || say "Once you agree:  ks-setup statusline --yes"
       return 1
     fi
     mkdir -p "$proj/.claude"; [ -f "$f" ] || echo '{}' >"$f"
@@ -445,9 +454,9 @@ remote_control_check() {
   if remote_control_on; then
     check remote-control info 1 "Remote Control on for Claude in the project (agents can message across machines)"
   elif many_devices; then
-    check remote-control warn 0 "$DEVICE_COUNT devices share the ks-flow board, but Claude in the project starts without Remote Control, so agents on different Macs can't message each other" "! ks-setup remote-control --yes"
+    check remote-control warn 0 "$DEVICE_COUNT devices share the ks-flow board, but Claude in the project starts without Remote Control, so agents on different Macs can't message each other" "ks-setup remote-control --yes"
   else
-    check remote-control info 0 "Remote Control for the project is off (optional with one Mac; suggested once a second Mac shares the board)" "! ks-setup remote-control --yes"
+    check remote-control info 0 "Remote Control for the project is off (optional with one Mac; suggested once a second Mac shares the board)" "ks-setup remote-control --yes"
   fi
 }
 remote_control_settings() {
@@ -472,7 +481,7 @@ remote_control_settings() {
     say "Remote Control keeps those sessions' transcripts on Anthropic's servers; commands still run only here."
   fi
   if ! ask "Apply?"; then
-    interactive || say "Run it yourself:  ! ks-setup remote-control --yes"
+    interactive || say "Once you agree:  ks-setup remote-control --yes"
     return 1
   fi
   { if [ -f "$rc" ]; then rc_strip_block "$rc"; fi; printf '\n'; rc_block; } >"$rc.tmp.$$" && mv "$rc.tmp.$$" "$rc" \
@@ -612,9 +621,9 @@ apply() {
   else say "  nothing left to do (details: ks-setup doctor)"; fi
   local opt=()
   is_ks_statusline "$(effective_statusline || true)" \
-    || opt+=("  ! ks-setup statusline --yes    (the KS status line: session, context, branch, ticket, rate limits)")
+    || opt+=("  ks-setup statusline --yes    (the KS status line: session, context, branch, ticket, rate limits)")
   remote_control_on \
-    || opt+=("  ! ks-setup remote-control --yes    (Remote Control in the project, so agents on your other Macs can message these; $(remote_control_reason))")
+    || opt+=("  ks-setup remote-control --yes    (Remote Control in the project, so agents on your other Macs can message these; $(remote_control_reason))")
   if [ ${#opt[@]} -gt 0 ]; then say "== optional"; printf '%s\n' "${opt[@]}"; fi
 }
 
@@ -661,6 +670,38 @@ claude_settings() {
     && say "updated (backup: $SETTINGS.bak-ks)"
 }
 
+# ── tools (Homebrew) ────────────────────────────────────────────────────────
+# The tools the doctor checks, installed with Homebrew after a yes. ks-setup is
+# sandbox-excluded, so Claude can run this; it installs only these formulas.
+TOOL_NAMES=(node npm git jq tmux terminal-notifier zstd ffmpeg gh)
+tool_formula() { case "$1" in npm) echo node ;; *) echo "$1" ;; esac; }
+tools_install() {
+  local a want=() t f missing=()
+  for a in "$@"; do case "$a" in --yes) YES=1 ;; -*) ;; *) want+=("$a") ;; esac; done
+  [ ${#want[@]} -gt 0 ] || want=("${TOOL_NAMES[@]}")
+  for t in "${want[@]}"; do
+    case " ${TOOL_NAMES[*]} " in *" $t "*) ;; *) say "ks-setup tools: $t is not one of: ${TOOL_NAMES[*]}"; return 2 ;; esac
+    f="$(tool_formula "$t")"
+    if [ "$t" = node ] && have node \
+      && ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>18||(a===18&&b>=17)?0:1)'; then
+      missing+=("$f")   # too old: brew installs (or upgrades to) a current one
+    elif ! have "$t"; then missing+=("$f"); fi
+  done
+  [ ${#missing[@]} -gt 0 ] || { say "every tool asked for is installed"; return 0; }
+  missing=($(printf '%s\n' "${missing[@]}" | awk '!seen[$0]++'))
+  if ! have brew; then
+    say "Homebrew is missing. Install it from https://brew.sh (it asks for your password),"
+    say "then run again. Needed: ${missing[*]}"
+    return 1
+  fi
+  say "To install with Homebrew: ${missing[*]}"
+  if ! ask "Install?"; then
+    interactive || say "Once you agree:  ks-setup tools --yes ${missing[*]}"
+    return 1
+  fi
+  brew install "${missing[@]}"
+}
+
 # ── store ───────────────────────────────────────────────────────────────────
 set_env_line() { # file key value
   local tmp="$1.tmp.$$"
@@ -699,7 +740,8 @@ case "$sub" in
   claude-settings|sandbox) claude_settings "$@" ;;
   store) store "$@" ;;
   statusline) statusline_settings "$@" ;;
+  tools) tools_install "$@" ;;
   remote-control) remote_control_settings "$@" ;;
-  -h|--help|help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "ks-setup: unknown command $sub (try: ks-setup help)" >&2; exit 2 ;;
 esac

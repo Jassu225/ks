@@ -69,7 +69,7 @@ move to a `sensitive` `userConfig` value.
 
 ## Statusline
 
-**Optional, turned on by setup.** `/ks:setup` (and `ks-setup apply`) suggests it; `! ks-setup statusline --yes` sets `statusLine` to `~/.local/bin/statusline` (a shim to the plugin's script, so it follows plugin updates) in the KarmaSuite checkout's own `.claude/settings.local.json` and its worktrees' copies. Only that checkout uses it: a status line of your own in `~/.claude/settings.json` stays for every other folder. `ks-setup doctor` reports it (`statusline:project`, info).
+**Optional, turned on by setup.** `/ks:setup` (and `ks-setup apply`) suggests it, and Claude runs `ks-setup statusline --yes` once you agree: it sets `statusLine` to `~/.local/bin/statusline` (a shim to the plugin's script, so it follows plugin updates) in the KarmaSuite checkout's own `.claude/settings.local.json` and its worktrees' copies. Only that checkout uses it: a status line of your own in `~/.claude/settings.json` stays for every other folder. `ks-setup doctor` reports it (`statusline:project`, info).
 
 The `ks` plugin includes a custom statusline script (`plugins/ks/scripts/statusline`) that displays the session name, context window usage, git branch, and rate limit info (5-hour and 7-day windows with reset countdowns). Color-coded: green < 50%, yellow 50-79%, red >= 80%. When the session name plus branch name exceeds 32 characters, rate limits wrap to a second line.
 

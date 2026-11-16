@@ -51,6 +51,10 @@ ks-config list
   `ks.KS_PROJECT_ROOT_PATH` checkout's repository (main checkout or a worktree),
   so agents on different Macs can message each other. Claude honours
   `remoteControlAtStartup: true` only in user settings, never a project's.
+  **`ks-setup tools [--yes] [name…]`** — installs the missing tools the doctor
+  checks (node, git, jq, tmux, terminal-notifier, zstd, ffmpeg, gh) with
+  Homebrew, after a yes; only those. Fixes without a leading `!` are ones
+  Claude runs itself (asking first).
   **`ks-setup store …`** — ks-flow's store.
 - **`ks-config list|get|set|secret|unset|import-legacy`** — the config, per
   tool namespace (`lib/ks-config-keys.txt`). Secrets: Keychain service
