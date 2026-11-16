@@ -6,6 +6,16 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppHeader } from '@/components/AppHeader';
+import {
+  DeviceChip,
+  MASTER_STALE_WARN_MS,
+  agoText,
+  deviceLabel,
+  isDeviceStale,
+} from '@/components/DeviceChip';
+import { useShared } from '@/lib/boardData';
+import type { DeviceDoc } from '@/lib/types';
+import { compareSemver } from '@/lib/versioning';
 
 interface Conf {
   projectPath: string;
@@ -24,6 +34,307 @@ interface BriefingSettingsForm {
   schedule: string[];
   names: string[];
   halfTime: string[];
+}
+
+type DevicesChange =
+  | { action: 'rename'; deviceId: string; name: string | null }
+  | { action: 'forget'; deviceId: string; forgotten: boolean }
+  | { action: 'master'; deviceId: string };
+
+async function postDevices(changes: DevicesChange[]): Promise<void> {
+  const r = await fetch('/api/devices', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ changes }),
+  });
+  if (!r.ok) {
+    const d: { error?: string } = await r.json().catch(() => ({}));
+    throw new Error(d.error ?? `save failed (${r.status})`);
+  }
+}
+
+/** The one-off device backfill, run once on the device that has used ks-flow so far. */
+const BACKFILL_CMD = 'npx tsx ../scripts/one-off/backfill-devices.ts --dry-run';
+
+/**
+ * Settings → Devices: every device that runs ks-flow on this store (any
+ * number), live from the board's subscription. Names and the master are a
+ * draft until saved; Forget (stale devices only) and taking a device back
+ * write at once. Store-only (/api/devices): nothing goes to board-settings.json.
+ */
+/** A device's ks-flow version (amber when behind the store's), and "dev build". */
+function DeviceVersion({ device: d, storeVersion }: { device: DeviceDoc; storeVersion: string | null }) {
+  const behind = !!storeVersion && compareSemver(storeVersion, d.daemonVersion) > 0;
+  return (
+    <>
+      <span
+        className={`font-mono text-[11px] ${behind ? 'text-amber-300' : 'text-slate-400'}`}
+        title={
+          behind
+            ? `ks-flow ${d.daemonVersion || 'unknown'} is behind the store's ${storeVersion}: it updates itself`
+            : `ks-flow ${d.daemonVersion || 'unknown'}${typeof d.schemaVersion === 'number' ? ` (data format ${d.schemaVersion})` : ''}`
+        }
+      >
+        v{d.daemonVersion || '?'}
+        {behind && ` → ${storeVersion}`}
+      </span>
+      {d.devBuild && (
+        <span
+          className="rounded border border-slate-700 px-1 text-[10px] text-slate-400"
+          title={`dev build${d.devReason ? `: ${d.devReason}` : ''} — it never raises the store's version and never updates itself`}
+        >
+          dev build
+        </span>
+      )}
+    </>
+  );
+}
+
+function DevicesSection() {
+  const { board, now } = useShared();
+  const { devices, settings, self } = board;
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [master, setMaster] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const currentMaster = settings?.masterDeviceId ?? null;
+  const shownMaster = master ?? currentMaster;
+  const masterDoc = devices.find((d) => d.deviceId === currentMaster) ?? null;
+  const masterStale = !!currentMaster && !!masterDoc && isDeviceStale(masterDoc, now, MASTER_STALE_WARN_MS);
+
+  // This device first, then by name; forgotten devices last.
+  const rows = [...devices].sort(
+    (a, b) =>
+      Number(a.forgotten === true) - Number(b.forgotten === true) ||
+      Number(b.deviceId === self) - Number(a.deviceId === self) ||
+      deviceLabel(a, a.deviceId).localeCompare(deviceLabel(b, b.deviceId)),
+  );
+
+  const nameOf = (d: DeviceDoc): string => names[d.deviceId] ?? d.name ?? '';
+  const changes = (): DevicesChange[] => {
+    const out: DevicesChange[] = [];
+    for (const d of devices) {
+      const draft = names[d.deviceId];
+      if (draft !== undefined && draft.trim() !== (d.name ?? '').trim()) {
+        out.push({ action: 'rename', deviceId: d.deviceId, name: draft.trim() || null });
+      }
+    }
+    if (master && master !== currentMaster) out.push({ action: 'master', deviceId: master });
+    return out;
+  };
+  const dirty = changes().length > 0;
+
+  const save = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    const list = changes();
+    if (list.length === 0) return;
+    setSaving(true);
+    setSaved(false);
+    setError(null);
+    try {
+      await postDevices(list);
+      // The live subscription brings the new values; drop the drafts.
+      setNames({});
+      setMaster(null);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError((err as Error).message || 'Save failed — is the board server still running?');
+    }
+    setSaving(false);
+  };
+
+  const setForgotten = async (d: DeviceDoc, forgotten: boolean): Promise<void> => {
+    const label = deviceLabel(d, d.deviceId);
+    if (
+      forgotten &&
+      !window.confirm(
+        `Forget ${label}? Its cards stay in the store, tagged to it, and show as removed cards ` +
+          `(Done, behind "show removed"). You can take it back later.`,
+      )
+    ) {
+      return;
+    }
+    setBusyId(d.deviceId);
+    setError(null);
+    try {
+      await postDevices([{ action: 'forget', deviceId: d.deviceId, forgotten }]);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+    setBusyId(null);
+  };
+
+  return (
+    <section className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5" aria-labelledby="devices-settings">
+      <h2 id="devices-settings" className="text-sm font-semibold text-slate-200">
+        Devices
+      </h2>
+      <p className="mt-1 text-xs text-slate-400">
+        Every device whose ks-flow writes to this store. Each card belongs to the device its worktree is on;
+        only that device backs it up, refreshes or removes it. Your name for a device shows on its chips. The
+        master session runs on one device: Brief me and Restart from any other device are sent to it.
+      </p>
+
+      {!settings ? (
+        <div className="mt-4 rounded border border-amber-900 bg-amber-950/50 px-3 py-2 text-xs text-amber-200">
+          <div className="font-medium">This store is not set up for devices yet: run the device backfill</div>
+          <p className="mt-1 text-amber-300/90">
+            Run it once, on the device that has used ks-flow so far, from <code>plugins/ks-flow/src</code>: it
+            tags the existing records to that device and makes it the master device. Check the counts with{' '}
+            <code>--dry-run</code> first, then run it without. Then restart the daemon and the board.
+          </p>
+          <pre className="mt-2 overflow-x-auto font-mono text-[11px] text-amber-200">{BACKFILL_CMD}</pre>
+        </div>
+      ) : (
+        <>
+          {masterStale && (
+            <div
+              role="alert"
+              className="mt-4 rounded border border-amber-900 bg-amber-950/50 px-3 py-2 text-xs text-amber-200"
+            >
+              The master device {deviceLabel(masterDoc, masterDoc!.deviceId)} was last seen{' '}
+              {agoText(masterDoc?.lastSeenAt, now)}: no Briefing runs until it is back. Pick a new master device
+              below and save.
+            </div>
+          )}
+          <form onSubmit={save} className="mt-4 space-y-3">
+            {rows.length === 0 && <p className="text-xs text-slate-500">No device has checked in yet.</p>}
+            <ul className="space-y-2">
+              {rows.map((d) => {
+                const isSelf = d.deviceId === self;
+                const forgotten = d.forgotten === true;
+                const stale = isDeviceStale(d, now);
+                const canForget = !forgotten && !isSelf && stale && d.deviceId !== currentMaster;
+                const worktrees = d.worktreePaths?.length ?? 0;
+                return (
+                  <li
+                    key={d.deviceId}
+                    className={`rounded border border-slate-800 bg-slate-950/40 p-3 ${forgotten ? 'opacity-60' : ''}`}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <DeviceChip deviceId={d.deviceId} always />
+                      <code className="font-mono text-[11px] text-slate-500" title={d.deviceId}>
+                        {d.deviceId.slice(0, 8)}
+                      </code>
+                      {isSelf && <span className="text-[11px] font-medium text-emerald-400">this device</span>}
+                      {forgotten && <span className="text-[11px] text-slate-500">removed device</span>}
+                      <DeviceVersion device={d} storeVersion={settings.version ?? null} />
+                      <div className="grow" />
+                      <label
+                        className={`flex items-center gap-1.5 text-xs ${forgotten ? 'text-slate-600' : 'text-slate-300'}`}
+                        title={
+                          forgotten
+                            ? 'A forgotten device cannot run the master'
+                            : stale
+                              ? `${deviceLabel(d, d.deviceId)} is asleep or offline: the master starts when it is back`
+                              : 'Run the master session on this device'
+                        }
+                      >
+                        <input
+                          type="radio"
+                          name="master-device"
+                          checked={shownMaster === d.deviceId}
+                          disabled={forgotten}
+                          onChange={() => {
+                            setMaster(d.deviceId);
+                            setSaved(false);
+                          }}
+                          className="accent-indigo-500"
+                        />
+                        Master
+                      </label>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <label htmlFor={`device-name-${d.deviceId}`} className="sr-only">
+                        Name for {d.defaultName}
+                      </label>
+                      <input
+                        id={`device-name-${d.deviceId}`}
+                        type="text"
+                        value={nameOf(d)}
+                        maxLength={40}
+                        disabled={forgotten}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setNames((n) => ({ ...n, [d.deviceId]: v }));
+                          setSaved(false);
+                        }}
+                        placeholder={d.defaultName || 'name'}
+                        spellCheck={false}
+                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                      />
+                      {canForget && (
+                        <button
+                          type="button"
+                          onClick={() => void setForgotten(d, true)}
+                          disabled={busyId === d.deviceId}
+                          title="A stale device (a replaced Mac, a new device id): its cards become removed cards"
+                          className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-red-950 hover:text-red-300 disabled:opacity-50"
+                        >
+                          Forget
+                        </button>
+                      )}
+                      {forgotten && (
+                        <button
+                          type="button"
+                          onClick={() => void setForgotten(d, false)}
+                          disabled={busyId === d.deviceId}
+                          title="Take this device back: its cards show again wherever its worktrees are"
+                          className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+                        >
+                          Take back
+                        </button>
+                      )}
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-slate-500">
+                      <span className={stale && !forgotten ? 'text-amber-400/80' : ''}>
+                        last seen {agoText(d.lastSeenAt, now)}
+                      </span>
+                      {d.lastSeenAt && ` (${new Date(d.lastSeenAt).toLocaleString()})`}
+                      {d.platform && ` · ${d.platform}`}
+                      {d.daemonVersion && ` · daemon ${d.daemonVersion}`}
+                      {` · ${worktrees} worktree${worktrees === 1 ? '' : 's'}`}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+            {currentMaster && !masterDoc && (
+              <p className="text-[11px] text-amber-400">
+                The master device ({currentMaster.slice(0, 8)}) has no device record: pick a master above.
+              </p>
+            )}
+            {error && (
+              <p role="alert" className="text-xs text-red-400">
+                {error}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={saving || !dirty}
+              className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save devices'}
+            </button>
+            <p className="text-[11px] text-slate-500">
+              An empty name goes back to the device&apos;s own name. A new master device takes over within a
+              minute; the old one stops supervising the master.
+            </p>
+          </form>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** /api/settings' `warning` for a shared block: saved here, not yet in the store. */
+function SaveWarning({ text }: { text?: string }) {
+  if (!text) return null;
+  return <p className="mt-2 text-xs text-amber-400">{text}</p>;
 }
 
 export default function Settings() {
@@ -81,6 +392,20 @@ export default function Settings() {
   const [brSaved, setBrSaved] = useState(false);
   const [brError, setBrError] = useState<string | null>(null);
 
+  // A shared block's save (briefing, notes, reminders, gcsArchive) that reached
+  // this device's file but not the store: /api/settings answers with `warning`
+  // (the daemon pushes it to meta/settings shortly). Shown under that Save button.
+  const [saveWarn, setSaveWarn] = useState<Record<string, string>>({});
+  const noteWarning = async (section: string, r: Response): Promise<void> => {
+    const d = (await r.json().catch(() => null)) as { warning?: unknown } | null;
+    setSaveWarn((w) => {
+      const next = { ...w };
+      if (typeof d?.warning === 'string' && d.warning) next[section] = d.warning;
+      else delete next[section];
+      return next;
+    });
+  };
+
   const splitList = (s: string): string[] =>
     [...new Set(s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean))];
 
@@ -109,8 +434,14 @@ export default function Settings() {
         }),
       });
       if (!r.ok) throw new Error();
-      const d: { briefing?: BriefingSettingsForm } = await r.json();
+      const d: { briefing?: BriefingSettingsForm; warning?: string } = await r.json();
       if (d.briefing) applyBriefing(d.briefing);
+      setSaveWarn((w) => {
+        const next = { ...w };
+        if (d.warning) next.briefing = d.warning;
+        else delete next.briefing;
+        return next;
+      });
       setBrSaved(true);
       setTimeout(() => setBrSaved(false), 2000);
     } catch {
@@ -228,7 +559,7 @@ export default function Settings() {
     setRemSaving(true);
     setRemSaved(false);
     try {
-      await fetch('/api/settings', {
+      const r = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -240,6 +571,7 @@ export default function Settings() {
           },
         }),
       });
+      await noteWarning('reminders', r);
       setRemSaved(true);
       setTimeout(() => setRemSaved(false), 2000);
     } catch {
@@ -263,13 +595,14 @@ export default function Settings() {
     setNotesSaving(true);
     setNotesSaved(false);
     try {
-      await fetch('/api/settings', {
+      const r = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           notes: { enabled: notesEnabled, slack: notesSlack, linear: notesLinear },
         }),
       });
+      await noteWarning('notes', r);
       setNotesSaved(true);
       setTimeout(() => setNotesSaved(false), 2000);
     } catch {
@@ -290,13 +623,14 @@ export default function Settings() {
     setGcsSaving(true);
     setGcsSaved(false);
     try {
-      await fetch('/api/settings', {
+      const r = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           gcsArchive: { enabled: gcsEnabled, bucket: gcsBucket, prefix: gcsPrefix },
         }),
       });
+      await noteWarning('gcsArchive', r);
       setGcsSaved(true);
       setTimeout(() => setGcsSaved(false), 2000);
       if (gcsEnabled) void checkPreflight();
@@ -554,6 +888,7 @@ export default function Settings() {
             >
               {gcsSaving ? 'Saving…' : gcsSaved ? 'Saved ✓' : 'Save archive settings'}
             </button>
+            <SaveWarning text={saveWarn.gcsArchive} />
           </form>
         </section>
 
@@ -657,6 +992,7 @@ export default function Settings() {
             >
               {remSaving ? 'Saving…' : remSaved ? 'Saved ✓' : 'Save reminder settings'}
             </button>
+            <SaveWarning text={saveWarn.reminders} />
           </form>
         </section>
 
@@ -733,8 +1069,11 @@ export default function Settings() {
             >
               {notesSaving ? 'Saving…' : notesSaved ? 'Saved ✓' : 'Save notes settings'}
             </button>
+            <SaveWarning text={saveWarn.notes} />
           </form>
         </section>
+
+        <DevicesSection />
 
         <section className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5" aria-labelledby="briefing-settings">
           <h2 id="briefing-settings" className="text-sm font-semibold text-slate-200">
@@ -875,6 +1214,7 @@ export default function Settings() {
             >
               {brSaving ? 'Saving…' : brSaved ? 'Saved ✓' : 'Save briefing settings'}
             </button>
+            <SaveWarning text={saveWarn.briefing} />
           </form>
         </section>
       </main>

@@ -6,11 +6,13 @@ rules_version = '2';
 //     The Admin SDK BYPASSES these rules.
 //   - The browser never talks to Firestore, so clients get nothing.
 //
-// DO NOT DEPLOY this file to project `ks-flow` as it stands: its (default)
-// database is shared with ks-works (`slack_user_tokens`), and
-// `firebase deploy --only firestore:rules` replaces the WHOLE database's
-// ruleset. It is kept for the local emulator, and as the intended client
-// policy: deny all.
+// Deny all, for every client: no reads, no writes. This is what is live on
+// project `ks-flow`'s (default) database (verified 2026-11-16, ruleset
+// 7221e767-…). The database is shared with ks-works (`slack_user_tokens`),
+// which also uses only the Admin SDK, so neither app needs a client rule.
+// `firebase deploy --only firestore:rules --project ks-flow` replaces the
+// WHOLE database's ruleset: only ever deploy this deny-all, and never add an
+// `allow` that is not `if false`. Also used by the local emulator.
 service cloud.firestore {
   match /databases/{database}/documents {
     match /{document=**} {

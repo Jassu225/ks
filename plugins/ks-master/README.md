@@ -11,6 +11,12 @@ Loaded **only** by `claude-ks-master` (`plugins/ks/scripts/`). Don't add it to
 `KS_EXTRA_PLUGINS`: without the launcher's environment its mod does nothing,
 and its skills only make sense in the master.
 
+One master per ks-flow board, on the device chosen in ks-flow's Settings →
+**Devices**. Only that device's daemon writes the schedule requests, starts the
+master and hard-restarts it. A board on another device sends Brief me / Restart
+as a `masterRequests` doc in the store, which that daemon turns into a file in
+`requests/`, so the mod sees no difference (ks-flow README, "Several devices").
+
 ## What's in it
 
 | Path | What |

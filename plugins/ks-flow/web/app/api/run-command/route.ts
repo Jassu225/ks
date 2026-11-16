@@ -25,6 +25,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { NextResponse } from 'next/server';
+import { readOnlyResponse } from '@/lib/readonly';
 
 /** The remove command when Settings has none: the ks plugin's worktree remover. */
 const DEFAULT_REMOVE_COMMAND = 'remove_worktree -D {{path}}';
@@ -83,6 +84,9 @@ function runStreaming(
 }
 
 export async function POST(req: Request): Promise<Response> {
+  // Read-only while this device is behind the store's data format (lib/readonly.ts).
+  const readOnly = readOnlyResponse();
+  if (readOnly) return readOnly;
   let body: { path?: string; identifier?: string; title?: string };
   try {
     body = await req.json();

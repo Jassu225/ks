@@ -17,8 +17,9 @@ The design and the data formats are in the ks-flow plugin's
 ## How you are woken
 
 The ks-master plugin submits prompts into this session when it is idle. They
-come from requests the ks-flow daemon (schedule) and the board (buttons) drop
-in `{{MASTER_DIR}}/requests/`. A wake-up looks like a normal prompt, for example
+come from requests the ks-flow daemon (schedule) and the board's buttons (on
+any device; another device's arrive through the store) drop in
+`{{MASTER_DIR}}/requests/`. A wake-up looks like a normal prompt, for example
 `/ks-master:briefing schedule 06:00`, `/ks-master:briefing button` or
 `/ks-master:restart …`. Do what it says, report in a few lines, and stop. Never
 wait or poll for the next one: the plugin brings it.

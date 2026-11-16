@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AppHeader } from '@/components/AppHeader';
+import { DeviceChip, showDeviceChips } from '@/components/DeviceChip';
 import { localDate } from '@/components/briefing/format';
 import { RefreshIcon } from '@/components/icons';
 import { SeeLogs, useStreams } from '@/components/StreamPanel';
@@ -26,6 +27,7 @@ import {
   isFilter,
   masterEventLabel,
   matches,
+  rowDevice,
   rowStatus,
   type ActivityFilter,
   type ActivityRow,
@@ -276,6 +278,7 @@ function BackupDialog({ run, onClose }: { run: BackupRun; onClose: () => void })
           <TypeChip type="backup" />
           <h2 className="text-base font-semibold">{fmtWhen(run.startedAt)}</h2>
           <StatusBadge status={run.status} />
+          {run.deviceId && <DeviceChip deviceId={run.deviceId} />}
           <SeeLogs streamKey={backupRunKey(run.uid)} />
         </>
       }
@@ -414,6 +417,7 @@ function MasterDialog({ event, status, onClose }: { event: MasterEventDoc; statu
           <TypeChip type="master" />
           <h2 className="text-base font-semibold">{fmtWhen(event.at)}</h2>
           <StatusBadge status={status} />
+          {event.deviceId && <DeviceChip deviceId={event.deviceId} />}
         </>
       }
       sub={`${masterEventLabel(event)} · by the ${event.by}`}
@@ -441,7 +445,9 @@ function MasterDialog({ event, status, onClose }: { event: MasterEventDoc; statu
 // ── page ────────────────────────────────────────────────────────────────────
 
 export function ActivityPage() {
-  const { briefing, activity, now } = useShared();
+  const { briefing, activity, now, board } = useShared();
+  // The Device column: only once there are several devices (as the chip itself).
+  const deviceCol = showDeviceChips(board.devices);
   const router = useRouter();
   const pathname = usePathname() ?? '/activity';
   const params = useSearchParams();
@@ -572,6 +578,7 @@ export function ActivityPage() {
               <tr>
                 <th className="whitespace-nowrap px-4 py-2 font-medium">Started</th>
                 <th className="px-4 py-2 font-medium">Type</th>
+                {deviceCol && <th className="px-4 py-2 font-medium">Device</th>}
                 <th className="px-4 py-2 font-medium">Trigger</th>
                 <th className="px-4 py-2 font-medium">Status</th>
                 <th className="px-4 py-2 font-medium">Duration</th>
@@ -581,7 +588,7 @@ export function ActivityPage() {
             <tbody className="divide-y divide-slate-800">
               {shown.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
+                  <td colSpan={deviceCol ? 7 : 6} className="px-4 py-6 text-center text-slate-500">
                     {stillLoading
                       ? 'Loading…'
                       : filter === 'all'
@@ -606,6 +613,11 @@ export function ActivityPage() {
                     <td className="whitespace-nowrap px-4 py-2">
                       <TypeChip type={row.type} />
                     </td>
+                    {deviceCol && (
+                      <td className="whitespace-nowrap px-4 py-2">
+                        {rowDevice(row) && <DeviceChip deviceId={rowDevice(row)} />}
+                      </td>
+                    )}
                     <td className="whitespace-nowrap px-4 py-2 text-slate-400">{whatOf(row)}</td>
                     <td className="whitespace-nowrap px-4 py-2">
                       <span className="inline-flex items-center gap-1">

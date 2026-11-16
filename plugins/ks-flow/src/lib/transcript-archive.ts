@@ -73,12 +73,15 @@ import {
   loadArchiveIndex,
   needsUpload,
   safeId,
+  reindexOwner,
   saveUnit,
   type ArchiveIndex,
   type ArchivedSession,
   type UnitArchive,
 } from './archive-index.js';
 import type { BackupStore, RunUpload } from './db/types.js';
+import { dataDir } from './config.js';
+import { deviceId } from './device.js';
 import { CLAUDE_PROJECTS_DIR, KS_TIME_DIR, encodeProjectDir } from './paths.js';
 import { parseStateYaml } from './stateyaml.js';
 import { mergeLogs, missingLines } from './time-log-merge.js';
@@ -861,6 +864,10 @@ export async function reindexAll(
   log: (msg: string) => void,
   store: BackupStore,
   projectId: string,
+  owners: { self: string; devices: Array<{ deviceId: string; worktreePaths?: string[]; forgotten?: boolean }> } = {
+    self: deviceId(dataDir()),
+    devices: [],
+  },
 ): Promise<{ recovered: number; skipped: number }> {
   // Three sources for "where does this unit's transcript live", in order of
   // authority: a live worktree, the completed-unit record in the main checkout's
@@ -870,10 +877,17 @@ export async function reindexAll(
   // carry no location, and without it 35 of 40 units in the first real bucket
   // could not be placed.
   const known = new Map<string, UnitTarget>();
+  const liveHere = new Set<string>();
   if (projectPath) {
     for (const t of discoverCompletedTargets(projectPath)) known.set(t.identifier, t);
-    for (const t of discoverTargets(projectPath)) known.set(t.identifier, t); // live wins
+    for (const t of discoverTargets(projectPath)) {
+      known.set(t.identifier, t); // live wins
+      liveHere.add(t.identifier);
+    }
   }
+  // Each entry keeps the device it already names; else the one with its live worktree.
+  const existing = new Map<string, string | undefined>();
+  for (const u of await store.getBackupUnits(projectId).catch(() => [])) existing.set(u.identifier, u.deviceId);
 
   let recovered = 0;
   let skipped = 0;
@@ -883,7 +897,14 @@ export async function reindexAll(
       skipped++;
       continue;
     }
-    await saveUnit(store, projectId, unit);
+    const owner = reindexOwner({
+      existing: existing.get(unit.identifier),
+      liveHere: liveHere.has(id) || liveHere.has(unit.identifier),
+      self: owners.self,
+      worktreePath: unit.worktreePath,
+      devices: owners.devices,
+    });
+    await saveUnit(store, projectId, { ...unit, deviceId: owner }, { keepOwner: true });
     recovered++;
   }
   return { recovered, skipped };

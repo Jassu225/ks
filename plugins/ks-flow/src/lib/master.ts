@@ -31,6 +31,7 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchOutcome, type EventOutcome } from './master-events.js';
@@ -252,7 +253,7 @@ export function readSession(dir: string): MasterSession | null {
  * go (a second tick never sees it). Null when there is none. An unreadable file
  * still counts as a press.
  */
-export function takeStartRequest(dir: string): { at: string | null; by: string } | null {
+export function takeStartRequest(dir: string): { at: string | null; by: string; from: string | null } | null {
   const path = join(dir, 'start-request.json');
   if (!existsSync(path)) return null;
   const raw = readJson(path);
@@ -264,6 +265,8 @@ export function takeStartRequest(dir: string): { at: string | null; by: string }
   return {
     at: isObject(raw) && typeof raw.at === 'string' ? raw.at : null,
     by: isObject(raw) && typeof raw.by === 'string' ? raw.by : 'board',
+    // Another device's board asked (masterRequests): its name, for the event.
+    from: isObject(raw) && typeof raw.from === 'string' ? raw.from : null,
   };
 }
 
@@ -519,4 +522,165 @@ export function runMasterCommand(
   } finally {
     closeSync(out); // the child holds its own copy of the descriptor
   }
+}
+
+// ── the master's status (published to devices/{self}.master) ───────────────
+// A port of the board's read (web/lib/masterFiles.ts masterStatus): the master
+// device's daemon publishes it so the boards of other devices can show it
+// (they can't read this device's files). Keep the two in step.
+
+/** No heartbeat for this long while the process lives → 'stale' (the mod beats every 30 s). */
+export const STATUS_STALE_MS = 2 * 60_000;
+
+export type MasterState = 'none' | 'starting' | 'down' | 'stale' | 'busy' | 'live';
+
+/** The board's MasterStatus (web/lib/types.ts), plus what devices/{id}.master needs. */
+export interface MasterStatusView {
+  state: MasterState;
+  session: MasterSession | null;
+  heartbeat: Heartbeat | null;
+  alive: boolean;
+  heartbeatAgeMs: number | null;
+  bridgeSessionId: string | null;
+  pending: string[];
+  briefing: { enabled: boolean; schedule: string[] };
+  /** The heartbeat's time (null without one): a remote board computes the age itself. */
+  heartbeatAt: string | null;
+  /** The master's live pid, or null. */
+  pid: number | null;
+  /** When the daemon read this. */
+  publishedAt: string;
+}
+
+/** The status from what was read (pure): the board's rules, the daemon's liveness. */
+export function masterStatusOf(input: {
+  now: number;
+  session: MasterSession | null;
+  heartbeat: Heartbeat | null;
+  pid: number | null;
+  bridgeSessionId: string | null;
+  pending: string[];
+  briefing: { enabled: boolean; schedule: string[] };
+}): MasterStatusView {
+  const { now, session, pending, briefing } = input;
+  const publishedAt = new Date(now).toISOString();
+  if (!session) {
+    return {
+      state: 'none',
+      session: null,
+      heartbeat: input.heartbeat,
+      alive: false,
+      heartbeatAgeMs: null,
+      bridgeSessionId: null,
+      pending,
+      briefing,
+      heartbeatAt: input.heartbeat?.at ?? null,
+      pid: null,
+      publishedAt,
+    };
+  }
+  const alive = input.pid !== null;
+  // A heartbeat counts only when it is this session's.
+  const beat = input.heartbeat && input.heartbeat.sessionId === session.sessionId ? input.heartbeat : null;
+  const beatAt = beat?.at ? Date.parse(beat.at) : NaN;
+  const heartbeatAgeMs = Number.isFinite(beatAt) ? Math.max(0, now - beatAt) : null;
+  const fresh = heartbeatAgeMs != null && heartbeatAgeMs < STATUS_STALE_MS;
+  const startedAt = Date.parse(session.startedAt ?? '');
+  const starting = !alive && !session.pid && Number.isFinite(startedAt) && now - startedAt < START_GRACE_MS;
+  const state: MasterState = !alive ? (starting ? 'starting' : 'down') : !fresh ? 'stale' : beat?.busy ? 'busy' : 'live';
+  return {
+    state,
+    session,
+    heartbeat: beat,
+    alive,
+    heartbeatAgeMs,
+    bridgeSessionId: alive ? input.bridgeSessionId : null,
+    pending,
+    briefing,
+    heartbeatAt: beat?.at ?? null,
+    pid: input.pid,
+    publishedAt,
+  };
+}
+
+/** What changes when the status does (the age and the read time move on every read). */
+export function masterStatusSig(v: MasterStatusView): string {
+  const { heartbeatAgeMs: _age, publishedAt: _at, ...rest } = v;
+  void _age;
+  void _at;
+  return JSON.stringify(rest);
+}
+
+const claudeSessionsDir = (): string => join(homedir(), '.claude', 'sessions');
+
+/** The master's live pid: session.json's when it runs `claude`; else the interactive
+ * Claude process carrying its session id (~/.claude/sessions/<pid>.json). */
+function livePid(session: MasterSession, isClaude: (pid: number) => boolean): number | null {
+  if (session.pid) return isClaude(session.pid) ? session.pid : null;
+  let names: string[];
+  try {
+    names = readdirSync(claudeSessionsDir()).filter((n) => /^\d+\.json$/.test(n));
+  } catch {
+    return null;
+  }
+  for (const n of names) {
+    const f = readJson(join(claudeSessionsDir(), n));
+    if (isObject(f) && f.kind === 'interactive' && f.sessionId === session.sessionId && typeof f.pid === 'number' && isClaude(f.pid))
+      return f.pid;
+  }
+  return null;
+}
+
+/** Remote Control's session id, from Claude Code's own ~/.claude/sessions/<pid>.json. */
+function bridgeSessionIdOf(session: MasterSession, pid: number | null): string | null {
+  if (!pid) return null;
+  const f = readJson(join(claudeSessionsDir(), `${pid}.json`));
+  if (!isObject(f) || typeof f.bridgeSessionId !== 'string' || !f.bridgeSessionId) return null;
+  // The pid may have been reused by another Claude process.
+  if (typeof f.sessionId === 'string' && f.sessionId && f.sessionId !== session.sessionId) return null;
+  return f.bridgeSessionId;
+}
+
+/** Read the master's status from its files (what the board's /api/briefing/master shows on this device). */
+export function readMasterStatus(
+  dir: string,
+  opts: { now?: number; briefing: { enabled: boolean; schedule: string[] }; isClaude?: (pid: number) => boolean },
+): MasterStatusView {
+  const now = opts.now ?? Date.now();
+  const session = readSession(dir);
+  const heartbeat = readHeartbeat(dir);
+  const pending = pendingRequests(dir)
+    .map((r) => r.name)
+    .sort();
+  const pid = session ? livePid(session, opts.isClaude ?? pidIsClaude) : null;
+  return masterStatusOf({
+    now,
+    session,
+    heartbeat,
+    pid,
+    bridgeSessionId: session ? bridgeSessionIdOf(session, pid) : null,
+    pending,
+    briefing: opts.briefing,
+  });
+}
+
+// ── requests from other devices (masterRequests) ───────────────────────────
+
+/** A request older than this is dropped unread: the device that asked has long moved on. */
+export const REMOTE_REQUEST_TTL_MS = 15 * 60_000;
+
+/** The board's prompts (plugins/ks-master/hooks/master.ts defaultPrompt; web/lib/masterFiles.ts PROMPTS). */
+export const BOARD_PROMPTS: Record<'button' | 'restart', string> = {
+  button: '/ks-master:briefing button',
+  restart: '/ks-master:restart requested from the board',
+};
+
+/** Leave start-request.json (the board's "Start master") for the master job, as the local board does. */
+export function writeStartRequest(dir: string, input: { by: string; from?: string | null; now?: Date }): void {
+  writeAtomic(join(dir, 'start-request.json'), {
+    v: 1,
+    at: (input.now ?? new Date()).toISOString(),
+    by: input.by,
+    ...(input.from ? { from: input.from } : {}),
+  });
 }

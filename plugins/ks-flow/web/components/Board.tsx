@@ -5,6 +5,8 @@ import { SeeLogs, useStreams } from '@/components/StreamPanel';
 import { BACKUP_ALL, backupRunAliases } from '@/lib/backupStreams';
 import { useShared } from '@/lib/boardData';
 import { isDone } from '@/lib/units';
+import { derivePhaseModel } from '@/lib/phasemodel';
+import { liveCardTest } from '@/lib/liveunits';
 import type { BoardConfig, SessionDoc, WorkUnitDoc } from '@/lib/types';
 import { AppHeader } from './AppHeader';
 import { Column } from './Column';
@@ -45,7 +47,7 @@ function BackupNowButton() {
       }
       disabled={busy}
       title={
-        'Back up now: transcript + workflow for every unit whose sessions changed in the last 24h' +
+        'Back up now (this device): transcript + workflow for every unit of this device whose sessions changed in the last 24h' +
         (lastSweepAt ? ` — last sweep ${new Date(lastSweepAt).toLocaleString()}` : ' — no sweep yet')
       }
       className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-slate-400 hover:text-slate-200 disabled:opacity-50"
@@ -62,7 +64,8 @@ export function Board({ config }: { config: BoardConfig }) {
   // The one live subscription and shared clock, from the layout's provider
   // (lib/boardData.tsx) — the header and the other pages read the same.
   const { board, now } = useShared();
-  const { project, workUnits, sessions, reminders, connected, refresh } = board;
+  const { devices, settings, self, workUnits, sessions, reminders, connected, refresh } = board;
+  const me = useMemo(() => devices.find((d) => d.deviceId === self) ?? null, [devices, self]);
   const [swimlanes, setSwimlanes] = useState(true);
   const [showRemoved, setShowRemoved] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -96,29 +99,30 @@ export function Board({ config }: { config: BoardConfig }) {
     setKillState('killed');
   };
 
-  // Columns come from the project's phaseModel (project-defined), never a
-  // hard-coded enum. Each card sits in the column matching its currentPhase.
-  const columns = project?.phaseModel ?? [];
-  // The Plannotator Inbox's address, for the cards' thread links.
+  // Columns: derived from every card in the store, whichever device wrote it
+  // (lib/phasemodel.ts), never a hard-coded enum. Each card sits in the column
+  // matching its currentPhase.
+  const columns = useMemo(() => derivePhaseModel(workUnits), [workUnits]);
+  // This device's Plannotator Inbox, for the cards' thread links.
   const inboxAddress = useMemo(
-    () => ({ url: project?.inboxUrl ?? null, running: project?.inboxRunning ?? false }),
-    [project?.inboxUrl, project?.inboxRunning],
+    () => ({ url: me?.inboxUrl ?? null, running: me?.inboxRunning ?? false }),
+    [me?.inboxUrl, me?.inboxRunning],
   );
 
   // Hide the stale backlog: an open card shows only if its worktree is a CURRENT
-  // git worktree (PocketBase keeps old records forever, so worktreeDir alone
-  // isn't enough).
-  const liveWorktrees = useMemo(() => new Set(project?.worktreePaths ?? []), [project]);
+  // git worktree on its owner device (PocketBase keeps old records forever, so
+  // worktreeDir alone isn't enough). A forgotten device's cards are removed cards.
+  const isLive = useMemo(() => liveCardTest(devices, !!settings), [devices, settings]);
   const visibleUnits = useMemo(
-    () =>
-      workUnits.filter(
-        (u) =>
-          u.worktreeDir &&
-          liveWorktrees.has(u.worktreeDir) &&
-          !isDone(u),
-      ),
-    [workUnits, liveWorktrees],
+    () => workUnits.filter((u) => isLive(u) && !isDone(u)),
+    [workUnits, isLive],
   );
+  // A forgotten device's cards (Settings → Devices) are removed cards, done or
+  // not: they join the Done column behind "show removed", never vanish.
+  const onForgotten = useMemo(() => {
+    const gone = new Set(devices.filter((d) => d.forgotten === true).map((d) => d.deviceId));
+    return (u: WorkUnitDoc): boolean => !!u.deviceId && gone.has(u.deviceId);
+  }, [devices]);
 
   // The Done column, newest first: finished work whose worktree still exists
   // (cleanup candidates, with Remove), plus — behind "show removed" — finished
@@ -127,11 +131,11 @@ export function Board({ config }: { config: BoardConfig }) {
   const doneUnits = useMemo(
     () =>
       workUnits
-        .filter(isDone)
-        .map((u) => (u.worktreeDir && liveWorktrees.has(u.worktreeDir) ? u : { ...u, worktreeDir: null }))
+        .filter((u) => isDone(u) || onForgotten(u))
+        .map((u) => (isLive(u) ? u : { ...u, worktreeDir: null }))
         .filter((u) => showRemoved || u.worktreeDir)
         .sort((a, b) => (b.lastActivity ?? '').localeCompare(a.lastActivity ?? '')),
-    [workUnits, liveWorktrees, showRemoved],
+    [workUnits, isLive, onForgotten, showRemoved],
   );
 
   const byPhase = useMemo(() => {
@@ -171,7 +175,7 @@ export function Board({ config }: { config: BoardConfig }) {
         toolbar={
         <>
           <span className="truncate font-mono text-[11px] text-slate-500" title="Tracked project">
-            {project?.projectPath ?? config.projectPath}
+            {me?.projectPath ?? config.projectPath}
           </span>
           <div className="grow" />
           <span
@@ -193,7 +197,7 @@ export function Board({ config }: { config: BoardConfig }) {
           </label>
           <label
             className="flex items-center gap-1.5 text-slate-400"
-            title="Also show, in the Done column, finished work whose worktree is already removed"
+            title="Also show, in the Done column, finished work whose worktree is already removed, and the cards of forgotten devices"
           >
             <input
               type="checkbox"
@@ -229,7 +233,7 @@ export function Board({ config }: { config: BoardConfig }) {
             type="button"
             onClick={onKill}
             disabled={killState === 'killing' || killState === 'killed'}
-            title="Stop the daemon (and PocketBase, when it is the store). It restarts and re-backfills on the next Claude session."
+            title="Stop this device's daemon (and PocketBase, when it is the store). It restarts and re-backfills on the next Claude session."
             className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
               killState === 'armed'
                 ? 'bg-red-600 text-white'

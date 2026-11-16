@@ -7,7 +7,9 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useShared } from '@/lib/boardData';
-import type { MasterStatus } from '@/lib/types';
+import type { DeviceMasterStatus, MasterStatus } from '@/lib/types';
+import { versionNotices } from '@/lib/versioning';
+import { DeviceChip, agoText, deviceLabel, isDeviceStale } from './DeviceChip';
 import { BellIcon, GearIcon, InboxIcon, ProcessesIcon } from './icons';
 
 const TABS: { href: string; label: string; notesOnly?: boolean }[] = [
@@ -55,16 +57,70 @@ function masterTitle(m: MasterStatus | null): string {
   return lines.join('\n');
 }
 
+/**
+ * The master status another device publishes in devices/{id}.master (the full
+ * board MasterStatus plus heartbeatAt, pid, publishedAt), in the board's shape.
+ * The heartbeat's age is computed here from heartbeatAt: the stored
+ * heartbeatAgeMs is as old as the publish (written on change, at least every
+ * ~30 s while the master lives). `briefing` falls back to meta/settings.
+ */
+export function masterFromDevice(
+  m: DeviceMasterStatus,
+  now: number,
+  settingsBriefing?: Record<string, unknown> | null,
+): MasterStatus {
+  const STATES: MasterStatus['state'][] = ['none', 'starting', 'down', 'stale', 'busy', 'live'];
+  const state = STATES.includes(m.state as MasterStatus['state']) ? (m.state as MasterStatus['state']) : 'none';
+  const hb = m.heartbeatAt ? Date.parse(m.heartbeatAt) : NaN;
+  const sb = settingsBriefing ?? null;
+  const briefing =
+    (m.briefing as MasterStatus['briefing'] | undefined) ??
+    (sb
+      ? { enabled: sb.enabled === true, schedule: Array.isArray(sb.schedule) ? (sb.schedule as string[]) : [] }
+      : { enabled: false, schedule: [] });
+  return {
+    state,
+    session: (m.session as MasterStatus['session']) ?? null,
+    heartbeat: (m.heartbeat as MasterStatus['heartbeat']) ?? null,
+    alive: typeof m.alive === 'boolean' ? m.alive : state === 'live' || state === 'busy' || state === 'stale',
+    heartbeatAgeMs: Number.isFinite(hb) ? Math.max(0, now - hb) : null,
+    bridgeSessionId: m.bridgeSessionId ?? null,
+    pending: Array.isArray(m.pending) ? (m.pending as string[]) : [],
+    briefing,
+  };
+}
+
 export function MasterChip() {
-  const { master } = useShared();
-  const l = masterLabel(master);
+  const { master: served, board, now } = useShared();
+  // The master runs on the device chosen in Settings → Devices. Elsewhere, its
+  // status is what that device's daemon publishes in devices/{id}.master: read
+  // live from the store here, with /api/briefing/master (polled every 15 s; it
+  // reads the same doc and adds `device`) as the fallback.
+  const masterId = board.settings?.masterDeviceId ?? served?.device?.deviceId ?? null;
+  const remote = !!masterId && masterId !== board.self;
+  const dev = remote ? (board.devices.find((d) => d.deviceId === masterId) ?? null) : null;
+  const name = remote ? (dev ? deviceLabel(dev, masterId) : (served?.device?.name ?? masterId.slice(0, 8))) : null;
+  // Offline as the route decides it: no daemon heartbeat (lastSeenAt) for 5 min.
+  const lastSeenAt = dev?.lastSeenAt ?? served?.device?.lastSeenAt ?? null;
+  const offline = remote && (dev ? isDeviceStale(dev, now) : served?.device?.offline === true);
+  const master = remote && dev?.master ? masterFromDevice(dev.master, now, board.settings?.briefing) : served;
+  const l = offline
+    ? { text: 'device offline', dot: 'bg-slate-500', cls: 'border-slate-700 text-slate-400' }
+    : masterLabel(master);
+  const published = remote && typeof dev?.master?.publishedAt === 'string' ? dev.master.publishedAt : null;
+  const pid = remote && typeof dev?.master?.pid === 'number' ? dev.master.pid : null;
+  const lines = [
+    `Master on ${name}` + (offline ? `: ${name} was last seen ${agoText(lastSeenAt, now)}` : ''),
+    masterTitle(master),
+  ];
+  if (pid) lines.push(`pid ${pid}`);
+  if (published) lines.push(`status published ${agoText(published, now)}`);
+  const title = remote ? lines.join('\n') : masterTitle(master);
   return (
-    <span
-      className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[13px] ${l.cls}`}
-      title={masterTitle(master)}
-    >
+    <span className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[13px] ${l.cls}`} title={title}>
       <span className={`h-2 w-2 rounded-full ${l.dot}`} aria-hidden="true" />
       master · {l.text}
+      {remote && <span className="text-slate-500">on {name}</span>}
     </span>
   );
 }
@@ -92,12 +148,51 @@ function StoreChip() {
   );
 }
 
+/**
+ * Versioning (README "Versioning"): a line per device behind the store's
+ * release, by name, on every board; red when this board is read-only (behind on
+ * the data format). Nothing while all are up to date.
+ */
+function VersionBanner() {
+  const { board, version } = useShared();
+  const notices = versionNotices({ devices: board.devices, settings: board.settings, self: board.self, local: version });
+  if (notices.length === 0) return null;
+  return (
+    <div role="status" className="border-b border-slate-800 text-xs">
+      {notices.map((n) => (
+        <p
+          key={n.key}
+          className={`px-6 py-1.5 ${n.tone === 'red' ? 'bg-[#2a0d12] text-red-200' : 'bg-[#2a1d0a] text-amber-200'}`}
+        >
+          {n.text}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** "dev build" beside this device's chip: a clone off main or with uncommitted changes. */
+function DevBuildChip() {
+  const { version } = useShared();
+  if (!version?.dev) return null;
+  return (
+    <span
+      className="rounded border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-400"
+      title={`ks-flow ${version.version} is a dev build (${version.devReason ?? 'not a release'}): it never raises the store's version and never updates itself`}
+    >
+      dev build
+    </span>
+  );
+}
+
 export function AppHeader({ toolbar }: { toolbar?: ReactNode }) {
   const pathname = usePathname() ?? '/';
   const { config, board, notesEnabled, bellCount, inboxCount } = useShared();
-  const projectPath = board.project?.projectPath ?? config.projectPath;
-  const inboxUrl = board.project?.inboxUrl ?? null;
-  const inboxRunning = board.project?.inboxRunning ?? false;
+  // This device's record: its project path and its own (localhost) Inbox.
+  const me = board.devices.find((d) => d.deviceId === board.self);
+  const projectPath = me?.projectPath ?? config.projectPath;
+  const inboxUrl = me?.inboxUrl ?? null;
+  const inboxRunning = me?.inboxRunning ?? false;
   const hot = bellCount > 0;
 
   const iconLink = (href: string, label: string, icon: ReactNode) => (
@@ -197,11 +292,14 @@ export function AppHeader({ toolbar }: { toolbar?: ReactNode }) {
             </button>
           )}
           <StoreChip />
+          <DeviceChip deviceId={board.self} prefix="this device: " className="!max-w-[16rem] !px-2 !py-1 !text-xs" />
+          <DevBuildChip />
           <MasterChip />
-          {iconLink('/processes', 'Running processes', <ProcessesIcon />)}
+          {iconLink('/processes', 'Running processes on this device', <ProcessesIcon />)}
           {iconLink('/settings', 'Settings', <GearIcon />)}
         </div>
       </header>
+      <VersionBanner />
       {toolbar && (
         <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 bg-slate-950/95 px-6 py-1.5 text-xs backdrop-blur">
           {toolbar}

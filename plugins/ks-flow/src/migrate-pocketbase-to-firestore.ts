@@ -16,7 +16,9 @@
 //   master events, backup runs, backup units (so the next sweep doesn't
 //   re-upload everything), and the global slack_names cache.
 // Skips projects / work units / sessions: the daemon's startup backfill
-// rewrites them from the session JSONL and state.yaml.
+// rewrites them from the session JSONL and state.yaml. Nothing is copied to
+// the retired meta/project: devices/{id} and meta/settings come from the
+// device backfill (scripts/one-off/backfill-devices.ts) afterwards.
 //
 // Writes go straight to Firestore (not the offline outbox), whole docs, by the
 // same paths the Firestore provider uses; a re-run overwrites with the same data.

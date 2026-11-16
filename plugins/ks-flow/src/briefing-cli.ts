@@ -122,11 +122,12 @@ async function main(): Promise<void> {
   switch (cmd) {
     case 'context': {
       const source = provider.source();
-      const [project, units] = await Promise.all([
+      const [devices, project, units] = await Promise.all([
+        provider.devices().getDevices(),
         source.getProject(conf.projectId),
         source.getWorkUnits(conf.projectId),
       ]);
-      out(await context(env, boardSummary(project, units)));
+      out(await context(env, boardSummary(devices, units, project)));
       return;
     }
 

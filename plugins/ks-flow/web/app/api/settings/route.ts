@@ -6,11 +6,26 @@
 // GET  → { removeCommand, gcsArchive, reminders, notes, briefing, … }
 // POST { removeCommand?, gcsArchive?, reminders?, notes?, briefing? } → persist
 // (merges with existing; blocks this route doesn't know are kept as they are).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+//
+// Several devices (src/lib/sharedsettings.ts): the shared blocks (briefing,
+// notes, reminders, gcsArchive, transcriptBackup) live in the store's
+// meta/settings; removeCommand stays local. board-settings.json is the local
+// mirror every synchronous reader keeps using, so a save writes BOTH: the file
+// (now) and meta/settings (queued in the outbox when offline), each stamped
+// with the same `sharedUpdatedAt`. The daemon mirrors other devices' saves
+// into the file and never lets an older store copy overwrite a newer local
+// save. A read takes the store's blocks when its copy is at least as new as
+// the file's. Before the device backfill (no meta/settings) and on PocketBase
+// (one device; its daemon pushes the file into its store) only the file is
+// written, as always.
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { NextResponse } from 'next/server';
 import { loadDataEnv } from '@/lib/envfile';
+import { getSettingsDoc, mergeSettingsDoc, serverConfig, SHARED_SETTINGS_BLOCKS } from '@/lib/serverdb';
+import type { SettingsDoc } from '@/lib/types';
+import { readOnlyResponse } from '@/lib/readonly';
 
 export const dynamic = 'force-dynamic';
 
@@ -104,9 +119,35 @@ const DEFAULT_REMINDERS: Reminders = {
 };
 const DEFAULT_NOTES: Notes = { enabled: false, slack: false, linear: false };
 
-function read(): Settings {
+type Raw = Record<string, unknown>;
+const isObj = (v: unknown): v is Raw => typeof v === 'object' && v !== null && !Array.isArray(v);
+const stampOf = (v: unknown): string => (typeof v === 'string' ? v : '');
+
+/** The file with the store's shared blocks laid over it when the store's copy is at least as new. */
+function withStore(raw: Raw, doc: SettingsDoc | null | undefined): Raw {
+  if (!doc || stampOf(doc.sharedUpdatedAt) < stampOf(raw.sharedUpdatedAt)) return raw;
+  const out: Raw = { ...raw };
+  for (const k of SHARED_SETTINGS_BLOCKS) {
+    const v = (doc as unknown as Raw)[k];
+    if (isObj(v)) out[k] = v;
+    else delete out[k];
+  }
+  if (doc.sharedUpdatedAt) out.sharedUpdatedAt = doc.sharedUpdatedAt;
+  if (doc.masterDeviceId) out.masterDeviceId = doc.masterDeviceId;
+  return out;
+}
+
+/** The settings as stored: the file, with the store's newer shared blocks (Firestore). */
+async function readEffective(): Promise<{ raw: Raw; doc: SettingsDoc | null | undefined }> {
+  const raw = readRaw();
+  if (serverConfig().dbProvider !== 'firestore') return { raw, doc: undefined };
+  const doc = await getSettingsDoc();
+  return { raw: withStore(raw, doc), doc };
+}
+
+function read(raw: Raw = readRaw()): Settings {
   try {
-    const s = JSON.parse(readFileSync(settingsPath(), 'utf8'));
+    const s = raw as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     const g = s.gcsArchive ?? {};
     const r = s.reminders ?? {};
     const n = s.notes ?? {};
@@ -160,7 +201,8 @@ export async function GET(): Promise<NextResponse> {
   // by permalink; Linear uses its key). Only booleans leave the server.
   const slackTokenPresent = !!(process.env.SLACK_TOKEN ?? '').trim();
   const linearKeyPresent = !!(process.env.LINEAR_API_KEY ?? '').trim();
-  return NextResponse.json({ ...read(), gcsBucketEnv, slackTokenPresent, linearKeyPresent });
+  const { raw } = await readEffective();
+  return NextResponse.json({ ...read(raw), gcsBucketEnv, slackTokenPresent, linearKeyPresent });
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -176,8 +218,15 @@ export async function POST(req: Request): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: 'invalid request body' }, { status: 400 });
   }
+  // The shared blocks go to the store: refused while this device is behind the
+  // store's data format (lib/readonly.ts). removeCommand is this device's own.
+  if (SHARED_SETTINGS_BLOCKS.some((k) => (body as Record<string, unknown>)[k] !== undefined)) {
+    const readOnly = readOnlyResponse();
+    if (readOnly) return readOnly;
+  }
 
-  const current = read();
+  const { raw, doc } = await readEffective();
+  const current = read(raw);
   const next: Settings = { ...current };
   if (typeof body.removeCommand === 'string') {
     next.removeCommand = body.removeCommand.trim();
@@ -221,6 +270,28 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   const dir = dataDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(settingsPath(), JSON.stringify({ ...readRaw(), ...next }, null, 2));
-  return NextResponse.json({ ok: true, ...next });
+  const sharedUpdatedAt = new Date().toISOString();
+  const content: Raw = { ...raw, ...next, sharedUpdatedAt };
+  // Temp file + rename: the daemon's mirror and the shell readers never see half a file.
+  const tmp = join(dir, `.board-settings.json.${process.pid}.tmp`);
+  writeFileSync(tmp, JSON.stringify(content, null, 2));
+  renameSync(tmp, settingsPath());
+
+  // Device mode on Firestore: meta/settings exists (or, offline, the daemon's
+  // mirror left its masterDeviceId in the file). Before the backfill the store
+  // is not touched: a partial meta/settings would switch every daemon over.
+  let storeWarning: string | undefined;
+  const deviceMode = doc != null || (doc === undefined && typeof raw.masterDeviceId === 'string' && raw.masterDeviceId !== '');
+  if (serverConfig().dbProvider === 'firestore' && deviceMode) {
+    const patch: Raw = { sharedUpdatedAt };
+    for (const k of SHARED_SETTINGS_BLOCKS) if (isObj(content[k])) patch[k] = content[k];
+    try {
+      await mergeSettingsDoc(patch as Partial<SettingsDoc>);
+    } catch (e) {
+      // The file has the save; the daemon pushes it to the store on its next pass.
+      storeWarning = `saved on this device; the shared copy is updated by the daemon shortly (${(e as Error)?.message ?? e})`;
+      console.error('[ks-flow] settings: meta/settings write failed:', (e as Error)?.message ?? e);
+    }
+  }
+  return NextResponse.json({ ok: true, ...next, ...(storeWarning ? { warning: storeWarning } : {}) });
 }

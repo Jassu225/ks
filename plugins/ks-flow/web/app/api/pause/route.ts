@@ -8,12 +8,16 @@
 import { NextResponse } from 'next/server';
 import { deleteReminder, getProjectId, upsertReminder } from '@/lib/serverdb';
 import type { ReminderDoc } from '@/lib/types';
+import { readOnlyResponse } from '@/lib/readonly';
 
 export const dynamic = 'force-dynamic';
 
 const pauseUid = (sessionId: string): string => `pause:${sessionId}`;
 
 export async function POST(req: Request): Promise<NextResponse> {
+  // Read-only while this device is behind the store's data format (lib/readonly.ts).
+  const readOnly = readOnlyResponse();
+  if (readOnly) return readOnly;
   let body: { sessionId?: string; unitId?: string; paused?: boolean };
   try {
     body = await req.json();

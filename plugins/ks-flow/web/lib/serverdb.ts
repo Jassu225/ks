@@ -1,5 +1,6 @@
 // lib/serverdb.ts — SERVER-side store writes (Next.js API routes only):
-// reminders, briefing items, master events, the Slack names cache.
+// reminders, briefing items, master events, the Slack names cache, and the
+// device side: meta/settings (the shared settings), devices/{id}, masterRequests.
 //
 // The board's server is the writer for the `reminders` collection (the daemon
 // reads + writes back). Provider is resolved the same way as app/page.tsx /
@@ -12,7 +13,8 @@ import { join } from 'node:path';
 import PocketBase from 'pocketbase';
 import { isNetworkError, outboxEntries, overlay, withTimeout, writeOrQueue, type StoreOp } from './outbox';
 import { readScopeCache } from './storeCache';
-import type { BriefingItemDoc, MasterEventDoc, ReminderDoc } from './types';
+import { deviceId } from './device';
+import type { BriefingItemDoc, DeviceDoc, MasterEventDoc, MasterRequestDoc, ReminderDoc, SettingsDoc } from './types';
 import { loadDataEnv } from '@/lib/envfile';
 
 const REMINDERS = 'reminders';
@@ -78,7 +80,7 @@ export function getProjectId(): string {
 }
 
 // ── PocketBase ────────────────────────────────────────────────────────────────
-function pbClient(cfg: ServerConfig): PocketBase {
+export function pbClient(cfg: ServerConfig): PocketBase {
   const pb = new PocketBase(cfg.pocketbaseUrl);
   pb.autoCancellation(false);
   return pb;
@@ -120,7 +122,7 @@ function plain<T>(doc: T): T {
 }
 
 /** `plain` as an outbox entry's data. */
-function plainData(doc: object): Record<string, unknown> {
+export function plainData(doc: object): Record<string, unknown> {
   return plain(doc) as Record<string, unknown>;
 }
 
@@ -164,7 +166,7 @@ async function fsProjectCol(cfg: ServerConfig, name: string) {
 
 /** Offline mode (lib/outbox.ts): write through firebase-admin, or queue for
  * the daemon to sync. */
-async function fsWrite(cfg: ServerConfig, ops: StoreOp[]): Promise<void> {
+export async function fsWrite(cfg: ServerConfig, ops: StoreOp[]): Promise<void> {
   const fs = await adminFirestore(cfg);
   await writeOrQueue(cfg.dataDir, ops, async (list) => {
     if (list.length === 1) {
@@ -191,7 +193,7 @@ const projectPath = (_cfg: ServerConfig, name: string): string => name;
 
 /** A Firestore read with the write timeout; on a network failure, `fallback()`
  * (the live stream's last snapshot plus the queued writes). */
-async function fsRead<T>(read: () => Promise<T>, fallback: () => T): Promise<T> {
+export async function fsRead<T>(read: () => Promise<T>, fallback: () => T): Promise<T> {
   try {
     return await withTimeout(read());
   } catch (e) {
@@ -278,7 +280,8 @@ const FS_MASTER_EVENTS = 'masterEvents';
 /** Record one master event. Firestore refuses undefined fields, so unset optional ones are dropped. */
 export async function addMasterEvent(doc: MasterEventDoc): Promise<void> {
   const cfg = serverConfig();
-  const clean = plain(doc);
+  // Stamped with this device (the Activity Log's Device column).
+  const clean = plain({ ...doc, deviceId: doc.deviceId ?? deviceId(cfg.dataDir) });
   if (cfg.dbProvider === 'pocketbase') {
     await pbClient(cfg)
       .collection(MASTER_EVENTS)
@@ -366,4 +369,101 @@ export async function putSlackNames(map: Record<string, string>): Promise<void> 
     cfg,
     entries.map(([uid, name]) => ({ op: 'set' as const, path: `${SLACK_NAMES}/${uid}`, data: { uid, name } })),
   );
+}
+
+// ── devices: meta/settings, devices/{id}, masterRequests ─────────────────────
+// Same paths as src/lib/db/devicestore.ts (Firestore) and the PocketBase rows of
+// pb_migrations/1700000007_devices.js (`meta` / `devices` keyed by `key`, the
+// doc in `data`; `master_requests` by `uid`).
+export const SETTINGS_PATH = 'meta/settings';
+const FS_DEVICES = 'devices';
+const FS_MASTER_REQUESTS = 'masterRequests';
+const PB_META = 'meta';
+const PB_DEVICES = 'devices';
+
+/** The board-settings.json blocks every device shares (src/lib/device-backfill.ts SHARED_BLOCKS). */
+export const SHARED_SETTINGS_BLOCKS = ['briefing', 'notes', 'reminders', 'gcsArchive', 'transcriptBackup'] as const;
+
+async function pbRow(cfg: ServerConfig, col: string, key: string): Promise<Record<string, unknown> | null> {
+  const pb = pbClient(cfg);
+  try {
+    const r = await pb.collection(col).getFirstListItem(pb.filter('key={:k}', { k: key }));
+    return (r.data ?? null) as Record<string, unknown> | null;
+  } catch (e) {
+    if ((e as { status?: number }).status === 404) return null;
+    throw e;
+  }
+}
+
+/** The board's last live snapshot of one board-scope key (the offline fallback). */
+function cachedBoard(cfg: ServerConfig, key: string): Record<string, unknown>[] | null {
+  const snaps = readScopeCache(cfg.dataDir, 'board')?.snaps;
+  const v = snaps?.[key];
+  return Array.isArray(v) ? (v as Record<string, unknown>[]) : null;
+}
+
+/**
+ * meta/settings: the doc, null when there is none (before the device
+ * backfill), undefined when it can't be told (offline with no snapshot).
+ */
+export async function getSettingsDoc(): Promise<SettingsDoc | null | undefined> {
+  const cfg = serverConfig();
+  if (cfg.dbProvider === 'pocketbase') {
+    try {
+      return (await pbRow(cfg, PB_META, 'settings')) as SettingsDoc | null;
+    } catch {
+      return undefined;
+    }
+  }
+  const fs = await adminFirestore(cfg);
+  return fsRead<SettingsDoc | null | undefined>(
+    async () => {
+      const snap = await fs.doc(SETTINGS_PATH).get();
+      return snap.exists ? (snap.data() as SettingsDoc) : null;
+    },
+    () => {
+      const cached = cachedBoard(cfg, 'settings');
+      if (!cached) return undefined;
+      return (cached[0] as unknown as SettingsDoc | undefined) ?? null;
+    },
+  ).catch(() => undefined);
+}
+
+/** Merge into meta/settings (Firestore; queued in the outbox when offline). */
+export async function mergeSettingsDoc(patch: Partial<SettingsDoc>): Promise<void> {
+  const cfg = serverConfig();
+  if (cfg.dbProvider === 'pocketbase') {
+    const pb = pbClient(cfg);
+    const rec = await pb.collection(PB_META).getFirstListItem(pb.filter('key={:k}', { k: 'settings' }));
+    await pb.collection(PB_META).update(rec.id, { data: { ...(rec.data ?? {}), ...plainData(patch) } });
+    return;
+  }
+  await fsWrite(cfg, [{ op: 'merge', path: SETTINGS_PATH, data: plainData(patch) }]);
+}
+
+/** One device's doc (null when unknown); offline, from the board's last snapshot. */
+export async function getDeviceDoc(deviceId: string): Promise<DeviceDoc | null> {
+  const cfg = serverConfig();
+  if (cfg.dbProvider === 'pocketbase') {
+    const d = await pbRow(cfg, PB_DEVICES, deviceId).catch(() => null);
+    return d ? ({ ...(d as unknown as DeviceDoc), deviceId }) : null;
+  }
+  const fs = await adminFirestore(cfg);
+  return fsRead<DeviceDoc | null>(
+    async () => {
+      const snap = await fs.doc(`${FS_DEVICES}/${deviceId}`).get();
+      return snap.exists ? ({ ...(snap.data() as DeviceDoc), deviceId }) : null;
+    },
+    () => {
+      const d = cachedBoard(cfg, 'devices')?.find((x) => x.deviceId === deviceId);
+      return d ? (d as unknown as DeviceDoc) : null;
+    },
+  );
+}
+
+/** Ask the master device's daemon for a start / run / restart (Firestore; queued when offline). */
+export async function addMasterRequestDoc(doc: MasterRequestDoc): Promise<void> {
+  const cfg = serverConfig();
+  if (cfg.dbProvider === 'pocketbase') throw new Error('masterRequests are not used on PocketBase (one device)');
+  await fsWrite(cfg, [{ op: 'set', path: `${FS_MASTER_REQUESTS}/${doc.uid}`, data: plainData(doc) }]);
 }

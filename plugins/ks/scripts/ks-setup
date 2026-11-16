@@ -83,6 +83,73 @@ load_mode() {
   else echo launcher; fi
 }
 
+# This device on the shared ks-flow board (ks-flow README, "Several devices"):
+# its id (`ks-flow device-id --json`: the hashed hardware id, or KS_DEVICE_ID)
+# and name and, with Firestore, whether the store is set up for devices
+# (meta/settings, read by the daemon's store-check). Info only.
+device_check() { # flow-root data-dir store
+  local flow="$1" dd="$2" dbp="$3" fbin=ks-flow dev did dname sc="" setup master
+  have ks-flow || fbin="$flow/bin/ks-flow"
+  dev="$("$fbin" device-id --json 2>/dev/null)"
+  did="$(jq -r '.deviceId // empty' <<<"$dev" 2>/dev/null)"
+  dname="$(jq -r '.defaultName // empty' <<<"$dev" 2>/dev/null)"
+  if [ -z "$did" ]; then
+    check ks-flow:device info 0 "this device's ks-flow id is unknown (daemon not built yet)" "ks-flow start"; return
+  fi
+  local me="this device: ${dname:-unnamed} ($did)"
+  # A stored id that isn't this machine's hardware id: the config came from
+  # another Mac (Migration Assistant, synced dotfiles) or the logic board was
+  # replaced. Two Macs with one id overwrite each other's cards.
+  if [ "$(jq -r '"\(.source // "")/\(.hardwareMatches)"' <<<"$dev" 2>/dev/null)" = config/false ]; then
+    check ks-flow:device-id warn 0 \
+      "the stored device id $did (ks.KS_DEVICE_ID) is not this machine's own: copied from another Mac, or the logic board was replaced; if another Mac uses $did, the two overwrite each other's cards" \
+      "on the copied Mac: ks-config unset ks.KS_DEVICE_ID, then ks-flow stop && ks-flow start"
+  fi
+  if [ "$dbp" != firestore ]; then check ks-flow:device info 1 "$me"; return; fi
+  [ -n "$dd" ] && [ -f "$dd/daemon/dist/store-check.js" ] \
+    && sc="$(KS_FLOW_DATA="$dd" node "$dd/daemon/dist/store-check.js" --json 2>/dev/null)"
+  [ -n "$sc" ] || sc='{}'
+  setup="$(jq -r 'if .ok then (.devicesSetUp // false | tostring) else "unknown" end' <<<"$sc" 2>/dev/null)"
+  master="$(jq -r '.masterDeviceId // empty' <<<"$sc" 2>/dev/null)"
+  case "$setup" in
+    true) check ks-flow:device info 1 "$me; store set up for devices, master device $master$([ "$master" = "$did" ] && echo ' (this one)')" ;;
+    false) check ks-flow:device info 0 \
+      "$me; the store is not set up for devices yet (no meta/settings); the backfill runs once, on the device that has been using the board" \
+      "run the device backfill: cd \"$flow/src\" && npm ci && npx tsx ../scripts/one-off/backfill-devices.ts --data-dir \"$dd\" --dry-run   (then without --dry-run; ks-flow README, \"Several devices\")" ;;
+    *) check ks-flow:device info 0 "$me; the store did not answer, so whether it is set up for devices is unknown" "ks-flow status" ;;
+  esac
+}
+
+# This device's ks-flow against the store's (ks-flow README "Versioning"):
+# <data-dir>/version-status.json, written by the daemon every minute. Behind on
+# the data format: an error (its board is read-only, its store writes are off);
+# behind on the release, or a failed update: a warning; else the version.
+version_check() { # data-dir
+  local dd="$1" f row
+  f="$dd/version-status.json"
+  if [ -z "$dd" ] || [ ! -f "$f" ]; then
+    check ks-flow:version info 0 "ks-flow's version on this device is unknown (the daemon hasn't written version-status.json yet)" "ks-flow start"; return
+  fi
+  row="$(jq -r '
+    def failed: ((.update.state // "") as $s | $s == "failed" or $s == "refused");
+    def why: if .dev then "dev build: \(.devReason // "not a release")"
+             elif failed then "the last update failed: \(.update.reason // "see update.log")"
+             else "it updates itself" end;
+    if .schemaBehind then
+      ["error", 0, "ks-flow \(.version) on this device is behind the store'"'"'s data format (schema \(.schemaVersion) < \(.storeSchemaVersion)): its board is read-only and its store writes are off; \(why)", "ks-flow update"]
+    elif .versionBehind then
+      ["warn", 0, "ks-flow \(.version) on this device is behind the store'"'"'s \(.storeVersion); \(why)", "ks-flow update"]
+    elif failed then
+      ["warn", 0, "ks-flow \(.version): the last update failed: \(.update.reason // "see update.log")", "ks-flow update"]
+    else
+      ["info", 1, "ks-flow \(.version) (data format \(.schemaVersion))\(if .storeVersion then ", up to date with the store" else "" end)\(if .dev then "; dev build: \(.devReason // "not a release")" else "" end)", ""]
+    end | @tsv' "$f" 2>/dev/null)"
+  if [ -z "$row" ]; then check ks-flow:version warn 0 "ks-flow's version-status.json is unreadable" "ks-flow start"; return; fi
+  local level ok msg fix
+  IFS=$'\t' read -r level ok msg fix <<<"$row"
+  check ks-flow:version "$level" "$ok" "$msg" "$fix"
+}
+
 doctor() {
   local json=0; [ "${1:-}" = --json ] && json=1
   CHECKS=()
@@ -193,6 +260,8 @@ doctor() {
     fi
     if launchctl print "gui/$(id -u)/com.ksflow.ingester" >/dev/null 2>&1; then check ks-flow:daemon warn 1 "ks-flow daemon loaded"
     else check ks-flow:daemon warn 0 "ks-flow daemon not loaded" "ks-flow start"; fi
+    device_check "$flow" "$dd" "$dbp"
+    version_check "$dd"
   fi
   if have tmux && { [ -d /Applications/Ghostty.app ] || [ -d /System/Applications/Utilities/Terminal.app ]; }; then
     check master info 1 "master can run (tmux + a viewer app)"

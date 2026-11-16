@@ -13,6 +13,7 @@ import {
 } from '@/lib/briefing-escalation';
 import { useShared } from '@/lib/boardData';
 import { isDone } from '@/lib/units';
+import { liveCardTest } from '@/lib/liveunits';
 import type { BriefingItemDoc, BriefingRunDoc, BriefingStage, MasterStatus, SessionDoc, WorkUnitDoc } from '@/lib/types';
 import { AppHeader, masterLabel } from '../AppHeader';
 import { ChevronIcon, ExternalIcon } from '../icons';
@@ -404,8 +405,20 @@ function ArchivedToday({ items, now }: { items: BriefingItemDoc[]; now: number }
 }
 
 // ── sidebar ───────────────────────────────────────────────────────────────────
+/** The master device's heartbeat older than this: asleep or offline (web/lib/masterFiles.ts DEVICE_OFFLINE_MS). */
+const MASTER_DEVICE_OFFLINE_MS = 5 * 60_000;
+
 function MasterCard({ master, lastRun, now }: { master: MasterStatus | null; lastRun?: BriefingRunDoc; now: number }) {
-  const { refreshMaster } = useShared();
+  const { refreshMaster, board } = useShared();
+  // One master, on the device meta/settings.masterDeviceId names. On another
+  // device its buttons go to that device's daemon (masterRequests); while that
+  // device is asleep or offline (no heartbeat for 5 min) "Brief me now" waits.
+  const masterId = board.settings?.masterDeviceId ?? null;
+  const remoteMaster = !!masterId && masterId !== board.self;
+  const masterDev = masterId ? board.devices.find((d) => d.deviceId === masterId) : undefined;
+  const masterName = masterDev?.name || masterDev?.defaultName || masterId || '';
+  const seenAt = masterDev?.lastSeenAt ? Date.parse(masterDev.lastSeenAt) : NaN;
+  const masterOffline = remoteMaster && (!Number.isFinite(seenAt) || now - seenAt > MASTER_DEVICE_OFFLINE_MS);
   // A note describes the master as it was when its button was pressed, so it
   // shows only while the master's state is still that one: once "Starting…"
   // turns live (or a restart goes through), it disappears by itself.
@@ -430,8 +443,17 @@ function MasterCard({ master, lastRun, now }: { master: MasterStatus | null; las
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ trigger }),
       });
-      const j = (await r.json()) as { dropped?: boolean; error?: string; why?: string };
+      const j = (await r.json()) as { dropped?: boolean; error?: string; why?: string; remote?: boolean };
       if (!r.ok) setNote(j.error ?? 'request failed');
+      else if (j.remote && !j.dropped) {
+        setNote(
+          trigger === 'start'
+            ? `Asked ${masterName} to start the master.`
+            : trigger === 'button'
+              ? `Asked ${masterName}: its master runs it as soon as it is idle.`
+              : `Asked ${masterName}: its master writes a handoff and restarts.`,
+        );
+      }
       else if (trigger === 'start') {
         setNote(j.dropped ? `Not started: ${j.why ?? 'a master is already up'}.` : 'Starting the master…');
       }
@@ -458,6 +480,11 @@ function MasterCard({ master, lastRun, now }: { master: MasterStatus | null; las
         <span className={`text-[13px] ${l.cls.split(' ').find((c) => c.startsWith('text-')) ?? ''}`}>
           {master?.state === 'live' || master?.state === 'busy' ? `live · ${l.text}` : l.text}
         </span>
+        {remoteMaster && (
+          <span className="ml-auto truncate text-[12px] text-slate-400" title={`The master runs on ${masterName}`}>
+            on {masterName}
+          </span>
+        )}
       </div>
       <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[13px]">
         <dt className="text-slate-400">Session</dt>
@@ -505,9 +532,15 @@ function MasterCard({ master, lastRun, now }: { master: MasterStatus | null; las
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          disabled={!running}
+          disabled={!running || masterOffline}
           onClick={() => void request('button')}
-          title={running ? 'Ask the master for a Slack pass now' : 'No master is running: start one first'}
+          title={
+            masterOffline
+              ? `master device ${masterName} is offline`
+              : running
+                ? 'Ask the master for a Slack pass now'
+                : 'No master is running: start one first'
+          }
           className="rounded-md border border-indigo-600 bg-indigo-600 px-3 py-1.5 font-semibold text-white hover:bg-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
         >
           Brief me now
@@ -552,6 +585,11 @@ function MasterCard({ master, lastRun, now }: { master: MasterStatus | null; las
           </a>
         )}
       </div>
+      {masterOffline && (
+        <p role="status" className="m-0 text-[12.5px] text-amber-300">
+          master device {masterName} is offline
+        </p>
+      )}
       {note && (
         <p role="status" className="m-0 text-[12.5px] text-slate-400">
           {note}
@@ -570,7 +608,12 @@ interface RollRow {
   rank: number;
 }
 
-function rollCall(units: WorkUnitDoc[], sessions: SessionDoc[], liveWorktrees: Set<string>, now: number): RollRow[] {
+function rollCall(
+  units: WorkUnitDoc[],
+  sessions: SessionDoc[],
+  isLive: (u: WorkUnitDoc) => boolean,
+  now: number,
+): RollRow[] {
   const latest = new Map<string, SessionDoc>();
   for (const s of sessions) {
     if (!s.worktreePath) continue;
@@ -580,7 +623,7 @@ function rollCall(units: WorkUnitDoc[], sessions: SessionDoc[], liveWorktrees: S
   const pill = 'rounded-full px-2 py-px text-xs';
   const rows: RollRow[] = [];
   for (const u of units) {
-    const onDisk = !!u.worktreeDir && liveWorktrees.has(u.worktreeDir);
+    const onDisk = isLive(u);
     if (!onDisk) continue;
     const phase = u.currentPhase ? `Phase ${u.currentPhase.number}` : '';
     if (isDone(u)) {
@@ -721,10 +764,11 @@ export function BriefingPage() {
     [briefing.items, now],
   );
 
-  const liveWorktrees = useMemo(() => new Set(board.project?.worktreePaths ?? []), [board.project]);
+  // The board's live set (lib/liveunits.ts): the worktree is live on its owner device.
+  const isLive = useMemo(() => liveCardTest(board.devices, !!board.settings), [board.devices, board.settings]);
   const roll = useMemo(
-    () => rollCall(board.workUnits, board.sessions, liveWorktrees, now),
-    [board.workUnits, board.sessions, liveWorktrees, now],
+    () => rollCall(board.workUnits, board.sessions, isLive, now),
+    [board.workUnits, board.sessions, isLive, now],
   );
 
   const byUid = useMemo(() => new Map(briefing.items.map((i) => [i.uid, i])), [briefing.items]);

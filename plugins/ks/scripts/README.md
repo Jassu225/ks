@@ -17,7 +17,15 @@ ks-config list
 
 - **`ks-setup doctor [--json]`** — read-only check of tools, plugin folders,
   shims and PATH, config and secrets, sandbox excludes, ks-flow store and
-  daemon. **`ks-setup apply [--dev] [--yes]`** — config folder, registry,
+  daemon, and `ks-flow:device` (info): this device's ks-flow id and name
+  (`ks-flow device-id --json`) and, with Firestore, whether the store is set up
+  for [several devices](../../ks-flow/README.md#several-devices) (`meta/settings`,
+  through the daemon's store-check); when it isn't, the fix is the one-time
+  backfill command with this data dir filled in; and `ks-flow:version`: this
+  device's ks-flow against the store's ([Versioning](../../ks-flow/README.md#versioning),
+  from the daemon's `version-status.json`), an error while it is behind on the
+  data format (its board is read-only), a warning when behind on the release
+  or after a failed update, the fix `ks-flow update`. **`ks-setup apply [--dev] [--yes]`** — config folder, registry,
   `~/.local/bin` shims, a PATH line in the shell's startup file (zsh
   `~/.zshrc`, bash `~/.bash_profile` on macOS / `~/.bashrc`; printed when it
   can't tell or write), deps, project path, legacy import; `--dev` loads the
@@ -278,6 +286,8 @@ The master is the long-lived session behind ks-flow's Briefing (`plugins/ks-mast
   - Graceful (the default) needs a handoff written since the master started. `--handoff <file>` records it in `session.json.handoff`; otherwise the one already recorded must be that recent. `--force` skips the check: the daemon's hard restart of a stuck master.
   - Like the ticket restart, the kill and relaunch run in the tmux server (`--apply-master`): SIGTERM after 2 s (SIGKILL after 10 s), then `claude-ks-master --pane <pane>`. A master whose process is already gone is started straight away.
   - Log: `~/Library/Logs/claude-ks-rc.log`.
+
+With several ks-flow devices, the master runs on the one chosen in ks-flow's Settings → Devices: only that device's daemon starts and hard-restarts it, and a board on another device sends Brief me / Restart through the store (ks-flow README, "Several devices").
 
 The ticket form (`claude-ks-rc-restart [<ticket>] [--dry-run]`) is unchanged. `claude-ks-master` needs the same sandbox exclusion as the others (`"claude-ks-master *"`); the ks-flow daemon runs it unsandboxed.
 

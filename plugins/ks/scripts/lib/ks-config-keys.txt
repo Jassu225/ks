@@ -6,6 +6,7 @@
 # ks-config CLI. Namespaces are per tool so a CLI can later move into its own
 # plugin without its config moving.
 ks KS_PROJECT_ROOT_PATH plain Absolute path of the KarmaSuite repo checkout (quality hooks, launchers, ks-flow)
+ks KS_DEVICE_ID plain This machine's ks-flow device id (written once by the ks-flow daemon; never copy it to another machine)
 ks KS_EXTRA_PLUGINS plain Local plugins claude-ks loads with --plugin-dir (legacy clone loading)
 linear LINEAR_API_KEY secret Linear API key (linear CLI, ks-start-ticket, ks-flow Linear sync)
 slack SLACK_TOKEN secret Slack user token, xoxp- (slack CLI, ks-flow Notes and Briefing)

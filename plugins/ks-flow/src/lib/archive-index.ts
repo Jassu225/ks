@@ -16,6 +16,7 @@
 import { existsSync, readFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { dataDir } from './config.js';
+import { deviceId } from './device.js';
 import type { ArchivedSession, BackupStore, BackupUnitDoc } from './db/types.js';
 
 export type { ArchivedSession } from './db/types.js';
@@ -48,9 +49,43 @@ export async function loadArchiveIndex(store: BackupStore, projectId: string): P
   return { units };
 }
 
-/** Writes one unit's entry. */
-export async function saveUnit(store: BackupStore, projectId: string, unit: UnitArchive): Promise<void> {
-  await store.upsertBackupUnit(projectId, { uid: safeId(unit.identifier), ...unit });
+/**
+ * Writes one unit's entry. A sweep's entry is this device's (it just backed the
+ * unit up); `keepOwner` (a --reindex) writes the entry's deviceId as given,
+ * none included.
+ */
+export async function saveUnit(
+  store: BackupStore,
+  projectId: string,
+  unit: UnitArchive,
+  opts: { keepOwner?: boolean } = {},
+): Promise<void> {
+  const owner = opts.keepOwner ? unit.deviceId : (unit.deviceId ?? deviceId(dataDir()));
+  const doc = { uid: safeId(unit.identifier), ...unit } as BackupUnitDoc;
+  if (owner) doc.deviceId = owner;
+  else delete doc.deviceId;
+  await store.upsertBackupUnit(projectId, doc);
+}
+
+/**
+ * The device a rebuilt (--reindex) entry belongs to: the one it already named
+ * in the store; else the device with the unit's live worktree (this one, or
+ * another whose devices/{id}.worktreePaths lists it); else none.
+ */
+export function reindexOwner(input: {
+  existing: string | undefined;
+  liveHere: boolean;
+  self: string;
+  worktreePath: string;
+  devices: Array<{ deviceId: string; worktreePaths?: string[]; forgotten?: boolean }>;
+}): string | undefined {
+  if (input.existing) return input.existing;
+  if (input.liveHere) return input.self;
+  if (!input.worktreePath) return undefined;
+  const other = input.devices.find(
+    (d) => d.deviceId !== input.self && !d.forgotten && (d.worktreePaths ?? []).includes(input.worktreePath),
+  );
+  return other?.deviceId;
 }
 
 /** One-time move of archive-index.json into the store: units the store lacks are added, then the file is set aside. */

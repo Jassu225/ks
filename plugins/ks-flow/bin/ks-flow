@@ -13,7 +13,11 @@
 #   ks-flow backfill-archive  archive all completed (worktree-removed) workflows
 #   ks-flow backup-enabled    exit 0 if cloud (GCS) backup is on in board settings, else 1
 #   ks-flow session [UNIT]    the Claude process (pid, tmux pane) live in a unit's worktree; --json
+#   ks-flow device-id         this device's id on the shared board; --json
+#   ks-flow card-owner UNIT   which device a card is on; --json
+#   ks-flow card-move UNIT    move a card to this device (only once its owner no longer works it)
 #   ks-flow briefing CMD      the master's Briefing CLI: context, find, add, evidence, run, daily
+#   ks-flow update            update ks-flow to the newest release, rebuild, restart daemon + board (--dry-run)
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -78,7 +82,7 @@ case "$cmd" in
       for d in app components lib; do
         diff -qr "$PLUGIN_ROOT/web/$d" "$WEB/$d" >/dev/null 2>&1 || NEED_BUILD=1
       done
-      for f in package.json tailwind.config.ts postcss.config.js next.config.js globals.css; do
+      for f in package.json proxy.ts tailwind.config.ts postcss.config.js next.config.js globals.css; do
         [ "$f" = "globals.css" ] && continue  # lives under app/, already diffed
         diff -q "$PLUGIN_ROOT/web/$f" "$WEB/$f" >/dev/null 2>&1 || NEED_BUILD=1
       done
@@ -108,8 +112,11 @@ case "$cmd" in
       curl -fsS -o /dev/null "$URL" 2>/dev/null && break
       sleep 0.5
     done
-    echo "Opening $URL in your browser…" >&2
-    open "$URL" 2>/dev/null || echo "Could not auto-open — visit $URL" >&2
+    # `ks-flow update` restarts the board without a new browser tab.
+    if [ -z "${KS_FLOW_NO_BROWSER:-}" ]; then
+      echo "Opening $URL in your browser…" >&2
+      open "$URL" 2>/dev/null || echo "Could not auto-open — visit $URL" >&2
+    fi
     ;;
 
   start)
@@ -231,12 +238,37 @@ case "$cmd" in
     exec node "$DAEMON_DIR/dist/session-info.js" "$@"
     ;;
 
+  device-id)
+    # This device's id for the shared board (KS_DEVICE_ID, else the daemon's
+    # device.json, else computed from the hashed hardware id). --json adds its name.
+    shift
+    exec node "$DAEMON_DIR/dist/device-cli.js" device-id "$@"
+    ;;
+
+  card-owner|card-move)
+    # Which device a card is on (--json: owner, whether it still has the
+    # worktree or a live session), and moving it to this device once its owner
+    # no longer works it. ks-start-ticket runs both.
+    exec node "$DAEMON_DIR/dist/device-cli.js" "$@"
+    ;;
+
   briefing)
     # The Briefing's read/write path for the master session (docs/briefing.md):
     # context, find, add, evidence, run start|finish, daily set|get. No archive
     # or delete — only the person archives, on the board.
     shift
     exec node "$DAEMON_DIR/dist/briefing-cli.js" "$@"
+    ;;
+
+  update)
+    # Bring this device's ks-flow up to the newest release (README "Versioning"):
+    # an installed copy through `claude plugin update` (in the KarmaSuite
+    # checkout), a clone with `git pull --ff-only` (main and clean only), then
+    # rebuild and restart the daemon and the board. The daemon also starts it on
+    # its own, at most once an hour, when the store holds a newer version.
+    shift
+    [ -f "$DAEMON_DIR/dist/update.js" ] || { echo "ks-flow: the daemon isn't built yet (ks-flow start)" >&2; exit 1; }
+    exec node "$DAEMON_DIR/dist/update.js" "$@"
     ;;
 
   backfill-archive)
@@ -309,7 +341,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|briefing <command>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]|migrate-store [--write]}" >&2
+    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|device-id [--json]|card-owner <unit> [--json]|card-move <unit> [--json]|briefing <command>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]|migrate-store [--write]|update [--dry-run]}" >&2
     exit 1
     ;;
 esac

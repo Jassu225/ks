@@ -18,6 +18,7 @@ import { NextResponse } from 'next/server';
 import { getProjectId, upsertReminder } from '@/lib/serverdb';
 import type { ReminderDoc } from '@/lib/types';
 import { loadDataEnv } from '@/lib/envfile';
+import { readOnlyResponse } from '@/lib/readonly';
 
 export const dynamic = 'force-dynamic';
 
@@ -112,6 +113,9 @@ const tsToIso = (ts: string | undefined): string | undefined => {
 };
 
 export async function POST(req: Request): Promise<NextResponse> {
+  // Read-only while this device is behind the store's data format (lib/readonly.ts).
+  const readOnly = readOnlyResponse();
+  if (readOnly) return readOnly;
   loadDataEnv(join(dataDir(), '.env'));
   const token = (process.env.SLACK_TOKEN ?? '').trim();
   if (!token) return NextResponse.json({ error: 'SLACK_TOKEN is not set' }, { status: 400 });

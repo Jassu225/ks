@@ -175,10 +175,10 @@ test('takeStartRequest: read once, then gone; an unreadable file still counts', 
   const dir = mkdtempSync(join(tmpdir(), 'ks-master-'));
   assert.equal(takeStartRequest(dir), null);
   writeFileSync(join(dir, 'start-request.json'), '{"v":1,"at":"2026-10-31T14:30:00.000Z","by":"board"}');
-  assert.deepEqual(takeStartRequest(dir), { at: '2026-10-31T14:30:00.000Z', by: 'board' });
+  assert.deepEqual(takeStartRequest(dir), { at: '2026-10-31T14:30:00.000Z', by: 'board', from: null });
   assert.equal(takeStartRequest(dir), null);
   writeFileSync(join(dir, 'start-request.json'), 'not json');
-  assert.deepEqual(takeStartRequest(dir), { at: null, by: 'board' });
+  assert.deepEqual(takeStartRequest(dir), { at: null, by: 'board', from: null });
 });
 
 test('decideManualStart: starts unless a master runs or is starting; ignores the 10-minute gap', () => {

@@ -5,6 +5,7 @@ import { RemoveWorktree } from '@/components/RemoveWorktree';
 import { TranscriptBackup } from '@/components/TranscriptBackup';
 import { useBackupStatus } from '@/lib/backupStatus';
 import { useShared } from '@/lib/boardData';
+import { DeviceChip, agoText, deviceLabel, isDeviceStale } from '@/components/DeviceChip';
 
 // A session counts as "active" (glowing border) if it wrote within this window.
 // Derived client-side off a ticking clock (passed down from the board) so the
@@ -13,7 +14,7 @@ import { useShared } from '@/lib/boardData';
 const ACTIVE_WINDOW_MS = 5 * 60_000;
 
 /** Copy a worktree path to the clipboard with brief feedback. */
-function CopyPath({ path }: { path: string }) {
+function CopyPath({ path, on }: { path: string; /** Another device's name: the path is there, not here. */ on?: string }) {
   const [copied, setCopied] = useState(false);
   const onCopy = async (e: React.MouseEvent): Promise<void> => {
     e.stopPropagation();
@@ -29,7 +30,7 @@ function CopyPath({ path }: { path: string }) {
     <button
       type="button"
       onClick={onCopy}
-      title={`Copy worktree path:\n${path}`}
+      title={on ? `Copy the worktree path (path on ${on}):\n${path}` : `Copy worktree path:\n${path}`}
       className="rounded bg-slate-800 px-1.5 py-0.5 font-medium text-slate-400 hover:bg-slate-700 hover:text-slate-200"
     >
       {copied ? 'copied' : '⧉ path'}
@@ -200,7 +201,16 @@ const CARD_REFRESH_TIMEOUT_MS = 60_000;
  * transcripts (the per-card form of each clock job), and the board re-reads its
  * backup status. The spinner stops when the card's cardRefreshedAt moves.
  */
-function StatusRibbon({ unit, ribbonSpace = false }: { unit: WorkUnitDoc; ribbonSpace?: boolean }) {
+function StatusRibbon({
+  unit,
+  ribbonSpace = false,
+  elsewhere,
+}: {
+  unit: WorkUnitDoc;
+  ribbonSpace?: boolean;
+  /** Another device's card: its name. Only the owner's daemon refreshes a card, so no ↻. */
+  elsewhere?: string;
+}) {
   const { refresh: refreshBackups } = useBackupStatus();
   const [askedAt, setAskedAt] = useState<string | null | undefined>(undefined); // cardRefreshedAt when clicked
   const [timedOut, setTimedOut] = useState(false);
@@ -238,11 +248,13 @@ function StatusRibbon({ unit, ribbonSpace = false }: { unit: WorkUnitDoc; ribbon
   };
 
   const color = statusColor(unit);
-  // A live ticket is read from Linear with the rest of the board: the project
-  // records that read once (linearCheckedAt); a card only stamps its own time
-  // when its Linear values changed. Removed cards aren't polled: theirs stands.
+  // A live ticket is read from Linear by its owner device's daemon with the
+  // rest of that device's cards: the device records that read once
+  // (devices/{id}.linearCheckedAt); a card only stamps its own time when its
+  // Linear values changed. Removed cards aren't polled: theirs stands.
   const { board } = useShared();
-  const checked = unit.worktreeDir ? (board.project?.linearCheckedAt ?? null) : null;
+  const owner = board.devices.find((d) => d.deviceId === (unit.deviceId ?? board.self));
+  const checked = unit.worktreeDir ? (owner?.linearCheckedAt ?? null) : null;
   const own = unit.linearSyncedAt ?? null;
   const synced = checked && (!own || checked > own) ? checked : own;
   const title = timedOut
@@ -259,22 +271,33 @@ function StatusRibbon({ unit, ribbonSpace = false }: { unit: WorkUnitDoc; ribbon
       }`}
       style={{ backgroundColor: `${color}26`, borderColor: `${color}55` }}
     >
-      <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium" style={{ color }}>
+      <span
+        className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium"
+        style={{ color }}
+        title={
+          elsewhere
+            ? `On ${elsewhere}: only its daemon refreshes this card` +
+              (synced ? ` (Linear last read ${relTime(synced)})` : ' (Linear not read live yet)')
+            : undefined
+        }
+      >
         <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
         <span className="truncate">{unit.linearStatus ?? 'No status'}</span>
       </span>
-      <button
-        type="button"
-        onClick={refresh}
-        disabled={refreshing}
-        title={title}
-        aria-label="Refresh this card"
-        className={`shrink-0 rounded px-1 text-[11px] leading-4 hover:bg-black/30 ${
-          failed ? 'text-red-400' : 'text-slate-400 hover:text-slate-200'
-        }`}
-      >
-        <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`}>{failed ? '!' : '↻'}</span>
-      </button>
+      {!elsewhere && (
+        <button
+          type="button"
+          onClick={refresh}
+          disabled={refreshing}
+          title={title}
+          aria-label="Refresh this card"
+          className={`shrink-0 rounded px-1 text-[11px] leading-4 hover:bg-black/30 ${
+            failed ? 'text-red-400' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`}>{failed ? '!' : '↻'}</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -292,16 +315,23 @@ function threadLink(inbox: InboxAddress | undefined, t: InboxThreadRef): string 
  * question, action item or unsent answer waits on you. Red when the agent has
  * stopped until you answer. Clicking it opens the first such thread.
  */
-function NeedsYouRibbon({ unit, inbox }: { unit: WorkUnitDoc; inbox?: InboxAddress }) {
+function NeedsYouRibbon({ unit, inbox, elsewhere }: { unit: WorkUnitDoc; inbox?: InboxAddress; elsewhere?: string }) {
   const state = unit.inbox;
   if (!state?.needsYou) return null;
   const first = state.threads.find((t) => t.questions.length > 0) ?? state.threads[0];
-  const href = first ? threadLink(inbox, first) : null;
+  // Another device's Inbox answers on its own localhost: no link from here.
+  const href = first && !elsewhere ? threadLink(inbox, first) : null;
   const waiting = state.threads.reduce((n, t) => n + t.open + t.picked, 0);
   const title =
     `${state.stopped ? 'Stopped on you: ' : ''}${waiting} Inbox item${waiting === 1 ? '' : 's'} waiting on you` +
     (state.since ? ` since ${relTime(state.since)}` : '') +
-    (href ? (inbox?.running ? ' — open the thread' : ' — the Inbox is closed: run `plannotator inbox`') : '');
+    (elsewhere
+      ? ` — open the Inbox on ${elsewhere}`
+      : href
+        ? inbox?.running
+          ? ' — open the thread'
+          : ' — the Inbox is closed: run `plannotator inbox`'
+        : '');
   const cls = `needs-you-ribbon pointer-events-auto ${state.stopped ? 'needs-you-stopped' : ''}`;
   return (
     // Its own clipping box, so the card itself keeps overflow visible for its menus.
@@ -320,14 +350,14 @@ function NeedsYouRibbon({ unit, inbox }: { unit: WorkUnitDoc; inbox?: InboxAddre
 }
 
 /** The card's Inbox threads: what waits on you in each, linked to the thread. */
-function InboxThreads({ unit, inbox }: { unit: WorkUnitDoc; inbox?: InboxAddress }) {
+function InboxThreads({ unit, inbox, elsewhere }: { unit: WorkUnitDoc; inbox?: InboxAddress; elsewhere?: string }) {
   const threads = unit.inbox?.threads ?? [];
   if (threads.length === 0) return null;
-  const closed = !!inbox?.url && !inbox.running;
+  const closed = !elsewhere && !!inbox?.url && !inbox.running;
   return (
     <div className="mt-2 space-y-1 border-t border-slate-800 pt-2 text-[11px]">
       {threads.map((t) => {
-        const href = threadLink(inbox, t);
+        const href = elsewhere ? null : threadLink(inbox, t);
         const questions = t.open - Math.min(t.actions, t.open);
         const parts = [
           questions > 0 && `${questions} open question${questions === 1 ? '' : 's'}`,
@@ -340,6 +370,7 @@ function InboxThreads({ unit, inbox }: { unit: WorkUnitDoc; inbox?: InboxAddress
           t.subject,
           ...t.questions.map((q) => `${q.kind === 'action' ? 'Action' : 'Q'}: ${q.prompt}`),
           closed ? 'The Inbox is closed: run `plannotator inbox`' : null,
+          elsewhere ? `Open the Inbox on ${elsewhere}` : null,
         ]
           .filter(Boolean)
           .join('\n');
@@ -355,6 +386,7 @@ function InboxThreads({ unit, inbox }: { unit: WorkUnitDoc; inbox?: InboxAddress
               {t.subject && <span className="block truncate text-slate-500">{t.subject}</span>}
             </span>
             {href && <span className="ml-auto shrink-0 text-slate-500">{closed ? 'Inbox (closed)' : 'Inbox ↗'}</span>}
+            {elsewhere && <span className="ml-auto shrink-0 text-slate-600">Inbox on {elsewhere}</span>}
           </>
         );
         const cls = `flex items-start gap-1.5 rounded px-1.5 py-1 ${
@@ -405,9 +437,21 @@ export function WorkUnitCard({
   /** After its worktree is removed: refresh the board so the card goes. */
   onRemoved?: () => void | Promise<void>;
 }) {
+  // Whose card: one device owns it (its daemon alone writes it). A card from
+  // before the device backfill has no deviceId and counts as this device's.
+  const { board } = useShared();
+  const ownerId = unit.deviceId ?? board.self;
+  const isMine = ownerId === board.self;
+  const ownerDoc = board.devices.find((d) => d.deviceId === ownerId) ?? null;
+  const ownerName = deviceLabel(ownerDoc, ownerId);
+  const elsewhere = isMine ? undefined : ownerName;
+  // Another device asleep or offline: the card keeps its place, but what its
+  // daemon last wrote about live sessions is no longer news.
+  const ownerAsleep = !isMine && !!board.settings && isDeviceStale(ownerDoc, now);
+
   const live = sessions.filter((s) => unit.sessionIds.includes(s.sessionId));
   // Recency-based, not the daemon's snapshot flag → glow self-expires.
-  const active = live.filter(
+  const active = ownerAsleep ? 0 : live.filter(
     (s) => s.lastActivity && now - Date.parse(s.lastActivity) < ACTIVE_WINDOW_MS,
   ).length;
   const waiting = unit.waiting?.active;
@@ -452,8 +496,8 @@ export function WorkUnitCard({
         dimmed ? 'opacity-50' : ''
       }`}
     >
-      <NeedsYouRibbon unit={unit} inbox={inbox} />
-      <StatusRibbon unit={unit} ribbonSpace={needsYou} />
+      <NeedsYouRibbon unit={unit} inbox={inbox} elsewhere={elsewhere} />
+      <StatusRibbon unit={unit} ribbonSpace={needsYou} elsewhere={elsewhere} />
       <div className={`flex items-start justify-between gap-2 ${needsYou ? 'pr-8' : ''}`}>
         <span className="font-mono text-xs font-semibold text-slate-400">
           {unit.identifier}
@@ -518,7 +562,7 @@ export function WorkUnitCard({
             ⏳ waiting: {unit.waiting?.tool}
           </span>
         )}
-        {unit.worktreeDir && <CopyPath path={unit.worktreeDir} />}
+        {unit.worktreeDir && <CopyPath path={unit.worktreeDir} on={elsewhere} />}
         {live.length > 0 && (
           <button
             type="button"
@@ -533,22 +577,31 @@ export function WorkUnitCard({
             {pauseRec ? '⏸ paused' : '▶ active'}
           </button>
         )}
-        {/* No worktree left: the sweep has nothing to back up, only Restore applies. */}
-        <TranscriptBackup unitId={unit.unitId} restoreOnly={!unit.worktreeDir} />
+        {/* No worktree left: the sweep has nothing to back up, only Restore applies.
+            Another device's card: only its own device backs it up; Restore is
+            offered here once its worktree is gone (a removed card). */}
+        {(isMine || !unit.worktreeDir) && (
+          <TranscriptBackup unitId={unit.unitId} restoreOnly={!unit.worktreeDir || !isMine} />
+        )}
         <ReminderControls unitId={unit.unitId} reminders={reminders} />
-        {/* An open ticket's dialog warns before removing. */}
-        <RemoveWorktree unit={unit} completed={done} onRemoved={onRemoved} />
+        {/* An open ticket's dialog warns before removing. Only the owner device removes its worktree. */}
+        {isMine && <RemoveWorktree unit={unit} completed={done} onRemoved={onRemoved} />}
       </div>
 
-      <InboxThreads unit={unit} inbox={inbox} />
+      <InboxThreads unit={unit} inbox={inbox} elsewhere={elsewhere} />
 
-      <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
-        <span>
-          {live.length > 0
-            ? `${live.length} session${live.length > 1 ? 's' : ''}${
-                active ? ` · ${active} active` : ''
-              }`
-            : 'no live session'}
+      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <DeviceChip deviceId={ownerId} />
+          {ownerAsleep ? (
+            <span title={`${ownerName}: last seen ${agoText(ownerDoc?.lastSeenAt, now)}`}>sessions unknown</span>
+          ) : (
+            <span>
+              {live.length > 0
+                ? `${live.length} session${live.length > 1 ? 's' : ''}${active ? ` · ${active} active` : ''}`
+                : 'no live session'}
+            </span>
+          )}
         </span>
         <span title={`Session last active: ${absTime(unit.lastActivity)}`}>
           ⟳ active {relTime(unit.lastActivity)}

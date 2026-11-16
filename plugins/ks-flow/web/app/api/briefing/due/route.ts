@@ -6,10 +6,14 @@
 import { NextResponse } from 'next/server';
 import { applyDue } from '@/lib/briefingActions';
 import { getBriefingItems, putBriefingItem } from '@/lib/serverdb';
+import { readOnlyResponse } from '@/lib/readonly';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: Request): Promise<NextResponse> {
+  // Read-only while this device is behind the store's data format (lib/readonly.ts).
+  const readOnly = readOnlyResponse();
+  if (readOnly) return readOnly;
   let body: { uid?: string; dueAt?: string; reason?: string };
   try {
     body = await req.json();

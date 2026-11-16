@@ -26,6 +26,8 @@ export interface RunUnit {
 /** A backup sweep as /api/backup-runs returns it (src/lib/backup-runs.ts BackupRun). */
 export interface BackupRun {
   uid: string;
+  /** The device the sweep ran on. */
+  deviceId?: string;
   startedAt: string;
   endedAt?: string;
   trigger: 'daily' | 'manual' | 'unit' | 'removal' | 'completed';
@@ -80,6 +82,15 @@ export function activityRows(
     ...masterEvents.map((event): ActivityRow => ({ type: 'master', key: `master:${event.uid}`, at: event.at, event })),
   ];
   return rows.sort((a, b) => (b.at ?? '').localeCompare(a.at ?? '') || a.key.localeCompare(b.key));
+}
+
+/** The device a row ran on: Backup and Master rows carry one; Briefing and
+ * Log-in/off rows (the master's own Slack passes) have none. A Backup or Master
+ * record from before the device backfill has none either. */
+export function rowDevice(row: ActivityRow): string | null {
+  if (row.type === 'backup') return row.run.deviceId ?? null;
+  if (row.type === 'master') return row.event.deviceId ?? null;
+  return null;
 }
 
 export function matches(row: ActivityRow, f: ActivityFilter): boolean {

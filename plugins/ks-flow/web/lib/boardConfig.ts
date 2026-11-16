@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BoardConfig } from './types';
 import { loadDataEnv } from '@/lib/envfile';
+import { deviceId } from '@/lib/device';
 
 /** The data dir this board reads. The launcher (bin/ks-flow open) pins
  * CLAUDE_PLUGIN_DATA to the derived dir; KS_FLOW_DATA overrides. See
@@ -63,5 +64,6 @@ export function loadBoardConfig(): BoardConfig {
     firestoreMode: mode === 'cloud' ? 'cloud' : 'emulator',
     gcpProjectId,
     pocketbaseUrl,
+    deviceId: deviceId(dataDir),
   };
 }

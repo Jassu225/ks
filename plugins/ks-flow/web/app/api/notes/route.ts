@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { deleteReminder, getProjectId, listReminders, upsertReminder } from '@/lib/serverdb';
 import type { ReminderDoc } from '@/lib/types';
+import { readOnlyResponse } from '@/lib/readonly';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,6 +57,9 @@ export async function GET(req: Request): Promise<NextResponse> {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  // Read-only while this device is behind the store's data format (lib/readonly.ts).
+  const readOnly = readOnlyResponse();
+  if (readOnly) return readOnly;
   let body: {
     section?: string;
     workType?: string;
@@ -121,6 +125,9 @@ export async function POST(req: Request): Promise<NextResponse> {
 }
 
 export async function PATCH(req: Request): Promise<NextResponse> {
+  // Read-only while this device is behind the store's data format (lib/readonly.ts).
+  const readOnly = readOnlyResponse();
+  if (readOnly) return readOnly;
   let body: {
     uid?: string;
     text?: string;
@@ -172,6 +179,9 @@ export async function PATCH(req: Request): Promise<NextResponse> {
 }
 
 export async function DELETE(req: Request): Promise<NextResponse> {
+  // Read-only while this device is behind the store's data format (lib/readonly.ts).
+  const readOnly = readOnlyResponse();
+  if (readOnly) return readOnly;
   let body: { uid?: string };
   try {
     body = await req.json();

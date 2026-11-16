@@ -8,7 +8,9 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { boardDataDir } from './boardConfig';
-import type { MasterHeartbeatFile, MasterSessionFile, MasterStatus } from './types';
+import { deviceId, deviceIdentity } from './device';
+import { addMasterRequestDoc, getDeviceDoc, getSettingsDoc, serverConfig } from './serverdb';
+import type { DeviceDoc, MasterDeviceInfo, MasterHeartbeatFile, MasterRequestDoc, MasterSessionFile, MasterStatus } from './types';
 
 /** No heartbeat for this long while the process lives → 'stale' (it beats every 30 s). */
 const STALE_MS = 2 * 60_000;
@@ -188,6 +190,100 @@ export function writeStartRequest(now = Date.now()): { dropped: boolean; why: st
   writeFileSync(tmp, `${JSON.stringify({ v: 1, at: new Date(now).toISOString(), by: 'board' }, null, 2)}\n`);
   renameSync(tmp, join(dir, 'start-request.json'));
   return { dropped: false, why: 'the daemon starts it now' };
+}
+
+// ── the master on another device ─────────────────────────────────────────────
+// One master, on the device meta/settings.masterDeviceId names. On that device
+// the board uses the files above. Elsewhere it reads the status its daemon
+// publishes to devices/{master}.master (src/lib/master.ts readMasterStatus,
+// the same read as masterStatus() above) and asks through a masterRequests
+// doc, which the master device's daemon turns into these files. On PocketBase
+// (one device) and before the device backfill, always the local files.
+
+/** The master device's heartbeat older than this: asleep or offline. */
+export const DEVICE_OFFLINE_MS = 5 * 60_000;
+
+export type { MasterDeviceInfo };
+
+/** GET /api/briefing/master: the board's MasterStatus, plus where the master runs. */
+export type MasterStatusResponse = MasterStatus & { device?: MasterDeviceInfo };
+
+export type MasterTarget =
+  | { local: true; masterDeviceId: string | null }
+  | { local: false; masterDeviceId: string; self: string; device: DeviceDoc | null };
+
+/** The file mirror's masterDeviceId (the daemon writes it there; src/lib/sharedsettings.ts). */
+function mirroredMasterDeviceId(): string | null {
+  const s = readJson<{ masterDeviceId?: unknown }>(join(boardDataDir(), 'board-settings.json'));
+  return typeof s?.masterDeviceId === 'string' && s.masterDeviceId ? s.masterDeviceId : null;
+}
+
+/** Where the master runs, as this board sees it. */
+export async function masterTarget(): Promise<MasterTarget> {
+  if (serverConfig().dbProvider !== 'firestore') return { local: true, masterDeviceId: null };
+  const settings = await getSettingsDoc();
+  // Offline with no snapshot: the daemon's mirror in board-settings.json.
+  const masterDeviceId = settings === undefined ? mirroredMasterDeviceId() : (settings?.masterDeviceId ?? null);
+  const self = deviceId(boardDataDir());
+  if (!masterDeviceId || masterDeviceId === self) return { local: true, masterDeviceId };
+  const device = await getDeviceDoc(masterDeviceId).catch(() => null);
+  return { local: false, masterDeviceId, self, device };
+}
+
+function deviceInfo(id: string, d: DeviceDoc | null, remote: boolean, now: number): MasterDeviceInfo {
+  const seen = d?.lastSeenAt ? Date.parse(d.lastSeenAt) : NaN;
+  return {
+    deviceId: id,
+    name: d?.name || d?.defaultName || id,
+    remote,
+    lastSeenAt: d?.lastSeenAt ?? null,
+    offline: remote && (!Number.isFinite(seen) || now - seen > DEVICE_OFFLINE_MS),
+  };
+}
+
+/** The master's status from what the master device published (devices/{id}.master). */
+export function remoteMasterStatus(target: Extract<MasterTarget, { local: false }>, now = Date.now()): MasterStatusResponse {
+  const m = (target.device?.master ?? null) as Partial<MasterStatus> & { heartbeatAt?: string | null } | null;
+  const beatAt = m?.heartbeatAt ? Date.parse(m.heartbeatAt) : NaN;
+  const status: MasterStatus = {
+    state: m?.state ?? 'none',
+    session: m?.session ?? null,
+    heartbeat: m?.heartbeat ?? null,
+    alive: m?.alive === true,
+    // Recomputed here: the published age is as old as the publish.
+    heartbeatAgeMs: Number.isFinite(beatAt) ? Math.max(0, now - beatAt) : (m?.heartbeatAgeMs ?? null),
+    bridgeSessionId: m?.bridgeSessionId ?? null,
+    pending: Array.isArray(m?.pending) ? m!.pending : [],
+    // The shared settings: this device's mirror of meta/settings.
+    briefing: briefingSchedule(),
+  };
+  return { ...status, device: deviceInfo(target.masterDeviceId, target.device, true, now) };
+}
+
+/** GET /api/briefing/master's answer, wherever the master runs. */
+export async function masterStatusAnywhere(now = Date.now()): Promise<MasterStatusResponse> {
+  const target = await masterTarget();
+  if (target.local) {
+    const st = masterStatus(now);
+    return target.masterDeviceId
+      ? {
+          ...st,
+          // This device (its default name: no store read on every poll; the board has its chosen name).
+          device: { deviceId: target.masterDeviceId, name: deviceIdentity(boardDataDir()).defaultName, remote: false, lastSeenAt: null, offline: false },
+        }
+      : st;
+  }
+  return remoteMasterStatus(target, now);
+}
+
+/** Ask the master device's daemon (masterRequests/{uid}); it writes the file this board would have. */
+export async function writeRemoteRequest(
+  target: Extract<MasterTarget, { local: false }>,
+  trigger: 'start' | 'button' | 'restart',
+): Promise<MasterRequestDoc> {
+  const doc: MasterRequestDoc = { uid: randomUUID(), trigger, from: target.self, createdAt: new Date().toISOString() };
+  await addMasterRequestDoc(doc);
+  return doc;
 }
 
 /**

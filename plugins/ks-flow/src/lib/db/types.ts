@@ -5,7 +5,7 @@
 // (SessionWriter on the daemon side, SessionSource on the board side).
 // The daemon imports only SessionWriter; the board imports only
 // SessionSource; derive.ts / jsonl.ts / hooks import neither.
-import type { Outbox } from './outbox.js';
+import type { Outbox, StoreOp } from './outbox.js';
 
 export type PhaseStatus =
   | 'NOT_STARTED'
@@ -82,7 +82,123 @@ export interface InboxCardState {
   threads: InboxThreadRef[];
 }
 
-/** Project-level document. phaseModel is the ORDERED COLUMN SET. */
+// ── devices (one board for several devices) ─────────────────────────────────
+// Every device-local record carries the `deviceId` of the device that wrote it
+// (lib/device.ts). `devices/{deviceId}` holds each device's facts; the board
+// shows a card as live when its owner lists its worktree.
+
+/** The master session's status as its device publishes it (written whole, nulls included). */
+export interface DeviceMasterStatus {
+  state: string | null;
+  heartbeatAt: string | null;
+  bridgeSessionId: string | null;
+  pid: number | null;
+  [k: string]: unknown;
+}
+
+/**
+ * `devices/{deviceId}`. Written with merge ops only: the device's own daemon
+ * writes everything but `name` (the board writes `name` alone, and later
+ * `forgotten`). Show `name ?? defaultName`.
+ */
+export interface DeviceDoc {
+  deviceId: string; // = doc id (kept in the doc for the board's live deltas)
+  name?: string | null;
+  defaultName: string;
+  platform: string;
+  daemonVersion: string;
+  lastSeenAt: string;
+  projectPath: string;
+  commonDir: string;
+  /** This device's CURRENT git worktrees: the board shows a card of this device only if its worktreeDir is in here. */
+  worktreePaths: string[];
+  /** This device's Plannotator Inbox (a localhost address) and whether it answers. */
+  inboxUrl: string | null;
+  inboxRunning: boolean;
+  /** When this device's daemon last read its tickets from Linear (successfully). */
+  linearCheckedAt: string | null;
+  /** Published only by the master device (phase 5). */
+  master?: DeviceMasterStatus | null;
+  /** Set by Settings → Devices' Forget: its cards show as removed cards. */
+  forgotten?: boolean;
+  /** The data format this device's code writes (lib/versioning.ts SCHEMA_VERSION). */
+  schemaVersion?: number;
+  /** A clone not on main, or with uncommitted changes (lib/build-info.ts). */
+  devBuild?: boolean;
+  devReason?: string | null;
+}
+
+/** `meta/settings`: the board settings every device shares (formerly each device's board-settings.json). */
+export interface SettingsDoc {
+  briefing?: Record<string, unknown>;
+  notes?: Record<string, unknown>;
+  reminders?: Record<string, unknown>;
+  gcsArchive?: Record<string, unknown>;
+  transcriptBackup?: Record<string, unknown>;
+  /** The one device that runs the master session and the Briefing schedule. */
+  masterDeviceId: string;
+  /** When the shared blocks were last saved (stops an older store copy overwriting a newer local save). */
+  sharedUpdatedAt?: string | null;
+  /** The device backfill's claim (scripts/one-off/backfill-devices.ts). */
+  backfill?: { by: string; startedAt: string; state: 'running' | 'done'; endedAt?: string | null } | null;
+  /** The newest data format any device writes; older code stops writing (lib/versioning.ts). */
+  schemaVersion?: number | null;
+  /** The newest release any device runs (ks-flow plugin.json version); older ones update. */
+  version?: string | null;
+  /** The device that last raised them, and when. */
+  versionBy?: string | null;
+  versionAt?: string | null;
+}
+
+/** `masterRequests/{uid}`: a board on another device asking the master device's daemon for a pass. */
+export interface MasterRequestDoc {
+  uid: string;
+  trigger: 'start' | 'button' | 'restart';
+  from: string; // the asking device's id
+  createdAt: string;
+}
+
+/** The collections whose docs belong to one device (each carries `deviceId`). */
+export const OWNED_COLLECTIONS = ['workUnits', 'sessions', 'backupRuns', 'backupUnits', 'masterEvents'] as const;
+export type OwnedCollection = (typeof OWNED_COLLECTIONS)[number];
+
+/** The device side of the store (lib/db/devicestore.ts for Firestore and the in-memory fake). */
+export interface DeviceStore {
+  getDevices(): Promise<DeviceDoc[]>;
+  getDevice(deviceId: string): Promise<DeviceDoc | null>;
+  /** A merge: only the given fields change. Never a whole-doc set. */
+  mergeDevice(deviceId: string, patch: Partial<DeviceDoc>): Promise<void>;
+  getSettings(): Promise<SettingsDoc | null>;
+  mergeSettings(patch: Partial<SettingsDoc>): Promise<void>;
+  /** Create meta/settings unless it exists (atomic, not queued): false when it already did. */
+  createSettings(doc: SettingsDoc): Promise<boolean>;
+  getMasterRequests(): Promise<MasterRequestDoc[]>;
+  addMasterRequest(doc: MasterRequestDoc): Promise<void>;
+  deleteMasterRequest(uid: string): Promise<void>;
+  /** One card (the ownership check), or null when there is none. */
+  getWorkUnit(unitId: string): Promise<WorkUnitDoc | null>;
+  /** Move a card to a device: a merge of `{deviceId}` (ks-flow card-move). */
+  setWorkUnitOwner(unitId: string, deviceId: string): Promise<void>;
+  /** The retired meta/project (legacy daemons write it until the backfill). */
+  getLegacyProject(): Promise<ProjectDoc | null>;
+  deleteLegacyProject(): Promise<void>;
+  /** Every card's owner, live (the first call delivers them all). Absent where the store can't listen. */
+  watchCardOwners?(onChange: (owners: Array<{ unitId: string; deviceId: string | null }>) => void): Unsubscribe;
+  /**
+   * Read meta/settings and merge `patch(current)` into it in one transaction
+   * (never creates it: `patch` gets null then). Resolves to the doc as written,
+   * or null when `patch` returned null. Not queued: it needs the store.
+   */
+  raiseVersion?(patch: (current: SettingsDoc | null) => Partial<SettingsDoc> | null): Promise<SettingsDoc | null>;
+  /** meta/settings, live (null while it does not exist). Absent where the store can't listen. */
+  watchSettings?(onChange: (settings: SettingsDoc | null) => void): Unsubscribe;
+  /** The waiting masterRequests, live, oldest first. Absent where the store can't listen. */
+  watchMasterRequests?(onChange: (requests: MasterRequestDoc[]) => void): Unsubscribe;
+}
+
+/** Project-level document — RETIRED as `meta/project` once the device backfill
+ * ran (its facts moved to devices/{id}, its columns to the board). Legacy
+ * daemons (no meta/settings yet) still write it; PocketBase keeps its row. */
 export interface ProjectDoc {
   projectId: string; // stable hash of PROJECT_COMMON_DIR
   projectPath: string;
@@ -101,6 +217,8 @@ export interface ProjectDoc {
 /** A work-unit = a card. Its column is currentPhase. */
 export interface WorkUnitDoc {
   unitId: string; // ticket identifier (KAR-####) or project slug
+  /** The device that owns the card: only its daemon writes it (lib/ownership.ts). */
+  deviceId?: string;
   type: 'ticket' | 'project';
   identifier: string;
   title: string;
@@ -172,6 +290,8 @@ export interface OverlayWait {
 /** JSONL-derived session activity, joined to a unit by worktree. */
 export interface SessionDoc {
   sessionId: string;
+  /** The device whose ~/.claude/projects holds the transcript. */
+  deviceId?: string;
   unitId: string | null;
   title: string | null;
   cwd: string | null;
@@ -249,6 +369,8 @@ export interface ArchivedSession {
  * `--reindex` rebuilds it from one. */
 export interface BackupUnitDoc {
   uid: string; // object-name-safe identifier (safeId) — doc id
+  /** The device that last backed the unit up. */
+  deviceId?: string;
   identifier: string;
   worktreePath: string;
   transcriptDir: string;
@@ -285,6 +407,8 @@ export interface RunUnit {
 /** One sweep. Written as it starts; the end fields arrive when it finishes. */
 export interface BackupRunDoc {
   uid: string; // run id — doc id
+  /** The device the sweep ran on (its `pid` means something only there). */
+  deviceId?: string;
   startedAt: string;
   trigger: BackupTrigger;
   /** What the run was pointed at: `all live worktrees`, a unit id, a worktree path, `completed units`. */
@@ -428,6 +552,8 @@ export interface DailyLogDoc {
  * action; this is the history the board's Activity Log lists. */
 export interface MasterEventDoc {
   uid: string; // uuid — doc id
+  /** The device whose daemon or board recorded it. */
+  deviceId?: string;
   at: string; // ISO
   kind: 'start' | 'restart' | 'request';
   /** A request's trigger. */
@@ -508,7 +634,31 @@ export interface DbProvider {
   source(): SessionSource;
   backups(): BackupStore;
   briefing(): BriefingStore;
+  /** Devices, meta/settings, masterRequests, card owners. */
+  devices(): DeviceStore;
+  /** Path-level access (the device backfill). Firestore and the in-memory fake only. */
+  docDb?(): DocDb;
   /** Offline mode (lib/db/outbox.ts): the write queue. Firestore only; the
    * daemon flushes it. */
   outbox?(): Outbox;
+}
+
+/** A document store by path (`workUnits/KAR-1`, `meta/settings`): what the
+ * device store and the backfill are written against, so the in-memory fake
+ * (lib/db/docdb.ts) runs the same code as Firestore. */
+export interface DocDb {
+  get(path: string): Promise<Record<string, unknown> | null>;
+  /** A collection's docs; `fields` limits what is read (Firestore select). */
+  list(coll: string, fields?: string[]): Promise<Array<{ id: string; data: Record<string, unknown> }>>;
+  /** Create unless it exists, directly (never queued): false when it did. */
+  create(path: string, data: Record<string, unknown>): Promise<boolean>;
+  /** Through the offline outbox where there is one; ≤ 500 ops form one batch. */
+  write(ops: StoreOp[]): Promise<void>;
+  /** Live doc changes of a collection (ids + the named fields; none named = whole docs). */
+  watch?(coll: string, fields: string[], onChange: (docs: Array<{ id: string; data: Record<string, unknown> }>) => void): Unsubscribe;
+  /** Read one doc and merge `fn(current)` into it atomically (no write when fn returns null).
+   * Resolves to the merged doc, or null when nothing was written. Direct, never queued. */
+  transact?(path: string, fn: (current: Record<string, unknown> | null) => Record<string, unknown> | null): Promise<Record<string, unknown> | null>;
+  /** Live changes of one doc (null while it does not exist). */
+  watchDoc?(path: string, onChange: (data: Record<string, unknown> | null) => void): Unsubscribe;
 }

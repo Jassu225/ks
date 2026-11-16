@@ -15,11 +15,13 @@ import type {
   DailyLogDoc,
   DueChange,
   DueRule,
+  DeviceDoc,
   ProjectDoc,
   SlackRef,
   WorkUnitDoc,
 } from '../db/types.js';
 import { clockStartFor, dueFor } from './escalation.js';
+import { deviceMap, isLiveCard } from '../liveunits.js';
 import { groupKeyOf, inThread, itemUid, keyOf } from './keys.js';
 
 export interface BriefingEnv {
@@ -85,12 +87,15 @@ export interface BoardSummary {
   inboxOpen: number;
 }
 
-/** The cards the board shows (worktree still a git worktree — Done ones too) and
- * any unit with a Claude process running, in the shape the master reads. */
-export function boardSummary(project: ProjectDoc | null, units: WorkUnitDoc[]): BoardSummary {
-  const live = new Set(project?.worktreePaths ?? []);
+/** The cards the board shows (worktree still a git worktree on its owner
+ * device — Done ones too — across every device) and any unit with a Claude
+ * process running, in the shape the master reads. `project` is the retired
+ * meta/project, for cards with no owner yet (before the device backfill). */
+export function boardSummary(devices: DeviceDoc[], units: WorkUnitDoc[], project: ProjectDoc | null = null): BoardSummary {
+  const byId = deviceMap(devices);
+  const legacy = project ? new Set(project.worktreePaths ?? []) : null;
   const shown = units
-    .filter((u) => (u.worktreeDir && live.has(u.worktreeDir)) || (u.liveSessions?.length ?? 0) > 0)
+    .filter((u) => isLiveCard(u, byId, legacy) || (u.liveSessions?.length ?? 0) > 0)
     .sort((a, b) => a.identifier.localeCompare(b.identifier));
   let inboxOpen = 0;
   const out = shown.map((u): BoardUnitSummary => {

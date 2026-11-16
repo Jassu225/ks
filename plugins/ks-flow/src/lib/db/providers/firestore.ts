@@ -6,7 +6,10 @@
 // Collection tree: flat, at the top of the database. The GCP project holds
 // one ks-flow board (KarmaSuite), so there is no per-project level; the
 // `projectId` arguments are kept for the shared interface and ignored here.
-//   meta/project            ← the board's project doc
+//   meta/project            ← RETIRED by the device backfill (legacy daemons still write it)
+//   meta/settings           ← shared settings + masterDeviceId (lib/db/devicestore.ts)
+//   devices/{deviceId}      ← one per device (merge writes only)
+//   masterRequests/{uid}    ← asks for the master device's daemon
 //   workUnits/{unitId}      ← the cards
 //   sessions/{sessionId}    ← JSONL-derived activity
 //   reminders/{uid}
@@ -33,12 +36,15 @@ import {
   type CollectionReference,
   type DocumentReference,
   type Query,
+  type QueryDocumentSnapshot,
   type WriteBatch,
 } from 'firebase-admin/firestore';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dataDir, type Config } from '../../config.js';
 import { Outbox, type DocStore, type StoreOp } from '../outbox.js';
+import { docDeviceStore } from '../devicestore.js';
+import { storeWriteBlock } from '../../versioning.js';
 import type {
   BackupRunDoc,
   BackupStore,
@@ -49,6 +55,8 @@ import type {
   BriefingStore,
   DailyLogDoc,
   DbProvider,
+  DeviceStore,
+  DocDb,
   MasterEventDoc,
   ProjectDoc,
   ReminderDoc,
@@ -423,20 +431,87 @@ class FirestoreSource implements SessionSource {
   }
 }
 
+/** Firestore by path (lib/db/devicestore.ts, lib/device-backfill.ts). Reads
+ * time out like every read here; `create` and the listener go direct; writes
+ * go through the outbox. */
+export function firestoreDocDb(fs: Firestore, ob: Outbox): DocDb {
+  // The direct writes (create, transact) honour the outbox's write gate too.
+  const blocked = (): boolean => !!ob.writeBlock();
+  const rows = (docs: QueryDocumentSnapshot[]) =>
+    docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
+  return {
+    async get(path) {
+      const snap = await timed(fs.doc(path).get());
+      return snap.exists ? (snap.data() as Record<string, unknown>) : null;
+    },
+    async list(coll, fields) {
+      const c = fs.collection(coll);
+      const snap = await timed((fields ? c.select(...fields) : c).get());
+      return rows(snap.docs);
+    },
+    async create(path, data) {
+      if (blocked()) throw new Error(`not written (${ob.writeBlock()})`);
+      try {
+        await timed(fs.doc(path).create(data));
+        return true;
+      } catch (e) {
+        if ((e as { code?: unknown }).code === 6) return false; // ALREADY_EXISTS
+        throw e;
+      }
+    },
+    async write(ops) {
+      await ob.write(ops);
+    },
+    async transact(path, fn) {
+      if (blocked()) return null;
+      const ref = fs.doc(path);
+      return timed(
+        fs.runTransaction(async (tx) => {
+          const snap = await tx.get(ref);
+          const cur = snap.exists ? (snap.data() as Record<string, unknown>) : null;
+          const patch = fn(cur);
+          if (!patch) return null;
+          tx.set(ref, patch, { merge: true });
+          return { ...(cur ?? {}), ...patch };
+        }),
+      );
+    },
+    watch(coll, fields, onChange) {
+      const c = fs.collection(coll);
+      return (fields.length ? c.select(...fields) : c).onSnapshot((snap) => onChange(rows(snap.docs)), snapshotError(coll));
+    },
+    watchDoc(path, onChange) {
+      return fs
+        .doc(path)
+        .onSnapshot((snap) => onChange(snap.exists ? (snap.data() as Record<string, unknown>) : null), snapshotError(path));
+    },
+  };
+}
+
 export function createFirestoreProvider(cfg: Config): DbProvider {
   let writer: FirestoreWriter | undefined;
   let source: FirestoreSource | undefined;
   let backups: FirestoreBackups | undefined;
   let briefing: FirestoreBriefing | undefined;
   let outbox: Outbox | undefined;
+  let docs: DocDb | undefined;
+  let devices: DeviceStore | undefined;
   // Offline mode (lib/db/outbox.ts): every write goes through the outbox.
-  const ob = (): Outbox => (outbox ??= new Outbox(join(dataDir(), 'outbox'), firestoreStore(db(cfg))));
+  // The write gate: this device's status file (lib/versioning.ts), so every
+  // process of this device drops its writes while it is behind on the data format.
+  const ob = (): Outbox =>
+    (outbox ??= new Outbox(join(dataDir(), 'outbox'), firestoreStore(db(cfg)), {
+      blocked: () => storeWriteBlock(dataDir()),
+    }));
+  const docDb = (): DocDb => (docs ??= firestoreDocDb(db(cfg), ob()));
   return {
     name: 'firestore',
     writer: () => (writer ??= new FirestoreWriter(cfg, ob())),
     source: () => (source ??= new FirestoreSource(cfg)),
     backups: () => (backups ??= new FirestoreBackups(cfg, ob())),
     briefing: () => (briefing ??= new FirestoreBriefing(cfg, ob())),
+    devices: () => (devices ??= docDeviceStore(docDb())),
+    docDb,
     outbox: () => ob(),
   };
 }

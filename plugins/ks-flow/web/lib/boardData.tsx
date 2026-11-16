@@ -12,7 +12,7 @@ import { useActivity, type ActivityData } from './useActivity';
 import { useBoard, type BoardData } from './useBoard';
 import { useBriefing, type BriefingData } from './useBriefing';
 import { useNow } from './useNow';
-import type { BoardConfig, MasterStatus, WorkUnitDoc } from './types';
+import type { BoardConfig, MasterStatus, VersionStatus, WorkUnitDoc } from './types';
 
 export interface SharedData {
   config: BoardConfig;
@@ -30,6 +30,8 @@ export interface SharedData {
   bellCount: number;
   /** Inbox questions waiting + unseen messages, across every card. */
   inboxCount: number;
+  /** This device's version status (GET /api/version; null until its daemon wrote one). */
+  version: VersionStatus | null;
 }
 
 const Ctx = createContext<SharedData | null>(null);
@@ -68,6 +70,23 @@ export function BoardDataProvider({ config, children }: { config: BoardConfig; c
     return () => clearInterval(id);
   }, [refreshMaster]);
 
+  // This device's version status (the banner; read-only while behind on the
+  // store's data format). Polled: the daemon rewrites it every minute.
+  const [version, setVersion] = useState<VersionStatus | null>(null);
+  useEffect(() => {
+    const read = (): void => {
+      fetch('/api/version', { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d: { status?: VersionStatus | null } | null) => {
+          if (d) setVersion(d.status ?? null);
+        })
+        .catch(() => {});
+    };
+    read();
+    const id = setInterval(read, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
   // The Notes tab is opt-in (Settings → Notes).
   const [notesEnabled, setNotesEnabled] = useState(false);
   useEffect(() => {
@@ -91,8 +110,8 @@ export function BoardDataProvider({ config, children }: { config: BoardConfig; c
   const inboxCount = useMemo(() => inboxWaiting(board.workUnits), [board.workUnits]);
 
   const value = useMemo<SharedData>(
-    () => ({ config, board, briefing, activity, master, refreshMaster, now, notesEnabled, bellCount, inboxCount }),
-    [config, board, briefing, activity, master, refreshMaster, now, notesEnabled, bellCount, inboxCount],
+    () => ({ config, board, briefing, activity, master, refreshMaster, now, notesEnabled, bellCount, inboxCount, version }),
+    [config, board, briefing, activity, master, refreshMaster, now, notesEnabled, bellCount, inboxCount, version],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -47,6 +47,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { dataDir, loadConfig, readProjectConf } from './lib/config.js';
 import { loadDataEnv } from './lib/envfile.js';
+import { deviceId } from './lib/device.js';
 import {
   readArchiveSettings,
   resolveBinary,
@@ -64,6 +65,7 @@ import {
 import { expandTilde } from './lib/paths.js';
 import { activeRun, lastSweepAt, listRuns } from './lib/backup-runs.js';
 import { createProvider, type BackupRunDoc, type BackupStore, type BackupTrigger } from './lib/db/index.js';
+import type { DeviceDoc } from './lib/db/types.js';
 
 function log(m: string): void {
   process.stdout.write(`[ks-flow backup] ${m}\n`);
@@ -222,14 +224,21 @@ async function main(): Promise<void> {
   loadDataEnv(join(dataDir(), '.env'));
   const conf = readProjectConf();
   const projectId = conf?.projectId ?? '';
-  const store = createProvider(loadConfig()).backups();
+  const provider = createProvider(loadConfig());
+  const store = provider.backups();
+  // Several devices share the store: runs and units carry the device they
+  // belong to. "Already running" and the last sweep count only this device's.
+  const self = deviceId(dataDir());
+  const devices = (): Promise<DeviceDoc[]> => provider.devices().getDevices().catch(() => []);
 
   // History mode: read-only, so it answers whatever the archive settings say.
   if (args.runs) {
     if (!conf) return fail(args, 'no project.conf — run `ks-flow start` in the project first.');
-    const runs = await listRuns(store, projectId).catch((e: Error) => e);
+    // Another device's unfinished run: running while its heartbeat is fresh (lib/backup-runs.ts).
+    const lastSeen = new Map((await devices()).map((d) => [d.deviceId, d.lastSeenAt]));
+    const runs = await listRuns(store, projectId, { self, lastSeen }).catch((e: Error) => e);
     if (runs instanceof Error) return fail(args, `could not read the backup history: the ks-flow store is not reachable — is the daemon running (PocketBase), or is this Mac offline (Firestore)? (${runs.message})`);
-    return emitAndExit({ ok: true, runs, lastSweepAt: lastSweepAt(runs) }, 0);
+    return emitAndExit({ ok: true, runs, lastSweepAt: lastSweepAt(runs, self) }, 0);
   }
 
   const settings = readArchiveSettings();
@@ -253,7 +262,7 @@ async function main(): Promise<void> {
   // the index. The daily one simply waits for tomorrow's check; a removal goes
   // ahead regardless (failing it would block the worktree's deletion).
   if (isSweep && !args.dryRun && isStoreUp) {
-    const busy = activeRun(await listRuns(store, projectId).catch(() => []));
+    const busy = activeRun(await listRuns(store, projectId, { self }).catch(() => []), self);
     if (busy && !args.worktree) {
       const since = new Date(busy.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const msg = `a backup is already running (${busy.trigger}, started ${since}) — try again when it finishes.`;
@@ -271,7 +280,14 @@ async function main(): Promise<void> {
     run = {
       store,
       projectId,
-      doc: { uid: randomUUID(), startedAt: new Date().toISOString(), trigger: triggerOf(args), scope: scopeOf(args), pid: process.pid },
+      doc: {
+        uid: randomUUID(),
+        deviceId: self,
+        startedAt: new Date().toISOString(),
+        trigger: triggerOf(args),
+        scope: scopeOf(args),
+        pid: process.pid,
+      },
     };
     await saveRun();
     // The board links its live log to the run's /backups row by this line.
@@ -293,7 +309,9 @@ async function main(): Promise<void> {
   // before this index existed (or on another machine) must still offer a Restore.
   if (args.status) {
     const units = await unitStatuses(conf.projectPath, config, isStoreUp ? store : null, projectId);
-    const swept = isStoreUp ? lastSweepAt(await store.getBackupRuns(projectId).catch(() => [])) : null;
+    // Every unit in the bucket, whichever device backed it up (a removed card of
+    // another device still offers its Restore); the last sweep is this device's.
+    const swept = isStoreUp ? lastSweepAt(await store.getBackupRuns(projectId).catch(() => []), self) : null;
     return emitAndExit({ ok: true, units, lastSweepAt: swept }, 0);
   }
 
@@ -301,7 +319,10 @@ async function main(): Promise<void> {
   // stamp each object with its source size/mtime (and the transcript dir it came
   // from), so the whole thing can be rebuilt from a listing. Uploads nothing.
   if (args.reindex) {
-    const res = await reindexAll(conf.projectPath, config, args.json ? () => {} : log, store, projectId);
+    const res = await reindexAll(conf.projectPath, config, args.json ? () => {} : log, store, projectId, {
+      self,
+      devices: await devices(),
+    });
     if (args.json) return emitAndExit({ ok: true, ...res }, 0);
     log(`reindexed ${res.recovered} unit(s)${res.skipped ? `, skipped ${res.skipped}` : ''}.`);
     process.exit(0);

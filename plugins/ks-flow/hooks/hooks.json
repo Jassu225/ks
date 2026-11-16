@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/bootstrap.sh",
+            "command": "KS_FLOW_HOOK=1 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/bootstrap.sh",
             "timeout": 120
           }
         ]

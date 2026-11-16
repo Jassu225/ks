@@ -65,6 +65,100 @@ export interface InboxAddress {
   running: boolean;
 }
 
+// ── devices (one board for several devices; mirrors src/lib/db/types.ts) ─────
+
+/** The master session's status as its device publishes it. */
+export interface DeviceMasterStatus {
+  state: string | null;
+  heartbeatAt: string | null;
+  bridgeSessionId: string | null;
+  pid: number | null;
+  [k: string]: unknown;
+}
+
+/** `devices/{deviceId}`: written by that device's daemon (merge), `name` by the board. Show `name ?? defaultName`. */
+export interface DeviceDoc {
+  deviceId: string;
+  name?: string | null;
+  defaultName: string;
+  platform: string;
+  daemonVersion: string;
+  lastSeenAt: string;
+  projectPath: string;
+  commonDir: string;
+  /** This device's CURRENT git worktrees: its cards show only when their worktreeDir is in here. */
+  worktreePaths: string[];
+  inboxUrl: string | null;
+  inboxRunning: boolean;
+  linearCheckedAt: string | null;
+  master?: DeviceMasterStatus | null;
+  forgotten?: boolean;
+  /** The data format its code writes (src/lib/versioning.ts SCHEMA_VERSION). */
+  schemaVersion?: number;
+  /** A clone not on main, or with uncommitted changes. */
+  devBuild?: boolean;
+  devReason?: string | null;
+}
+
+/** `meta/settings`: the settings every device shares, and the master device. */
+export interface SettingsDoc {
+  briefing?: Record<string, unknown>;
+  notes?: Record<string, unknown>;
+  reminders?: Record<string, unknown>;
+  gcsArchive?: Record<string, unknown>;
+  transcriptBackup?: Record<string, unknown>;
+  masterDeviceId: string;
+  sharedUpdatedAt?: string | null;
+  backfill?: { by: string; startedAt: string; state: 'running' | 'done'; endedAt?: string | null } | null;
+  /** The newest data format any device writes (older code goes read-only). */
+  schemaVersion?: number | null;
+  /** The newest release any device runs (ks-flow plugin.json version). */
+  version?: string | null;
+  versionBy?: string | null;
+  versionAt?: string | null;
+}
+
+/** `ks-flow update`'s record (<dataDir>/update-state.json). */
+export interface UpdateState {
+  state: 'running' | 'ok' | 'failed' | 'refused';
+  startedAt: string;
+  endedAt?: string | null;
+  from?: string | null;
+  to?: string | null;
+  reason?: string | null;
+  pid?: number | null;
+  by?: 'auto' | 'manual';
+}
+
+/** <dataDir>/version-status.json: this device's daemon's view (src/lib/versioning.ts). GET /api/version. */
+export interface VersionStatus {
+  deviceId: string;
+  deviceName: string;
+  version: string;
+  schemaVersion: number;
+  dev: boolean;
+  devReason: string | null;
+  mode: 'marketplace' | 'clone' | 'unknown';
+  storeVersion: string | null;
+  storeSchemaVersion: number;
+  versionBehind: boolean;
+  schemaBehind: boolean;
+  /** No store writes from this device: the board answers 409 to every store write. */
+  readOnly: boolean;
+  update: UpdateState | null;
+  notified?: string | null;
+  updatedAt: string;
+}
+
+/** `masterRequests/{uid}`: another device's board asking the master device's daemon. */
+export interface MasterRequestDoc {
+  uid: string;
+  trigger: 'start' | 'button' | 'restart';
+  from: string;
+  createdAt: string;
+}
+
+/** RETIRED (meta/project): legacy daemons still write it until the device backfill. */
 export interface ProjectDoc {
   projectId: string;
   projectPath: string;
@@ -81,6 +175,8 @@ export interface ProjectDoc {
 
 export interface WorkUnitDoc {
   unitId: string;
+  /** The device that owns the card (only its daemon writes it). */
+  deviceId?: string;
   type: 'ticket' | 'project';
   identifier: string;
   title: string;
@@ -105,6 +201,8 @@ export interface WorkUnitDoc {
   waiting: WaitingState | null;
   sessionIds: string[];
   lastActivity: string | null;
+  /** The phases from state.yaml (the board derives its columns from every card's). */
+  phases?: Array<PhaseRef & { status?: string }>;
   /** The card's Plannotator Inbox threads; null/absent when none has anything for the person. */
   inbox?: InboxCardState | null;
   /** Claude Code processes running in this unit's worktree right now, newest first. */
@@ -128,6 +226,7 @@ export interface LiveSession {
 
 export interface SessionDoc {
   sessionId: string;
+  deviceId?: string;
   unitId: string | null;
   title: string | null;
   cwd: string | null;
@@ -179,6 +278,8 @@ export interface BoardConfig {
   gcpProjectId: string;
   /** PocketBase REST/realtime base URL (pocketbase provider only). */
   pocketbaseUrl: string;
+  /** This device's id (lib/device.ts: KS_DEVICE_ID, else the daemon's device.json). */
+  deviceId: string;
 }
 
 // ── Briefing (docs/briefing.md, "Data") ─────────────────────────────────────
@@ -279,6 +380,8 @@ export interface DailyLogDoc {
  * hard-restarting the master, or a request written / dropped for it. */
 export interface MasterEventDoc {
   uid: string;
+  /** The device whose daemon or board recorded it. */
+  deviceId?: string;
   at: string;
   kind: 'start' | 'restart' | 'request';
   trigger?: 'schedule' | 'button' | 'restart';
@@ -325,4 +428,18 @@ export interface MasterStatus {
   pending: string[];
   /** board-settings.json `briefing`: whether scheduled passes run, and when. */
   briefing: { enabled: boolean; schedule: string[] };
+  /** Where the master runs (Firestore after the device backfill; lib/masterFiles.ts). */
+  device?: MasterDeviceInfo;
+}
+
+/** GET /api/briefing/master `device`: the master device as the board's server sees it. */
+export interface MasterDeviceInfo {
+  deviceId: string;
+  /** Its name (name ?? defaultName, else the id). */
+  name: string;
+  /** The master runs on another device than this board's. */
+  remote: boolean;
+  lastSeenAt: string | null;
+  /** Its daemon has not been seen for over 5 min (remote only). */
+  offline: boolean;
 }

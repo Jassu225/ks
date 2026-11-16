@@ -23,12 +23,12 @@ plugin hooks (user scope)                              DB provider (PocketBase d
   PermissionRequest, Elicitation                           │ real-time (SSE / onSnapshot)
   │ filter on .cwd → terminal-notifier + events.jsonl      ▼
   ▼                                                  Next.js board (ks-flow open)
-(notification, daemon-independent)                   COLUMNS = project phaseModel (from state.yaml)
+(notification, daemon-independent)                   COLUMNS = phase model the board derives from every card
 
-<main_worktree>/workflow/<user>/**/state.yaml ─► daemon ─► WorkUnitDoc + project.phaseModel
+<main_worktree>/workflow/<user>/**/state.yaml ─► daemon ─► WorkUnitDoc (deviceId = this device)
 ```
 
-- **Writer** = the ingester daemon (the only DB writer).
+- **Writer** = the ingester daemon (the only writer of cards and sessions; with [several devices](#several-devices), each daemon writes only its own).
 - **Hook scripts** = notify + append local events (never touch the DB).
 - **Reader** = the Next.js board (subscribes in real time, never writes).
 
@@ -53,7 +53,7 @@ Ingestion bookkeeping (byte offsets, inode) stays in a local `checkpoints.json` 
 
 Each card's header is a **status ribbon** in the colour Linear uses for that state (before the first sync, Linear's default colour for the status). Its **↻ refreshes the whole card** now: the board appends a `RefreshCard` event to `events.jsonl`, and the daemon runs the per-card form (`runFor`) of every clock job that has one, in table order — `worktrees` (the one `git worktree list`), `liveSessions` (re-read the running Claude processes), `stateYaml` (re-parse this card's `state.yaml` copies, ignoring the mtime gate), `linear` (`batch-get` for this ticket alone), `inbox` (the same read as the tick: one read covers every card) — then catches up the card's session transcripts and rewrites it with `cardRefreshedAt` (and `cardRefreshError` naming any step that failed). The board re-reads the backup status at the same time. `reminders`, the `backup` sweep and `rotateLogs` have no per-card form: they notify, upload or roll logs rather than read card data. The spinner stops when `cardRefreshedAt` moves; a failed step, or no answer in 60s, shows `!` with the reason in its tooltip.
 
-Event-driven work stays off the clock: the chokidar watchers, the session-upsert (1s) and project-recompute (0.7s) debounces, and PocketBase's respawn. At start-up, backfill scans `state.yaml` and a reminder pass runs after the stop-nudges are re-armed; the clock's first tick follows 15s later.
+Event-driven work stays off the clock: the chokidar watchers, the session-upsert (1s) and device-recompute (0.7s) debounces, and PocketBase's respawn. At start-up, backfill scans `state.yaml` and a reminder pass runs after the stop-nudges are re-armed; the clock's first tick follows 15s later.
 
 **Live sessions (pid per card).** Claude Code writes `~/.claude/sessions/<pid>.json` (pid, session id, cwd, process start time, tmux pane) when a session starts and deletes it on a clean exit. The daemon reads that folder on each add/unlink and on the `liveSessions` tick, which catches a crash's leftover file. A file counts only while its pid is alive **and** `ps lstart` matches its recorded start time, since macOS reuses pids. Each live interactive process whose `cwd` is inside a card's worktree goes on that card as `liveSessions[]` (newest first). The newest one is also stored as `activeSession`: `{ pid, sessionId, cwd, procStart, startedAt, tmuxPane, name }`. Only fields that never change for the process are kept, so busy/idle flips don't rewrite the card. `ks-flow session <unit> --json` reads them back. The ks plugin's `claude-ks-rc-restart` uses it to find the session to replace.
 
@@ -63,7 +63,7 @@ A ticket's `state.yaml` lives in its worktree while in progress; on completion t
 
 Both the start-up backfill and the 15s rescan are gated to avoid needless work:
 - **Read gate** — `state.yaml` is re-parsed only when its `mtime` changed (completed tickets' files in the main checkout accumulate forever but never change, so they're stat-ed, not re-parsed).
-- **Write gate** — a work-unit/project doc is upserted only when its content actually changed (signature compare, excluding `updatedAt`), so a single edit doesn't re-write the whole set.
+- **Write gate** — a work-unit/device doc is upserted only when its content actually changed (signature compare, excluding `updatedAt`), so a single edit doesn't re-write the whole set.
 
 Both gates are in-memory, so a daemon restart does one cold pass, then steady-state stays cheap.
 
@@ -87,6 +87,57 @@ downloaded and started when it is the store. `ks-setup store` picks the store
 (`pocketbase`, or `firestore --project <id> --credentials <key.json>`).
 The board's Remove runs `remove_worktree -D {{path}}` from the project root
 unless Settings names another command.
+
+### Brand-new setup
+
+For a new person on a new Mac, from nothing. Each step is safe to re-run.
+
+1. **Tools.** `brew install node jq tmux terminal-notifier zstd` (and `git`,
+   Claude Code). Clone the KarmaSuite repo; it is `KS_PROJECT_ROOT_PATH` below.
+2. **Plugins, per project.** In the KarmaSuite checkout:
+
+   ```bash
+   cd <your KarmaSuite checkout>
+   claude plugin marketplace add <path or URL of the ks repo>
+   claude plugin install --scope local ks-suite@karmasuite     # ks + ks-flow
+   claude plugin install --scope local ks-master@karmasuite    # on the master device
+   ```
+
+   Nothing is enabled user-wide: the switch lives in the checkout's gitignored
+   `.claude/settings.local.json`.
+3. **`/ks:setup`** in a Claude session in that checkout. It runs `ks-setup
+   doctor` and `ks-setup apply` (config folder, `~/.local/bin` shims and the
+   PATH line, the project path) and hands you the steps it won't run itself.
+4. **Tokens**, typed by you with hidden input, never in chat (`!` runs a
+   command from the Claude prompt; in a terminal, leave it out):
+
+   ```bash
+   ! ks-config secret linear.LINEAR_API_KEY
+   ! ks-config secret slack.SLACK_TOKEN          # Briefing, Notes
+   ! ks-config secret grain.GRAIN_API_TOKEN      # optional
+   ! ks-setup claude-settings                    # sandbox excludes, Keychain deny rules, statusline
+   ```
+5. **Store.** PocketBase (local, this Mac only) needs nothing. For the shared
+   Firestore board, get the `ks-flow-store@ks-flow` service-account key file
+   from whoever runs the GCP project and copy it onto the Mac yourself (AirDrop,
+   a password manager): it is a secret file, never sent through chat or
+   committed to git. Keep it outside every repo, then:
+
+   ```bash
+   ! ks-setup store firestore --project ks-flow --credentials <path to key.json>
+   ```
+6. **Cloud backup** (optional): the GCS credentials go in the data dir's
+   `.env` (Settings → **Edit .env**; see [GCS archive on removal](#gcs-archive-on-removal)).
+7. **Start.** `ks-flow start`, then `ks-flow open`. `ks-setup doctor` and
+   `ks-flow status` should be clean.
+8. **Another device already uses this store?** Then this one is an extra
+   device: see [Several devices](#several-devices), "Adding a device".
+
+**From a clone** (developing the plugins): `git clone <ks repo>`, then
+`plugins/ks/init-dev` in place of steps 2–3. It loads the clone as the
+`karmasuite` directory marketplace in your KarmaSuite checkout (plugins read in
+place; edits apply on `/reload-plugins`), installs the CLI dependencies, and
+runs `ks-setup apply` and `ks-setup claude-settings`. Steps 4–8 are the same.
 
 ### Configuration (`/plugin configure`; all optional)
 
@@ -122,23 +173,32 @@ firebase emulators:start --only firestore
 The KarmaSuite setup keeps the store in Firestore: GCP project `ks-flow`, its
 `(default)` database (shared with ks-works' `slack_user_tokens`). The GCP
 project holds one board, so the collections are **flat, at the database root**
-(no per-project level): `meta/project`, `workUnits`, `sessions`, `reminders`,
-`backupUnits`, `backupRuns`, `briefingItems`, `briefingRuns`, `dailyLogs`,
-`masterEvents` and the `slack_names` cache. Pointing a second ks-flow board at
-the same database would mix its data in; give it its own GCP project.
+(no per-project level): `devices`, `meta/settings`, `workUnits`, `sessions`,
+`reminders`, `backupUnits`, `backupRuns`, `briefingItems`, `briefingRuns`,
+`dailyLogs`, `masterEvents`, `masterRequests` and the `slack_names` cache.
+`meta/project` is retired: the [device backfill](#several-devices) moves it into
+`devices/<id>`. One board may span [several devices](#several-devices); a
+second *board* (another person, another project) on the same database would mix
+its data in, so give it its own GCP project.
 
 **Every read and write uses the Admin SDK.** That covers the daemon, the CLIs
 and the board's own Next.js server. The browser never talks to Firestore: the
 board server streams it the live collections over Server-Sent Events
 (`/api/store/live?scope=board,briefing,activity`), one stream per tab for all three: a browser keeps at most 6 connections per site, so a stream per page part would starve every other request once two tabs are open. So there is no Firebase Auth,
-no browser API key, and no security-rules deploy.
+no browser API key, and no client access at all.
 
-**Never deploy `firestore.rules` to `ks-flow`.** `firebase deploy --only
-firestore:rules` replaces the whole database's ruleset, and the database is
-shared with ks-works. The file is deny-all for clients, kept for the emulator.
+**The live security rules deny everything** (`firestore.rules`: `allow read,
+write: if false` on every document). No browser or app can read or write the
+database; the Admin SDK ignores rules, so ks-flow and ks-works (which shares
+the `(default)` database and also uses only the Admin SDK) are unaffected.
+`firebase deploy --only firestore:rules --project ks-flow` replaces the whole
+database's ruleset: only ever deploy this deny-all file, never a rule that
+allows anything.
 
 **Writes are whole documents**, like PocketBase's `data` column: a cleared
-field (a note's due time) is gone, not merged back.
+field (a note's due time) is gone, not merged back. The exceptions are
+`devices/<id>` (the daemon and the board each merge only their own fields) and
+the backfill's `deviceId` tags.
 
 **Config:** one source, `$CLAUDE_PLUGIN_DATA/.env`. The daemon, the board server
 and `bootstrap.sh` all read it:
@@ -196,11 +256,267 @@ restart. PocketBase still holds the data as of the switch.
   Briefing reads on the server fall back to the same view.
   - The header shows **offline · N changes waiting to sync** until everything
     is synced.
-- **Status:** `ks-flow status` prints the store's reachability and the outbox
-  count.
+- **Status:** `ks-flow status` prints the store's reachability, this device's
+  id, whether the store is set up for devices, and the outbox count.
 
 The backup sweep still needs the store (and GCS), and the master's Briefing
 needs Slack, so neither runs offline.
+
+## Several devices
+
+One board can span several Macs: each device runs its own daemon and board, all
+on the same Firestore store, and every board shows every device's cards.
+Nothing counts devices: three or five work the same way as two. PocketBase is
+local, so a PocketBase board is one device.
+
+### What a device is
+
+- **Its id** is generated once, on the daemon's first start, and stored in
+  `~/.config/ks/ks.env` as `KS_DEVICE_ID` (ks-config `ks.KS_DEVICE_ID`, one
+  value for the whole machine). Every later start, the board, the CLIs and the
+  one-off scripts read it back instead of generating it again.
+- **Generated** as `HMAC-SHA256(key "ks-flow-device", the machine's hardware
+  id)`, first 16 hex characters. The hardware id is the logic board's
+  `IOPlatformUUID` on macOS (`/usr/sbin/ioreg`, called by absolute path because
+  launchd's PATH has no `/usr/sbin`; `/etc/machine-id` on Linux). It is never
+  logged, stored or sent: only the hash leaves the machine. A machine with no
+  hardware id falls back to a hash of its host name, which is not stored, and
+  the daemon logs a warning.
+- **Kept** across OS updates, major upgrades, an erase-and-reinstall (the
+  hardware gives the same id again) and a logic-board replacement (the stored
+  id is kept; doctor warns that it no longer matches the hardware).
+- **Never copy it to another Mac.** A config copied with Migration Assistant,
+  synced dotfiles or a copy of `~/.config/ks` brings the first Mac's id along,
+  and two Macs with one id overwrite each other's cards. The daemon's log and
+  `ks-setup doctor` (`ks-flow:device-id`) warn when the stored id is not this
+  Mac's own. On the copy: `ks-config unset ks.KS_DEVICE_ID`, then
+  `ks-flow stop && ks-flow start`.
+- **`KS_DEVICE_ID`** in the environment (or the data dir's `.env`) overrides
+  the stored id, for test daemons side by side. To keep an old id on new
+  hardware, `ks-config set ks.KS_DEVICE_ID <id>` before the first start.
+- The daemon also writes `<dataDir>/device.json` (`{deviceId, defaultName}`)
+  for the name. `ks-flow device-id --json` prints the id, where it came from
+  and whether it matches the hardware; `ks-setup doctor` shows it
+  (`ks-flow:device`).
+- **A daemon that ran under a wrong id** (the 0.2.0 dev build under launchd):
+  stop it, wait 3 minutes, then move that id's docs to this device and delete
+  its record with
+  `cd src && npx tsx ../scripts/one-off/retag-device.ts --from <wrong id> --dry-run`
+  (then without `--dry-run`).
+- **Its name** starts as the Mac's ComputerName (else the host name). Rename it
+  in Settings → **Devices**; the new name shows everywhere at once.
+- **Its record**, `devices/<id>`, is written by its own daemon every 60 s: name,
+  platform, ks-flow version (`daemonVersion`: its `plugin.json` version), data
+  format and dev build, last seen, the project path, its current worktrees,
+  its Plannotator Inbox address, when it last read Linear, and, on the master
+  device, the master's status (written when it changes, and at least every
+  ~30 s while the master is alive, since its heartbeat moves). The board writes
+  only its name and `forgotten` (Settings → Devices; the route `/api/devices`
+  answers 409 until the backfill has run).
+
+### Each card belongs to one device
+
+A ticket is worked in one session on one device. A card's `deviceId` is the
+device whose daemon wrote it, and **a daemon never writes a card another device
+owns**: there is no takeover. The skip is logged once per card.
+
+Each device acts only on its own cards. On another device's card:
+
+- **Remove**, **☁ backup** and the ribbon's **↻** are hidden.
+- **Restore** is hidden on a live card, and allowed on a removed one from any
+  device (it restores onto this device).
+- **⧉ path** stays, with "path on <name>".
+- The **NEEDS YOU** sash stays, but its Inbox links are off ("open the Inbox on
+  <name>"): that Inbox runs on the other device's own `localhost`.
+- Reminders, pause and the Linear / Slack / PR links stay: they only touch the
+  store.
+
+A card shows its device's chip (bottom-left of the footer) while the board has
+two or more devices that aren't forgotten; the chip's colour comes from a
+12-colour palette, picked by a hash of the id, so it is the same on every
+board. Each daemon
+reads Linear only for its own tickets, and backs up only its own cards.
+
+**Moving a ticket between devices.** `ks-start-ticket` checks the card's owner
+first (`ks-flow card-owner`):
+
+- On another device that still has its worktree or a live session, it refuses:
+  `KAR-123 is on <name>: remove it there first`.
+- When the owner no longer works it (removed there, or the device forgotten),
+  it moves the card: `moving KAR-123 from <A> to <B>` (`ks-flow card-move`).
+  This is the only way a card changes device.
+- With the store unreachable, or an older ks-flow, it goes on as before.
+
+### Sleeping and stale devices
+
+A device whose last heartbeat is over 5 minutes old is asleep or offline. Its
+chip dims ("<name>: last seen 2 h ago"); its cards keep their place but lose the
+active glow, show "sessions unknown" for the live-session count, and their
+Linear status stays frozen until it wakes, since only the owner reads it.
+
+**Forget** (Settings → Devices) is for a device that is gone: sold, replaced, or
+given a new id. It is offered only on a stale device that is neither this one
+nor the master; `/api/devices` itself refuses to forget this device, a device
+seen in the last 5 minutes, or the master. **Take back** undoes Forget. It marks the device
+`forgotten: true`; nothing is deleted. Its
+cards stay tagged to it and are shown as removed cards (behind **show removed**,
+in Done), with Restore and archiving like any removed card, never vanishing
+silently. Its chip shows the name in grey, struck through. `ks-start-ticket` can then
+move any of its tickets to the device you're on.
+
+### One master
+
+The master session runs on one device, chosen with the **Master** choice in
+Settings → Devices (`meta/settings.masterDeviceId`). Only that device's daemon
+runs the Briefing schedule and starts and supervises the master. A board on any
+other device sends Brief me and Restart as a `masterRequests` doc that the
+master device's daemon turns into a request file, and reads the master's status
+from that device's record. The master chip says "on <name>".
+
+- On a switch, the old device's daemon stops supervising within a minute and
+  the new one starts the master. The old master session is **left running**
+  (only its supervision stops); close it yourself (its tmux session
+  `ks-master`) once the new one is up.
+- While the master device is asleep or offline, Brief me is disabled ("master
+  device <name> is offline"). After an hour, Settings asks you to pick another
+  master device. The master never moves on its own.
+- The master device needs `ks-master` installed, `tmux`, Ghostty or
+  Terminal.app, and the Slack token.
+
+Reminders and Briefing notices fire **on every device**: each keeps its own
+"already notified" state (reminders in `<dataDir>/reminders-fired.json`,
+Briefing notices in `<dataDir>/master/notices.json`). Stop-nudges and blocked-session notices come from the
+session's own device.
+
+### Upgrading to devices: the one-time backfill
+
+A store from before devices holds `meta/project` and cards with no `deviceId`.
+The backfill moves it to the devices model. Run it **once, on the device that
+has been using the board, before ks-flow starts on any other device**.
+
+1. Update the code on that device (a clone: `git pull`; installed: `claude
+   plugin marketplace update karmasuite` and `claude plugin update`).
+2. `ks-flow stop`: the daemon and the board. Don't open a Claude session in the
+   checkout until step 5: its SessionStart would start the daemon again.
+3. Dry run, which prints per collection how many docs it would tag and writes
+   nothing:
+
+   ```bash
+   cd "$(ks-root ks-flow)/src"
+   npm ci                                          # its dependencies, once
+   npx tsx ../scripts/one-off/backfill-devices.ts --dry-run
+   ```
+
+   The script finds the configured data dir itself, as `ks-flow` does
+   (`KS_FLOW_DATA`, else the configured project's); `--data-dir <dir>`
+   overrides it. The command the daemon logs while the backfill is due (and
+   the one `ks-setup doctor` prints) can be pasted as-is: it has the data dir
+   filled in. Inside Claude's sandbox, use `node --import tsx` in place of
+   `npx tsx`.
+4. The same command without `--dry-run`. It:
+   - creates `meta/settings` from this device's `board-settings.json` (Briefing,
+     Notes, Reminders, GCS archive, transcript backup), with this device as the
+     master. It refuses when `meta/settings` already exists; a run cut short
+     finishes when re-run on the same device.
+   - tags every `workUnits`, `sessions`, `backupRuns`, `backupUnits` and
+     `masterEvents` doc that has no `deviceId` with this device (merges, 500 or
+     fewer per batch, through the offline outbox);
+   - copies `meta/project` into `devices/<this id>`, then deletes it.
+5. `ks-flow start && ks-flow open`: the daemon and the board **together**, so a
+   new board never talks to an old daemon or the other way round.
+6. `ks-setup doctor`: `ks-flow:device` says the store is set up for devices.
+
+Until the backfill has run, a new daemon keeps the one-device behaviour, writes
+no device data, and logs that the backfill is due. Upgrade the existing device
+first; add the others after.
+
+### Adding a device
+
+On the new device:
+
+1. [Brand-new setup](#brand-new-setup) steps 1–4: tools, plugins, `/ks:setup`,
+   and **its own tokens** (`! ks-config secret …`): the Keychain doesn't travel.
+2. **Its own copy of the Firestore key file**, copied over by you (never
+   through chat or git), then
+   `! ks-setup store firestore --project ks-flow --credentials <key.json>`.
+3. **Its own GCS credentials** in its `.env`, if cloud backup is on. The switch
+   and the bucket are shared and already set.
+4. **Check no device id came along**, if `~/.config/ks` was copied (Migration
+   Assistant, synced dotfiles): `ks-config get ks.KS_DEVICE_ID` must print
+   nothing before the first start. If it prints an id, `ks-config unset
+   ks.KS_DEVICE_ID`. The daemon then generates this Mac's own on its first start.
+5. `ks-flow start`, then `ks-flow open`. Within a minute the device appears in
+   Settings → Devices on every board.
+6. **Name it** in Settings → Devices.
+7. **Master:** leave it where it is, or pick this device (it needs `ks-master`
+   and the Slack token).
+8. `ks-setup doctor` shows `this device: <name> (<id>); store set up for
+   devices`.
+
+### Versioning
+
+Devices may run different ks-flow versions for a while. `meta/settings` holds
+two numbers, plus who raised them last and when (`versionBy`, `versionAt`):
+
+- `schemaVersion`: the data format, an integer raised only by a change that
+  older code would break (`SCHEMA_VERSION` in `src/lib/versioning.ts`; the
+  devices model is 1).
+- `version`: the release, ks-flow's `.claude-plugin/plugin.json` version
+  (semver). Each device's `daemonVersion` is this too (bootstrap leaves it in
+  `<dataDir>/daemon/build.json`), not the daemon's `package.json`.
+
+**Raising.** Every daemon follows `meta/settings`. On start, a daemon running
+newer code raises `version` (and `schemaVersion` if its code needs it) in a
+transaction, only upward; nothing is raised before the device backfill. A
+**dev build** never raises them: a clone that isn't on `main`, or has
+uncommitted changes to tracked files (git in the plugin's folder). Its board
+shows **dev build** next to the device chip, and Settings → Devices marks it.
+
+**Behind on the data format** (the code's schema is older than the store's):
+
+- The daemon drops every store write from this device, rather than queueing
+  it in the outbox, where replaying old-format writes after the update would
+  undo the new format. Writes queued before stay queued (not flushed) for the
+  updated daemon. The backup and Briefing CLIs on the device drop theirs too:
+  the gate is the local `<dataDir>/version-status.json`.
+- It keeps reading local files, logging and sending local notices.
+- The board goes read-only: a red banner, and every API route that writes to
+  the store answers 409 with the reason. Local actions (Processes, Edit .env)
+  still work.
+- After the update, the daemon rebuilds its cards and sessions from local
+  files, as on any start.
+
+**Behind only on `version`:** it keeps working, with a banner.
+
+**Auto-update, always on** (no setting). A device behind on either starts
+`ks-flow update` as a detached process (its own session, so the daemon restart
+can't kill it), at most once an hour, output in `<dataDir>/update.log`, the
+outcome in `<dataDir>/update-state.json`. A dev build never updates itself.
+`ks-flow update` (also by hand; `--dry-run` prints the plan):
+
+1. **New code.** Installed (the plugin folder is under
+   `~/.claude/plugins/cache/`): `claude plugin marketplace update karmasuite`,
+   then `claude plugin update ks-flow@karmasuite --scope local` and the same for
+   ks, run in the KarmaSuite checkout. A clone: `git pull --ff-only`, only on
+   `main` with no uncommitted changes; otherwise it refuses and says why (a
+   safety check, not a setting).
+2. **Rebuild:** the new folder's `scripts/bootstrap.sh`, with the launchd job's
+   settings carried over.
+3. **Restart:** `launchctl kickstart -k` the daemon, then the board if it was
+   running (no new browser tab).
+
+**Notices**, as soon as a device is behind or an update fails:
+
+- a macOS notification, once per state: "ks-flow on <name> is behind (1.4.2 →
+  1.5.0): updating", or "…: run `ks-flow update` (<reason>)";
+- a banner on every board naming each device behind (its `daemonVersion`
+  against `meta/settings.version`, and whether it is a dev build), red on the
+  device's own board while it is read-only;
+- one line from the ks-flow SessionStart hook on that device;
+- `ks-setup doctor`'s `ks-flow:version` check (an error when behind on the data
+  format, a warning when behind on the release or after a failed update).
+
+Settings → Devices shows each device's version, amber when it is behind.
 
 ## CLI (`bin/ks-flow`, on PATH while enabled)
 
@@ -210,12 +526,16 @@ needs Slack, so neither runs offline.
 | `ks-flow open` | Build and open the board UI in the browser. |
 | `ks-flow close` | Stop the board UI server. |
 | `ks-flow stop` | Stop everything — board UI, daemon, and PocketBase. |
+| `ks-flow update [--dry-run]` | Update this device's ks-flow to the newest release (installed: `claude plugin update`, in the KarmaSuite checkout; a clone: `git pull --ff-only` on a clean `main` only), rebuild, restart the daemon and the board. The daemon runs it on its own when the store holds a newer version. See [Versioning](#versioning). |
 | `ks-flow status` | Status of all services: daemon, store (PocketBase, or Firestore with its offline outbox count), board UI. |
 | `ks-flow migrate-store` | One-off copy of the PocketBase store into Firestore. Dry run unless `--write`; `--project`, `--credentials`, `--force`. |
 | `ks-flow daemon` | Run the ingester in the foreground (debug). |
 | `ks-flow set-project <path>` | Re-point the tracked project (rewrites `project.conf`, re-backfills). |
 | `ks-flow backup [target] [options]` | **The one uploader.** Targets: nothing = every live worktree; `--unit <id>`; `--worktree <path> [--identifier <id>]` (one worktree, live or about to be deleted); `--completed` (units whose worktree is gone). Options: `--since-hours <n>`, `--force`, `--dry-run`, `--json`, `--reindex` (upload nothing; rebuild the store's backup index from the bucket), `--runs` (upload nothing; print the run history), `--trigger <daily\|manual\|unit\|removal\|completed>` (recorded with the run; inferred from the target when left out). |
-| `ks-flow session [<unit>] [--json]` | The Claude Code process live in a unit's worktree, as the daemon recorded it: `{ unitId, worktreeDir, workflowDir, activeSession, liveSessions }`. Exit 1 for an unknown unit or one with no live session; exit 2 when the store is unreachable or the running daemon predates live-session tracking. No unit lists every unit with a live session. The record can be up to one tick (15s) old, so check the pid before signalling it. |
+| `ks-flow session [<unit>] [--json]` | The Claude Code process live in a unit's worktree, as the daemon recorded it: `{ unitId, worktreeDir, workflowDir, activeSession, liveSessions, deviceId, device, local }`. A card on another device prints `on <name>` (`--json`: the record with `local: false`) and exits 1, since its pid and tmux pane are that device's. Exit 1 for an unknown unit or one with no live session; exit 2 when the store is unreachable or the running daemon predates live-session tracking. No unit lists every unit with a live session. The record can be up to one tick (15s) old, so check the pid before signalling it. |
+| `ks-flow device-id [--json]` | This device's id on the shared board (`KS_DEVICE_ID`, else the stored `ks.KS_DEVICE_ID`, else the daemon's `device.json`, else generated). `--json`: `{ deviceId, defaultName, source, hardwareMatches }`. See [Several devices](#several-devices). |
+| `ks-flow card-owner <unit> [--json]` | Which device a card is on: owner id and name, whether it is this one, whether the owner still has its worktree or a live session, and what `ks-start-ticket` would do (`none`, `refuse`, `move`). Exit 2 when the store can't answer. |
+| `ks-flow card-move <unit> [--json]` | Move a card to this device, only once its owner no longer has its worktree or a live session; else refuse (exit 1). The only way a card changes device; `ks-start-ticket` runs it. |
 | `ks-flow backup-enabled` | Exit 0 when cloud (GCS) backup is switched on in Settings, else 1. Checked by `remove_worktree` and `ks-start-ticket`. |
 | `ks-flow restore --unit <id> [--overwrite] [--workflow] [--workflow-only] [--workflow-dir <path>] [--overwrite-time-log] [--dry-run] [--json]` | Restore a unit's backed-up transcripts into `~/.claude/projects/<encoded>`, and merge its time log. Local files win unless `--overwrite`. Reads per-file objects, falling back to a legacy `transcript.tar.zst`. `--workflow` also unpacks the workflow folder; `--workflow-only` unpacks just that (no sessions, no time log); `--workflow-dir` says where it goes instead of working it out; `--overwrite-time-log` replaces the local time log instead of merging. |
 | `ks-flow briefing <context\|find\|add\|evidence\|run\|daily> …` | The master session's read/write path for the [Briefing](#briefing-briefing): read what's known, look up items by thread, add or update items, attach evidence, record runs, write the daily log. It has no archive or delete: only the board archives. See `docs/briefing.md` ("CLI"). |
@@ -225,7 +545,17 @@ needs Slack, so neither runs offline.
 
 ## Board UI
 
-`ks-flow open` builds and serves the Next.js board (dark theme). Every page shares one header: ks-flow and the project, tabs **Board · Briefing · Daily log · Notes · Activity Log** (Notes only when enabled), and on the right the **bell** (Briefing items hot or overdue, red when above zero), the **Inbox** button (opens the Plannotator Inbox; badge = open questions plus new messages), the **master** chip (live, busy, no heartbeat, starting, down, not started), and links to Processes and Settings. A page's own controls sit in a row under it. The Board's controls:
+`ks-flow open` builds and serves the Next.js board (dark theme). Every page shares one header: ks-flow and the project, tabs **Board · Briefing · Daily log · Notes · Activity Log** (Notes only when enabled), and on the right the **bell** (Briefing items hot or overdue, red when above zero), the **Inbox** button (opens the Plannotator Inbox; badge = open questions plus new messages), the **master** chip (live, busy, no heartbeat, starting, down, not started; "on <name>" when the master runs on another device, "device offline" once that device is stale), a **this device: <name>** chip, and links to Processes and Settings. Header actions (back up all, kill, Processes) act on this device only, and their tooltips say so. A page's own controls sit in a row under it.
+
+**This Mac only.** The board has no login, and its actions run commands, kill processes and remove worktrees, so it answers only this Mac's own pages, in three layers:
+
+1. It listens on `127.0.0.1` only (`next start -H 127.0.0.1`), so other machines can't connect. You can't open it from a phone or another laptop: every device runs its own board on the same store.
+2. `web/proxy.ts` (Next.js 16's name for middleware; logic in `web/lib/localguard.ts`) refuses with 403 any request whose `Host` isn't `localhost`, `127.0.0.1` or `[::1]`. That stops a web page whose domain was re-pointed at `127.0.0.1` (DNS rebinding) from reading the board.
+3. The same check refuses every write, and every `/api/` call, whose `Origin` isn't the board itself (another site, or another `localhost` port), and a write a browser marks cross-site. That stops other pages in your browser from pressing the board's buttons (CSRF).
+
+Requests without those browser headers (`curl`, the ks-flow CLIs) pass, since code already running on this Mac has your access anyway. To check: `lsof -nP -iTCP:4317 -sTCP:LISTEN` shows `127.0.0.1:4317`, and `curl -H 'Host: evil.example' http://127.0.0.1:4317/` returns 403.
+
+The Board's controls:
 
 - **swimlanes** *(on by default)* — split cards into `ticket` / `project` lanes. Each lane shows only that type's phases (the ticket lane is the shorter init + context/research + plan/implement set), and a lane with no cards is hidden.
 - **show removed** *(off by default)* — also show, in the [Done column](#done-column), finished work whose git worktree is already gone (dimmed, Restore only).
@@ -239,9 +569,13 @@ needs Slack, so neither runs offline.
 - **kill** — two-step kill switch that stops the daemon + PocketBase. They
   restart and re-backfill on the next Claude session, so it's reversible.
 
-Only cards whose worktree is a **current** git worktree are shown on the board
-(stale records linger in the store but are filtered out); finished ones sit in
-the last column, **Done** (see [Done column](#done-column)).
+Only cards whose worktree is a **current** git worktree on the card's own device
+are shown on the board (stale records linger in the store but are filtered out);
+finished ones sit in the last column, **Done** (see [Done column](#done-column)).
+The columns are derived on the board from every card's phases, so they don't
+depend on which device wrote last. With [several devices](#several-devices),
+each card carries its device's chip, and another device's card is read-only for
+its machine actions.
 
 The board also scrolls **horizontally only within each lane's column row** —
 the header stays fixed to the viewport.
@@ -281,17 +615,33 @@ so any field can be surfaced on the board without new daemon plumbing.
 
 ### Settings (`/settings`)
 
+Most settings are **shared by every device** on the board: Briefing, Notes,
+Reminders, the GCS archive (enable flag, bucket, prefix) and the transcript
+backup live in the store's `meta/settings`. Each device keeps a local copy in
+its `board-settings.json` (what the hooks and CLIs read; the daemon keeps it
+in step). The tracked project and the worktree removal command stay local to
+the device.
+
+- **Devices** — every device on the board: its chip, an editable name (empty =
+  its default name), its short id, "this device", last seen, platform, ks-flow
+  version (amber when behind the store's; **dev build** marked, see
+  [Versioning](#versioning)) and worktree count; a **Master** choice (where the master session runs), with
+  a warning when the master device has been stale over an hour; **Forget** /
+  **Take back** for a device that is gone. Before the backfill it shows the
+  backfill command instead. See [Several devices](#several-devices).
 - **Tracked project** — re-point the board at another repo. The path is
   validated as a git repo; the daemon re-points and re-backfills on save.
 - **Worktree removal command** — the command a card's **Remove** runs (see
-  [Removing a worktree](#removing-a-worktree)). Stored in `board-settings.json` (separate from `project.conf`,
-  so bootstrap never clobbers it).
+  [Removing a worktree](#removing-a-worktree)). Local to this device, stored in
+  `board-settings.json` (separate from `project.conf`, so bootstrap never
+  clobbers it).
 - **Archive to Google Cloud Storage** — opt-in (off by default). When enabled,
   Remove first archives the worktree before deleting it (see below). Toggling it
   on runs a **package preflight** (`/api/archive-preflight`) and, if `zstd` (or
   `tar`) is missing, shows a banner with the install command (`brew install
-  zstd`). The enable flag, bucket, and optional object prefix live in
-  `board-settings.json`; **credentials never do** (see env below).
+  zstd`). The enable flag, bucket, and optional object prefix are shared
+  (`meta/settings`); **credentials never are**: each device keeps its own in
+  its `.env` (see env below).
 - **Notes** — opt-in (off by default). Master **Enable Notes** toggle plus
   per-source toggles (**Slack** needs `SLACK_TOKEN`, **Linear** needs
   `LINEAR_API_KEY` in `.env` — both shown live as detected / missing). See
@@ -325,7 +675,9 @@ so the kill only sticks for the stray one.)
 ### Activity Log (`/activity`)
 
 One history of everything ks-flow and the master session do in the background,
-newest first. Each row has a type chip; filter chips narrow it (All · Backup ·
+newest first, from every device: with two or more devices, a **Device** column
+names where each Backup and Master row ran (also in the title row of their
+dialogs). Each row has a type chip; filter chips narrow it (All · Backup ·
 Briefing · Log-in/off · Master, with counts; `?type=backup|briefing|log|master`
 in the URL). Click a row for its details. It replaces the old Backups page:
 `/backups` redirects to `/activity?type=backup`.
@@ -348,7 +700,9 @@ min — `<dataDir>/master/launch.log` has its output.
 
 Opt-in archival of a project's conversation for later analysis. Enable it in
 Settings **and** provide a dedicated GCS service-account via
-`$CLAUDE_PLUGIN_DATA/.env` (independent of any Firestore creds):
+`$CLAUDE_PLUGIN_DATA/.env` (independent of any Firestore creds). The switch and
+the bucket are shared by every device; the credentials are not, so **each
+device needs its own** in its own `.env`:
 
 ```
 GCS_BUCKET=my-ks-flow-archives          # or set the bucket in Settings
@@ -393,7 +747,8 @@ covers it.
 
 Once a day (default **23:45** local) the daemon backs up every session transcript
 that changed in the last 24h, for every unit reachable through a **live git
-worktree** of the tracked project. It runs as a child process, and catches up on
+worktree** of the tracked project on this device. Each device sweeps only its
+own cards, on its own schedule. It runs as a child process, and catches up on
 wake or after a restart if a day was missed, so a Mac asleep through the window
 does not silently skip a day.
 
@@ -407,8 +762,9 @@ run — and every error. It is written as the run starts and completed as
 it ends, so a run that died mid-way still shows, as *interrupted*. The
 [Activity Log](#activity-log-activity) lists the runs as **Backup** rows;
 clicking one opens what it uploaded. The daemon's once-a-day
-check reads the newest finished run to decide whether today's sweep has
-happened. Status, reindex and dry runs upload nothing and are not recorded.
+check reads the newest finished run **of this device** to decide whether
+today's sweep has happened, so one device's sweep never stands in for
+another's. Each run and each unit's index entry carries its `deviceId`. Status, reindex and dry runs upload nothing and are not recorded.
 
 **The store is required.** The backup index (below) lives in the store too, so a
 sweep refuses to run when PocketBase is down rather than re-uploading every
@@ -648,14 +1004,16 @@ backup/restore, reminders and **Remove**. Newest activity first.
 By default the column holds only Done work **whose git worktree still exists**
 — cleanup candidates. Tick **show removed** in the header to add Done work whose
 worktree is already gone: those cards are dimmed and offer only Restore, since
-there is no worktree left to act on.
+there is no worktree left to act on. A [forgotten device](#several-devices)'s
+cards join them here, whatever their phase.
 
 A Done ticket with a live worktree is still read from Linear every 3 minutes, so
 reopening it moves its card back to its phase column.
 
 ### Removing a worktree
 
-Every card with a live worktree has a **Remove** button. On a card outside the
+Every card with a live worktree on this device has a **Remove** button
+(another device's card has none: remove it on that device). On a card outside the
 Done column the confirmation adds a red warning that the ticket is still open
 and unpushed commits go with the branch if your command deletes it.
 
@@ -719,7 +1077,9 @@ Enabled by default; toggle + tune in `/settings`. **Enable reminders** is the ma
 - **Stop-nudge (auto).** When a session stops (end of turn → idle), the `Stop` hook records the event and the **daemon owns all notices** (the hook fires none): the first notice waits until the session has been **quiet for the debounce window** (default **60s**), then it repeats every **N min** (default 5) until the session **resumes**, **ends** (`SessionEnd`), or hits the **cap** (default 12 nudges). "Quiet" spans the session transcript, its worktree siblings, **and its teammates' subagent transcripts** (`<session>/subagents/*.jsonl`) — so a notice never misfires at a main-turn boundary while background teammates are still working. The gate is *time-since-last-activity* (not a stop-timestamp comparison), which sidesteps the `Stop` event's whole-second timestamp vs the transcript's millisecond timestamps. The daemon only nudges a session that **matches a tracked ticket/project** — an ad-hoc / main-checkout session (no work-unit) is silent rather than firing a generic notice — and it **drops the nudge once the work-unit is complete** (its terminal phase `implementation` COMPLETED, or a closed Linear status: Done / Canceled / Merged / Duplicate). Across a **daemon restart** the `events.jsonl` read offset is persisted (in `checkpoints.json`), so already-consumed Stops aren't replayed/duplicated; instead, startup **reconstructs** the nudge for any session still waiting (its last lifecycle event is a `Stop`, within maxAge — resumed/ended sessions stay quiet). To avoid an N-notice burst, those first post-restart notices are consolidated into **one grouped notice** (*"N sessions waiting on you"* with the identifiers in the body; a lone session gets its normal rich notice), after which each session resumes individual nudges. Each card shows an **▶ active / ⏸ paused** control — **Pause** mutes **all** of that card's notices (the stop-nudge **and** its per-card custom reminders, even a lapsed one) and hides the red overdue glow; it **auto-returns to Active** when the session resumes.
 - **Per-card custom reminder (manual).** The **⏰** control on a card sets a reminder — relative (`30m` / `2h` / `1d`) or an absolute datetime — with an optional note. It fires at due time, then **re-nags once a day** (and on OS-wake / daemon-start) until you stop it — **clear** it (✕), **reschedule** it (edit the due date — that's the snooze), or turn the master switch off. Notes-page reminders share this exact path (see **Notes** below).
 
-Settings: **Enable reminders**, **idle debounce (sec)**, **stop-nudge interval (min)**, **max nudges (cap)** — stored in `board-settings.json` (read by the hooks and the daemon; changes apply without a restart). The panel also has the **Open Notification Settings** button (Alerts setup, above).
+Settings: **Enable reminders**, **idle debounce (sec)**, **stop-nudge interval (min)**, **max nudges (cap)** — shared in `meta/settings` and mirrored into each device's `board-settings.json` (read by the hooks and the daemon; changes apply without a restart).
+
+**Every device notifies.** A reminder's "already notified today" is kept per device in `<dataDir>/reminders-fired.json` (`{uid: {firedAt, dueAt}}`), not in the shared reminder doc, so one device firing it doesn't silence the others; a changed due time re-arms it. Stop-nudges come from the session's own device only, since its hooks write the events. The panel also has the **Open Notification Settings** button (Alerts setup, above).
 
 ### Overdue glow
 
@@ -761,7 +1121,7 @@ A master Claude session (the `ks-master` plugin, started by `claude-ks-master`) 
 - **Escalation:** calm (under 50% of the time used), warm (50–80%), hot (80–100%, one notice), overdue (full red, one notice, then a reminder at each scheduled run). FYI never passes warm. Several notices owed at once become one summary. The reminders switch mutes them, and pausing a card mutes items linked to its ticket. The daemon keeps what it sent in its own `<dataDir>/master/notices.json` and never writes an item, so it can't undo an archive or a due change.
 - **Only you archive.** Nothing closes on its own, a reply doesn't close an ask, and the master can only attach "looks done" evidence. Archive asks Done / Not mine / Won't do and an optional note.
 - **The page:** Next up, then Overdue, Hot, Quick replies, Due today, Later, and Worth knowing (folded); nearest due first in each, except Overdue, which shows the most recently due first (Next up is its top card). The sidebar has the master (Brief me now and Restart master while one runs, both disabled or refused while none does; **Start master** while none does, which the daemon launches right away even with the Briefing off; Open in Claude; one viewer window, opened by `claude-ks-master` when none is open, always shows it and reattaches after every restart), the session roll call and today's counts. **Daily log** (`/daily`) shows what `/ks-master:log-off` wrote: archived, slipped, promises due tomorrow, where each session stopped, engaged time.
-- **The master:** woken by request files in `<dataDir>/master/requests/` (daemon at each slot, the board's buttons); its mod submits them as turns when it's idle. The daemon starts it when it's down and hard-restarts it when a request sits unanswered for 15 min with no heartbeat for 5 (the launch commands' output goes to `<dataDir>/master/launch.log`). A master counts as running while its process lives (found by pid, or by session id before the pid is recorded) or, for its first 3 minutes, while it is still starting: nothing starts a second one beside it. It restarts itself with a handoff (`/ks-master:restart`) after log-off or past 70% context. Each start, restart and request is kept in the store (`master_events`) and listed in the [Activity Log](#activity-log-activity) with the briefing, log-in and log-off runs. See `plugins/ks-master/README.md`.
+- **The master:** one per board, on the device chosen in Settings → **Devices** (see [Several devices](#several-devices)); only that device's daemon runs the Briefing schedule and supervises it. It is woken by request files in that device's `<dataDir>/master/requests/` (daemon at each slot, the board's buttons); its mod submits them as turns when it's idle. A board on another device sends Brief me / Restart as a `masterRequests` doc that the master device's daemon turns into a request file (requests older than 15 min are dropped), and reads the master's status from `devices/<master>.master`. While the master device is asleep or offline, Brief me is disabled ("master device <name> is offline"). The daemon starts it when it's down and hard-restarts it when a request sits unanswered for 15 min with no heartbeat for 5 (the launch commands' output goes to `<dataDir>/master/launch.log`). A master counts as running while its process lives (found by pid, or by session id before the pid is recorded) or, for its first 3 minutes, while it is still starting: nothing starts a second one beside it. It restarts itself with a handoff (`/ks-master:restart`) after log-off or past 70% context. Each start, restart and request is kept in the store (`master_events`) and listed in the [Activity Log](#activity-log-activity) with the briefing, log-in and log-off runs. See `plugins/ks-master/README.md`.
 
 ## Development
 

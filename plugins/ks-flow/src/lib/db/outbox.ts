@@ -22,6 +22,10 @@
 //     retrying it until its deadline), so nothing is flushed until the newest
 //     timed-out entry is SETTLE_MS old: the late original can't then overwrite
 //     the flushed, newer state.
+//   - The write gate (`blocked`, lib/versioning.ts storeWriteBlock): while this
+//     device is behind on the store's data format, a write is DROPPED, not
+//     queued (replaying old-format writes after the update would undo the new
+//     format), and the flusher holds what was queued before.
 import {
   existsSync,
   mkdirSync,
@@ -122,9 +126,14 @@ export interface OutboxOptions {
   settleMs?: number;
   now?: () => number;
   log?: (...a: unknown[]) => void;
+  /** Why writes are off now (null: allowed). A blocked write is dropped; flushing waits. */
+  blocked?: () => string | null;
 }
 
 let seq = 0;
+
+/** Log a dropped write at most this often (per outbox). */
+const DROP_LOG_MS = 5 * 60_000;
 
 export class Outbox {
   readonly dir: string;
@@ -134,6 +143,11 @@ export class Outbox {
   private now: () => number;
   private log: (...a: unknown[]) => void;
   private flushing: Promise<FlushResult> | null = null;
+  private blocked: () => string | null;
+  /** Writes dropped by the gate (this process). */
+  dropped = 0;
+  private droppedUnlogged = 0;
+  private droppedLoggedAt = 0;
 
   constructor(
     dir: string,
@@ -146,6 +160,26 @@ export class Outbox {
     this.settleMs = opts.settleMs ?? SETTLE_MS;
     this.now = opts.now ?? Date.now;
     this.log = opts.log ?? ((...a) => console.error('[ks-flow outbox]', ...a));
+    this.blocked = opts.blocked ?? (() => null);
+  }
+
+  /** Why store writes are off now, or null. */
+  writeBlock(): string | null {
+    try {
+      return this.blocked();
+    } catch {
+      return null;
+    }
+  }
+
+  private drop(n: number, why: string): void {
+    this.dropped += n;
+    this.droppedUnlogged += n;
+    const now = this.now();
+    if (this.droppedLoggedAt && now - this.droppedLoggedAt < DROP_LOG_MS) return;
+    this.log(`dropped ${this.droppedUnlogged} write(s): ${why}`);
+    this.droppedUnlogged = 0;
+    this.droppedLoggedAt = now;
   }
 
   /** Queued file names, oldest first. */
@@ -192,6 +226,11 @@ export class Outbox {
   /** Write through to the store, or queue (see the rules at the top). */
   async write(ops: StoreOp[]): Promise<void> {
     if (ops.length === 0) return;
+    const why = this.writeBlock();
+    if (why) {
+      this.drop(ops.length, why);
+      return;
+    }
     if (this.pending() > 0) {
       this.enqueue(ops, 'order');
       return;
@@ -237,6 +276,12 @@ export class Outbox {
     const res: FlushResult = { applied: 0, failed: 0, remaining: 0, offline: false, settling: false };
     const files = this.files();
     if (files.length === 0) return res;
+    // Behind on the data format: hold the queue (it is from before; the updated
+    // daemon flushes it).
+    if (this.writeBlock()) {
+      res.remaining = files.length;
+      return res;
+    }
 
     // Read; unreadable files are moved aside so they can't block the queue.
     const list: Array<{ file: string; entry: OutboxEntry }> = [];

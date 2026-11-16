@@ -57,7 +57,9 @@ One line per entry, nothing empty shown:
    - *last did*: one line from the unit's newest handoff (`ks-flow session
      <unit> --json` gives its `workflowDir`; the handoffs are in
      `<workflowDir>/resources/handoffs/`, read the newest one's "What Happened"),
-     else its current phase.
+     else its current phase. A unit whose record says `local: false` is on
+     another device (`device` names it): its workflow files are not here, so
+     write `on <device>` for *last did*.
    - *suggestion*: one of the board's four, with a few words of why when it
      helps:
      - `leave running` — working on its own, nothing needed from them;

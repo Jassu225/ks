@@ -11,6 +11,7 @@ import {
   createWriteStream,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -23,10 +24,15 @@ import { loadConfig, readProjectConf } from './lib/config.js';
 import { createProvider } from './lib/db/index.js';
 import { startOutboxFlusher } from './lib/db/outbox-flusher.js';
 import type {
+  DeviceDoc,
+  DeviceMasterStatus,
   LiveSession,
+  MasterEventDoc,
+  MasterRequestDoc,
   ReminderDoc,
   SessionDoc,
   SessionWriter,
+  SettingsDoc,
   WorkUnitDoc,
 } from './lib/db/types.js';
 import { backupSettings, briefingSettings, reminderSettings } from './lib/boardsettings.js';
@@ -50,10 +56,41 @@ import {
   writeDaemonState,
   writeNotices,
   writeRequest,
+  BOARD_PROMPTS,
+  masterStatusSig,
+  readMasterStatus,
+  writeStartRequest,
 } from './lib/master.js';
+import { isMasterDevice, MasterRequestQueue } from './lib/master-device.js';
 import { masterEvent, recordMasterEvent, scheduleRequestEvent, supervisorEvent } from './lib/master-events.js';
-import { isFullSweep, listRuns, type BackupRun } from './lib/backup-runs.js';
+import {
+  defaultDeviceName,
+  deviceConfigFile,
+  ensureStoredDeviceId,
+  resolveDeviceId,
+  writeDeviceFile,
+  type DeviceIdResolution,
+} from './lib/device.js';
+import { sharedBlocks } from './lib/device-backfill.js';
+import { pendingSettingsWrite, syncSharedSettings } from './lib/sharedsettings.js';
+import { pruneFired, readFired, recordFired, shouldFire, writeFired } from './lib/reminders-fired.js';
+import { CardOwners } from './lib/ownership.js';
+import { activeRun, doneSweeps, listRuns, type BackupRun } from './lib/backup-runs.js';
 import { notify, terminalNotifierAvailable } from './lib/notify.js';
+import { ksPluginRoot } from './lib/ksroot.js';
+import { detectBuild } from './lib/build-info.js';
+import {
+  decideVersion,
+  raisePatch,
+  readUpdateState,
+  readVersionStatus,
+  SCHEMA_VERSION,
+  startupStatus,
+  writeUpdateState,
+  writeVersionStatus,
+  type CodeVersion,
+  type VersionStatus,
+} from './lib/versioning.js';
 import {
   addOverlay,
   applyLine,
@@ -105,6 +142,351 @@ const { projectId, commonDir: PROJECT_COMMON_DIR, projectPath } = conf;
 const provider = createProvider(cfg);
 const writer: SessionWriter = provider.writer();
 
+// ── this device (one board for several devices) ─────────────────────────────
+// Generated once and stored as ks.KS_DEVICE_ID (lib/device.ts; KS_DEVICE_ID in
+// the environment overrides), then read back on every start; also written to
+// <dataDir>/device.json for the board and the CLIs. Every card, session and
+// master event this daemon writes carries it.
+let deviceIdError: string | null = null;
+const DEVICE_ID: DeviceIdResolution & { stored: boolean } = (() => {
+  try {
+    return ensureStoredDeviceId();
+  } catch (e) {
+    deviceIdError = (e as Error)?.message ?? String(e);
+    return { ...resolveDeviceId(), stored: false };
+  }
+})();
+const SELF = { deviceId: DEVICE_ID.deviceId, defaultName: defaultDeviceName() };
+const devicesStore = provider.devices();
+/** The command that sets a store up for devices (scripts/one-off/backfill-devices.ts),
+ * ready to paste: the ks-flow plugin's own folder and this daemon's data dir. */
+function backfillCmd(): string {
+  const root = ksPluginRoot('ks-flow');
+  const q = (p: string) => `'${p.replace(/'/g, `'\\''`)}'`;
+  const src = root ? q(join(root, 'src')) : 'plugins/ks-flow/src';
+  return `cd ${src} && { [ -d node_modules ] || npm ci; } && npx tsx ../scripts/one-off/backfill-devices.ts --data-dir ${q(DATA_DIR)}`;
+}
+/**
+ * Device mode: meta/settings exists (the backfill ran), so this daemon keeps
+ * devices/{self}. Until then it keeps the one-device behaviour (meta/project)
+ * and writes no device data, so a board that predates devices keeps working;
+ * every heartbeat checks again, so running the backfill switches it over
+ * within a minute.
+ */
+let deviceMode = false;
+let backfillAsked = false; // "run the backfill" logged once
+const DEVICE_HEARTBEAT_MS = 60_000;
+
+// ── versioning (lib/versioning.ts, README "Versioning") ──────────────────────
+// This build: ks-flow's plugin.json version (bootstrap leaves it in
+// <dataDir>/daemon/build.json), how it was installed, and whether it is a dev
+// build (a clone not on main, or with uncommitted changes).
+const DAEMON_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
+function packageVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(DAEMON_DIR, 'package.json'), 'utf8'));
+    return typeof pkg.version === 'string' ? pkg.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+const BUILD = detectBuild({ daemonDir: DAEMON_DIR, findRoot: () => ksPluginRoot('ks-flow'), fallbackVersion: packageVersion() });
+const CODE: CodeVersion = { version: BUILD.version, schemaVersion: SCHEMA_VERSION, dev: BUILD.dev, devReason: BUILD.devReason };
+const DAEMON_VERSION = BUILD.version;
+
+/**
+ * This device's version status (<dataDir>/version-status.json): what the board,
+ * the SessionStart hook, `ks-setup doctor` and every store writer of this device
+ * read. It starts from the last file (still read-only while this is the same,
+ * behind code) and is redone on every meta/settings read and every minute.
+ */
+let versionStatus: VersionStatus = startupStatus(
+  readVersionStatus(DATA_DIR),
+  {
+    deviceId: SELF.deviceId,
+    deviceName: SELF.defaultName,
+    version: CODE.version,
+    schemaVersion: CODE.schemaVersion,
+    dev: CODE.dev,
+    devReason: CODE.devReason,
+    mode: BUILD.mode,
+    update: readUpdateState(DATA_DIR),
+  },
+  new Date().toISOString(),
+);
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function saveVersionStatus(): void {
+  try {
+    writeVersionStatus(DATA_DIR, versionStatus);
+  } catch (e) {
+    log('version: version-status.json not written', (e as Error)?.message);
+  }
+}
+
+/** Compare this code with meta/settings (null: not read / no meta/settings), then notice, gate and update. */
+function versionTick(settings: SettingsDoc | null): void {
+  const wasReadOnly = versionStatus.readOnly;
+  const d = decideVersion({
+    prev: versionStatus,
+    settings,
+    code: CODE,
+    mode: BUILD.mode,
+    update: readUpdateState(DATA_DIR),
+    now: Date.now(),
+    alive: pidAlive,
+  });
+  versionStatus = d.status;
+  saveVersionStatus();
+  if (d.status.readOnly !== wasReadOnly) {
+    log(
+      d.status.readOnly
+        ? `version: the store's data format is ${d.status.storeSchemaVersion}, this code writes ${CODE.schemaVersion} — store writes are OFF (dropped, not queued) and the board is read-only until ks-flow updates`
+        : 'version: store writes are back on',
+    );
+  }
+  if (d.notice) {
+    log(`version: ${d.notice}`);
+    notify('ks-flow-version', 'ks-flow update', d.notice);
+  }
+  if (d.launchUpdate) launchUpdate();
+}
+
+/** Start `ks-flow update` detached (its own session), so the daemon restart it does can't kill it. */
+function launchUpdate(): void {
+  const script = join(DAEMON_DIR, 'dist', 'update.js');
+  if (!existsSync(script)) {
+    log(`version: ${script} missing — run ks-flow update by hand`);
+    return;
+  }
+  try {
+    const out = openSync(join(DATA_DIR, 'update.log'), 'a');
+    const child = spawn(process.execPath, [script, '--auto'], {
+      detached: true,
+      stdio: ['ignore', out, out],
+      env: { ...process.env, KS_FLOW_DATA: DATA_DIR },
+    });
+    child.unref();
+    // Recorded now, so the next tick doesn't start a second one before it writes its own.
+    writeUpdateState(DATA_DIR, {
+      state: 'running',
+      startedAt: nowIso(),
+      from: CODE.version,
+      to: versionStatus.storeVersion,
+      reason: null,
+      pid: child.pid ?? null,
+      by: 'auto',
+    });
+    log(`version: started ks-flow update (pid ${child.pid}; log ${join(DATA_DIR, 'update.log')})`);
+  } catch (e) {
+    log('version: ks-flow update not started', (e as Error)?.message);
+  }
+}
+
+/** Once per run: raise meta/settings' version (and schema) to this code's, only upward; never from a dev build. */
+let versionRaised = false;
+async function maybeRaiseVersion(): Promise<void> {
+  if (versionRaised || !devicesStore.raiseVersion) return;
+  if (CODE.dev) {
+    versionRaised = true;
+    log(`version: dev build (${CODE.devReason}) — meta/settings' version is left alone`);
+    return;
+  }
+  const next = await devicesStore.raiseVersion((cur) => raisePatch(cur, CODE, SELF.deviceId, nowIso()));
+  versionRaised = true;
+  if (next) {
+    log(`version: raised meta/settings to ${next.version ?? '?'} (schema ${next.schemaVersion ?? '?'})`);
+    applySettings(next);
+  }
+}
+
+/** This board's settings file's shared blocks (for a PocketBase store's own meta/settings). */
+function localSharedSettings(): ReturnType<typeof sharedBlocks> {
+  try {
+    return sharedBlocks(JSON.parse(readFileSync(join(DATA_DIR, 'board-settings.json'), 'utf8')));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Is meta/settings there? Switches device mode on when it appears. A store
+ * that can't be read keeps the current mode. PocketBase is one device's own
+ * store: with no meta/settings there, the daemon creates it itself.
+ */
+async function checkDeviceMode(): Promise<void> {
+  let settings;
+  try {
+    settings = await devicesStore.getSettings();
+  } catch (e) {
+    if (!deviceMode) log('devices: meta/settings not readable, keeping the one-device behaviour for now:', (e as Error)?.message);
+    return;
+  }
+  if (!settings && provider.name === 'pocketbase') {
+    await devicesStore.createSettings({
+      ...localSharedSettings(),
+      masterDeviceId: SELF.deviceId,
+      sharedUpdatedAt: nowIso(),
+    });
+    settings = await devicesStore.getSettings();
+    log('devices: created meta/settings in PocketBase (this device is the master device)');
+  }
+  if (!settings) {
+    if (!backfillAsked) {
+      backfillAsked = true;
+      log(`devices: no meta/settings in the store — run the one-time backfill on this device: ${backfillCmd()} (see its header). Until then this daemon keeps writing meta/project and no device data.`);
+    }
+    return;
+  }
+  applySettings(settings);
+  await maybeRaiseVersion().catch((e) => log('version: raise failed (retried next minute):', (e as Error)?.message));
+  if (!deviceMode) {
+    deviceMode = true;
+    log(`devices: meta/settings found — device mode on (this device ${SELF.deviceId}, master device ${settings.masterDeviceId})`);
+    await onDeviceModeOn();
+  }
+}
+
+// ── shared settings (lib/sharedsettings.ts) ─────────────────────────────────
+// meta/settings holds the blocks every device shares; board-settings.json
+// stays the local mirror the daemon's readers (lib/boardsettings) and the
+// synchronous readers keep using. Each read of meta/settings (the 60 s device
+// check, and the listener when the store has one) is mirrored into the file.
+/** meta/settings as last read; null before the backfill (or before the first read). */
+let sharedSettings: SettingsDoc | null = null;
+let settingsUnsub: (() => void) | null = null;
+let settingsSyncing: Promise<unknown> = Promise.resolve();
+
+/** A meta/settings write from this device still waiting in the offline outbox. */
+function settingsWritePending(): boolean {
+  const ob = provider.outbox?.();
+  return ob ? pendingSettingsWrite(ob.entries()) : false;
+}
+
+/** Take a freshly read meta/settings: remember it, mirror it into the file (one pass at a time). */
+function applySettings(settings: SettingsDoc): void {
+  const before = sharedSettings?.masterDeviceId;
+  sharedSettings = settings;
+  // First: a newer data format in the store turns this device's writes off
+  // before anything else here writes.
+  versionTick(settings);
+  // masterDeviceId is followed whatever sharedUpdatedAt says: Settings →
+  // Devices changes it alone, without a stamp (the stamp guards the blocks only).
+  if (before !== settings.masterDeviceId) onMasterDeviceChanged(before ?? null, settings.masterDeviceId);
+  settingsSyncing = settingsSyncing
+    .then(() =>
+      syncSharedSettings({
+        dataDir: DATA_DIR,
+        store: devicesStore,
+        known: settings,
+        pendingStoreWrite: settingsWritePending,
+        log,
+      }),
+    )
+    .catch((e) => log('settings: mirror failed', (e as Error)?.message));
+}
+
+/** Follow meta/settings live (Firestore); PocketBase relies on the 60 s check. */
+function watchSettings(): void {
+  if (settingsUnsub || !devicesStore.watchSettings) return;
+  try {
+    settingsUnsub = devicesStore.watchSettings((s) => {
+      if (s) applySettings(s);
+    });
+  } catch (e) {
+    log('settings: listener not started (the 60 s check still mirrors meta/settings):', (e as Error)?.message);
+  }
+}
+
+/** True once this run wrote meta/project (legacy mode): device mode deletes it again. */
+let wroteLegacyProject = false;
+
+/**
+ * Device mode just started: meta/project is retired. A write this run made
+ * before the backfill (or one still queued offline) would bring it back, so it
+ * is deleted once more; then devices/{self} gets this device's facts.
+ */
+async function onDeviceModeOn(): Promise<void> {
+  if (wroteLegacyProject) {
+    await devicesStore.deleteLegacyProject().catch((e) => log('devices: meta/project not deleted', (e as Error)?.message));
+    wroteLegacyProject = false;
+  }
+  lastDeviceSig = null;
+  scheduleProjectRecompute();
+  watchSettings();
+}
+
+// ── card ownership (lib/ownership.ts) ───────────────────────────────────────
+// A card another device owns is never written here. Seeded by seedWriteGate,
+// kept current by the store's listener (another device's card-move).
+const owners = new CardOwners(
+  SELF.deviceId,
+  async (unitId) => {
+    const card = await devicesStore.getWorkUnit(unitId);
+    return { exists: !!card, deviceId: card?.deviceId ?? null };
+  },
+  (msg) => log(`ownership: ${msg}`),
+);
+
+/** The card is known to belong to another device. */
+function isForeign(unitId: string): boolean {
+  const o = owners.known(unitId);
+  return !!o && o !== SELF.deviceId;
+}
+
+/** Follow the cards' owners live: a card moved here is rewritten, one moved away is left alone. */
+function watchOwners(): void {
+  if (!devicesStore.watchCardOwners) return;
+  try {
+    devicesStore.watchCardOwners((list) => {
+      let movedHere = false;
+      for (const { unitId, deviceId } of list) {
+        const before = owners.known(unitId);
+        if (before === deviceId || (before === undefined && deviceId === null)) {
+          if (before === undefined) owners.set(unitId, deviceId);
+          continue;
+        }
+        owners.set(unitId, deviceId);
+        if (deviceId === SELF.deviceId && before && before !== SELF.deviceId) {
+          lastUnitSig.delete(unitId); // its content is the other device's: write ours
+          movedHere = true;
+        }
+      }
+      if (movedHere) scheduleProjectRecompute();
+    });
+  } catch (e) {
+    log('ownership: owner listener not started (owners read per card instead):', (e as Error)?.message);
+  }
+}
+
+/** The `devices` job: device mode check, then this device's heartbeat (merge; never `name`). */
+async function deviceHeartbeat(): Promise<void> {
+  await checkDeviceMode();
+  // Every minute: an update's outcome (update-state.json) reaches the status file and the notice.
+  versionTick(sharedSettings);
+  if (!deviceMode) return;
+  const beat: Partial<DeviceDoc> = {
+    defaultName: SELF.defaultName,
+    platform: process.platform,
+    daemonVersion: DAEMON_VERSION,
+    schemaVersion: SCHEMA_VERSION,
+    devBuild: BUILD.dev,
+    devReason: BUILD.devReason,
+    lastSeenAt: nowIso(),
+    projectPath,
+    commonDir: PROJECT_COMMON_DIR,
+  };
+  await devicesStore.mergeDevice(SELF.deviceId, beat);
+}
+
 const IDLE_MS = cfg.idleMinutes * 60_000;
 const OVERLAY_TTL_MS = 10 * 60_000;
 
@@ -152,11 +534,12 @@ const sessionDocs = new Map<string, SessionDoc>(); // last materialized doc
 const units = new Map<string, WorkUnitDoc>(); // stateYamlPath → work-unit
 const stateMtimes = new Map<string, number>(); // stateYamlPath → last-parsed mtimeMs (read-I/O gate)
 const lastUnitSig = new Map<string, string>(); // unitId → last-written doc signature (write gate)
-let lastProjectSig: string | null = null; // last-written project doc signature (write gate)
+let lastProjectSig: string | null = null; // last-written meta/project signature (legacy mode write gate)
+let lastDeviceSig: string | null = null; // last-written devices/{self} facts signature (write gate)
 
 /** Fields that change without the doc changing: the write stamp, and a card's
  * time of the last Linear read (every 3 minutes, even when nothing in Linear
- * changed; the project doc's `linearCheckedAt` records that instead, one write
+ * changed; devices/{self}.linearCheckedAt (meta/project's before the backfill) records that instead, one write
  * per read rather than one per card). */
 const SIG_IGNORED = new Set(['updatedAt', 'linearSyncedAt']);
 
@@ -190,14 +573,20 @@ async function seedWriteGate(): Promise<void> {
     const source = provider.source();
     // Offline, firebase-admin retries reads until its own deadline; don't hold startup for it.
     const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timed out after 10s')), 10_000).unref());
-    const [proj, units] = await Promise.race([
-      Promise.all([source.getProject(projectId), source.getWorkUnits(projectId)]),
+    const [proj, self, units] = await Promise.race([
+      Promise.all([
+        deviceMode ? Promise.resolve(null) : source.getProject(projectId),
+        deviceMode ? devicesStore.getDevice(SELF.deviceId) : Promise.resolve(null),
+        source.getWorkUnits(projectId),
+      ]),
       timeout,
     ]);
     if (proj) {
       lastProjectSig = docSig(proj);
       linearCheckedAt = proj.linearCheckedAt ?? null;
     }
+    if (self) linearCheckedAt = self.linearCheckedAt ?? null;
+    owners.seed(units);
     for (const u of units) {
       lastUnitSig.set(u.unitId, docSig(u));
       // In-memory facts the cards carry, restored so the first recompute writes
@@ -364,6 +753,7 @@ function snapshot(acc: SessionAcc, inProject: boolean): SessionDoc {
     inProject,
     nowIso: nowIso(),
   });
+  doc.deviceId = SELF.deviceId;
   sessionDocs.set(acc.sessionId, doc);
   return doc;
 }
@@ -529,6 +919,47 @@ async function refreshCard(unitId: string): Promise<void> {
   await recomputeProject();
 }
 
+/**
+ * This device's facts: devices/{self} (merge) in device mode, written only when
+ * they changed. Before the backfill (no meta/settings), the one-device
+ * meta/project as before, columns included, so a board that predates devices
+ * keeps working.
+ */
+async function recomputeDevice(joined: WorkUnitDoc[], deduped: WorkUnitDoc[]): Promise<void> {
+  if (deviceMode) {
+    const facts: Partial<DeviceDoc> = {
+      projectPath,
+      commonDir: PROJECT_COMMON_DIR,
+      worktreePaths: knownWorktrees,
+      inboxUrl,
+      inboxRunning: inboxIsRunning,
+      linearCheckedAt,
+    };
+    const sig = docSig(facts);
+    if (sig === lastDeviceSig) return;
+    lastDeviceSig = sig;
+    await devicesStore.mergeDevice(SELF.deviceId, facts);
+    return;
+  }
+  const projectDoc = {
+    projectId,
+    projectPath,
+    commonDir: PROJECT_COMMON_DIR,
+    workflowType: projectWorkflowType(joined),
+    phaseModel: derivePhaseModel(deduped),
+    worktreePaths: knownWorktrees,
+    inboxUrl,
+    inboxRunning: inboxIsRunning,
+    linearCheckedAt,
+  };
+  const projectSig = docSig(projectDoc);
+  if (projectSig !== lastProjectSig) {
+    lastProjectSig = projectSig;
+    wroteLegacyProject = true;
+    await writer.upsertProject({ ...projectDoc, updatedAt: nowIso() });
+  }
+}
+
 async function recomputeProject(): Promise<void> {
   const unitList = [...units.values()].map(withLinear);
   const sessions = [...sessionDocs.values()].filter((s) => s.inProject);
@@ -568,37 +999,23 @@ async function recomputeProject(): Promise<void> {
     if (!cur || gt(rank(u), rank(cur))) best.set(u.unitId, u);
   }
   const deduped = [...best.values()];
-  const phaseModel = derivePhaseModel(deduped);
   // join sessions onto each card, then their Inbox threads (by session id / worktree)
   const joined = deduped.map((u) => attachInbox(joinUnit(u, sessions, liveSessions), inboxThreads));
   lastJoined.clear();
   for (const u of joined) lastJoined.set(u.unitId, u);
   // Every ticket with a live worktree, Done ones included: they sit in the Done
   // column until removed, and a reopened ticket must move back to its phase.
+  // Only this device's: another device's card is read from Linear by its own daemon.
   boardTickets = joined
     .filter((u) => u.type === 'ticket' && /^[A-Z]+-\d+$/.test(u.identifier) && isLive(u.worktreeDir))
+    .filter((u) => !isForeign(u.unitId))
     .map((u) => u.identifier);
 
   // Write gate: only upsert docs that actually changed. recomputeProject runs on
   // every state.yaml/session change but touches every unit, so without this a
   // single edit re-writes the whole (ever-growing) set each time. The signature
   // excludes updatedAt so an unchanged doc isn't seen as "new" via its stamp.
-  const projectDoc = {
-    projectId,
-    projectPath,
-    commonDir: PROJECT_COMMON_DIR,
-    workflowType: projectWorkflowType(joined),
-    phaseModel,
-    worktreePaths: knownWorktrees,
-    inboxUrl,
-    inboxRunning: inboxIsRunning,
-    linearCheckedAt,
-  };
-  const projectSig = docSig(projectDoc);
-  if (projectSig !== lastProjectSig) {
-    lastProjectSig = projectSig;
-    await writer.upsertProject({ ...projectDoc, updatedAt: nowIso() });
-  }
+  await recomputeDevice(joined, deduped);
 
   // A card is worktree-backed only if its worktreeDir is a CURRENT git worktree
   // (old state.yaml records removed worktrees; leftover dirs still exist, so
@@ -608,15 +1025,19 @@ async function recomputeProject(): Promise<void> {
     const refreshed = cardRefresh.get(u.unitId);
     const doc = {
       ...u,
+      deviceId: SELF.deviceId,
       worktreeDir,
       ...(refreshed ? { cardRefreshedAt: refreshed.at, cardRefreshError: refreshed.error } : {}),
     };
     const sig = docSig(doc);
     if (lastUnitSig.get(u.unitId) === sig) continue; // unchanged → skip the DB write
+    // Another device's card (or an owner the store can't tell yet): never written here.
+    if (!(await owners.decide(u.unitId)).write) continue;
     lastUnitSig.set(u.unitId, sig);
+    owners.wrote(u.unitId);
     await writer.upsertWorkUnit(projectId, { ...doc, updatedAt: nowIso() });
   }
-  noticeInbox(joined.filter((u) => isLive(u.worktreeDir)));
+  noticeInbox(joined.filter((u) => isLive(u.worktreeDir) && !isForeign(u.unitId)));
 }
 
 /** Re-read the running Claude processes; recompute the cards if the set changed. */
@@ -979,28 +1400,42 @@ async function reminderTick(): Promise<void> {
   // straddled sleep still nags). Never more than once per 24h on a plain tick.
   // Gated by the same master `reminders.enabled` switch as stop-nudges — turning
   // reminders OFF silences every notification (stop-nudge + custom + note).
-  const DAY_MS = 86_400_000;
+  // Every device notifies: what THIS device already sent lives in its own
+  // <dataDir>/reminders-fired.json (lib/reminders-fired.ts), never in the
+  // shared reminder doc, which the daemon does not write.
+  let fired = readFired(DATA_DIR);
+  const pruned = pruneFired(fired, new Set(reminders.map((r) => r.uid)));
+  let firedChanged = pruned.changed;
+  fired = pruned.map;
+  const due: Array<{ r: ReminderDoc; subtitle: string }> = [];
   if (settings.enabled) {
     for (const r of reminders) {
       if ((r.kind !== 'custom' && r.kind !== 'note') || r.cleared || r.done || !r.dueAt) continue;
       // Paused card → silence its custom reminder too (notes have no unit/pause).
       if (r.kind === 'custom' && r.unitId && pausedUnits.has(r.unitId)) continue;
-      if (Date.parse(r.dueAt) > now) continue;
-      const last = r.lastFiredAt ? Date.parse(r.lastFiredAt) : null;
       // First fire, or a day has passed since the last, or we woke / just started.
-      if (!(last == null || wake || startup || now - last >= DAY_MS)) continue;
+      if (!shouldFire(r, fired, now, { wake, startup })) continue;
       const subtitle =
         r.kind === 'note'
           ? `${r.workType === 'personal' ? 'Personal' : 'Professional'} ${
               r.section === 'slack' ? 'Slack note' : 'note'
             }`
           : unitTitle(r.unitId) ?? r.unitId ?? 'reminder';
-      notify(r.uid, subtitle, r.note || r.text || 'Reminder due');
-      await writer
-        .upsertReminder(projectId, { ...r, lastFiredAt: nowIso() })
-        .catch((e) => log('upsertReminder failed', e?.message));
+      due.push({ r, subtitle });
+      fired = recordFired(fired, r, now);
+      firedChanged = true;
     }
   }
+  if (firedChanged) {
+    // Written before the notices go out: a failed write must not repeat them every tick.
+    try {
+      writeFired(DATA_DIR, fired);
+    } catch (e) {
+      log('reminders: reminders-fired.json write failed, not notifying', (e as Error)?.message);
+      return;
+    }
+  }
+  for (const { r, subtitle } of due) notify(r.uid, subtitle, r.note || r.text || 'Reminder due');
 }
 
 // ── backfill ────────────────────────────────────────────────────────────────
@@ -1162,6 +1597,14 @@ function startWatchers(): void {
     startWatcher.on('add', (p) => {
       if (p.endsWith('/start-request.json')) setTimeout(masterSuperviseTick, 250);
     });
+    // The master's own files changed (a start, a pid filled in, a heartbeat):
+    // publish its status now rather than at the next 15 s tick.
+    const onMasterFile = (p: string): void => {
+      if (p.endsWith('/session.json') || p.endsWith('/heartbeat.json')) scheduleMasterPublish();
+    };
+    startWatcher.on('add', onMasterFile);
+    startWatcher.on('change', onMasterFile);
+    startWatcher.on('unlink', onMasterFile);
     startWatcher.on('error', (e) => log('master watcher error (continuing):', (e as Error)?.message));
   } catch (e) {
     log('master watcher not started (the 60 s tick still takes start requests):', (e as Error)?.message);
@@ -1234,8 +1677,17 @@ function startWatchers(): void {
       // scheduled requests, and its supervisor. Nothing card-specific, so a
       // card's Refresh leaves them out.
       briefingNotices: { every: BRIEFING_TICK_MS, run: briefingNoticeTick },
+      // Both only on the master device (meta/settings.masterDeviceId).
       briefingSchedule: { every: BRIEFING_TICK_MS, run: briefingScheduleTick },
       master: { every: BRIEFING_TICK_MS, run: masterSuperviseTick },
+
+      // The master device: its master's status to devices/{self}.master (when
+      // it changed), and other devices' masterRequests (the listener's fallback).
+      masterStatus: { every: TICK_MS, run: masterStatusTick },
+      masterRequests: { every: TICK_MS, run: masterRequestsTick },
+
+      // This device's record (devices/{id}) and the device-mode check.
+      devices: { every: DEVICE_HEARTBEAT_MS, run: deviceHeartbeat },
     },
     (name, e) => log(`${name} failed`, (e as Error)?.message),
   );
@@ -1278,13 +1730,18 @@ function backupScriptPath(): string {
 /** The backup run history; null when the store cannot be read. */
 async function backupRuns(): Promise<BackupRun[] | null> {
   try {
-    return await listRuns(provider.backups(), projectId);
+    return await listRuns(provider.backups(), projectId, { self: backupSelf() });
   } catch {
     return null; // store down: the sweep it would start reports that itself
   }
 }
 
 let backupChecking = false;
+
+/** Whose runs count here: this device's in device mode; before the backfill, every run (one device). */
+function backupSelf(): string | undefined {
+  return deviceMode ? SELF.deviceId : undefined;
+}
 
 async function backupTick(): Promise<void> {
   const s = backupSettings();
@@ -1301,10 +1758,12 @@ async function backupTick(): Promise<void> {
   });
   // Any sweep still going (a "Back up now", a removal) owns the bucket and the
   // index for now: wait for it rather than start a second one beside it.
-  if (runs?.some((r) => r.status === 'running')) return;
-  // Today's sweep is any full sweep that started today and did its job — the
-  // daily one or a "Back up now". One card's backup is not the project's.
-  const fullSweeps = (runs ?? []).filter((r) => isFullSweep(r) && (r.status === 'ok' || r.status === 'partial'));
+  // Only this device's: each device sweeps its own worktrees.
+  if (runs && activeRun(runs, backupSelf())) return;
+  // Today's sweep is any full sweep of THIS device that started today and did
+  // its job — the daily one or a "Back up now". One card's backup is not the
+  // project's, and another device's sweep never covers this one's sessions.
+  const fullSweeps = doneSweeps(runs ?? [], backupSelf());
   const lastSweptToday = fullSweeps.some((r) => dayStr(new Date(r.startedAt)) === today);
   if (lastSweptToday) return;
   const lastMs = fullSweeps.length ? Math.max(...fullSweeps.map((r) => Date.parse(r.startedAt))) : NaN;
@@ -1349,6 +1808,10 @@ async function backupTick(): Promise<void> {
 // last start/restart across daemon restarts.
 const BRIEFING_TICK_MS = 60_000; // 4 ticks
 const briefingStore = provider.briefing();
+/** Record a master event (lib/master-events), stamped with this device. */
+function recordEvent(doc: MasterEventDoc, l: (...a: unknown[]) => void = log): Promise<void> {
+  return recordMasterEvent(briefingStore, projectId, { ...doc, deviceId: SELF.deviceId }, l);
+}
 const MASTER_DIR = masterDir(DATA_DIR);
 let masterState: ReturnType<typeof readDaemonState> | null = null; // read on first use
 let lastMasterWhy: string | null = null; // the supervisor's last "held" reason (log once)
@@ -1402,6 +1865,7 @@ async function briefingNoticeTick(): Promise<void> {
  * was down is written on the first tick if it is at most 6 h old.
  */
 function briefingScheduleTick(): void {
+  if (!masterHere()) return; // another device is the master device
   masterState ??= readDaemonState(MASTER_DIR);
   const s = briefingSettings();
   const d = decideSchedule({ now: new Date(), schedule: s.schedule, enabled: s.enabled, slotAt: masterState.slotAt });
@@ -1417,7 +1881,7 @@ function briefingScheduleTick(): void {
         ? `briefing: schedule request for the ${d.write.slot} slot written (${req.id})`
         : `briefing: ${d.write.slot} slot — a schedule request is already pending, not writing another`,
     );
-    void recordMasterEvent(briefingStore, projectId, scheduleRequestEvent(d.write.slot, req), log);
+    void recordEvent(scheduleRequestEvent(d.write.slot, req), log);
   } else if (s.enabled) {
     log(`briefing: ${slotLabel(d.advanceTo)} slot not requested (${d.why})`);
   }
@@ -1439,6 +1903,9 @@ function slotLabel(d: Date): string {
  * the running Claude processes (liveSessions), else its pid running `claude`.
  */
 function masterSuperviseTick(): void {
+  // Another device is the master device: no start, no restart here. A master
+  // session already running on this device is left as it is.
+  if (!masterHere()) return;
   masterState ??= readDaemonState(MASTER_DIR);
   const session = readSession(MASTER_DIR);
   const alive =
@@ -1447,14 +1914,14 @@ function masterSuperviseTick(): void {
       (session.pid !== null && pidIsClaude(session.pid)));
   const now = Date.now();
   const press = takeStartRequest(MASTER_DIR);
+  // A press on another device's board (masterRequests) names that device.
+  const pressReason = press?.from ? `Start master (board on ${press.from})` : 'Start master (board)';
   if (press) {
     const m = decideManualStart({ now, session, alive, heartbeat: readHeartbeat(MASTER_DIR) });
     if (!m.start) {
       log(`master: start requested from the board, not starting (${m.why})`);
-      void recordMasterEvent(
-        briefingStore,
-        projectId,
-        masterEvent({ kind: 'start', reason: 'Start master (board)', by: 'board', result: 'dropped', detail: m.why }),
+      void recordEvent(
+        masterEvent({ kind: 'start', reason: pressReason, by: 'board', result: 'dropped', detail: m.why }),
         log,
       );
       return;
@@ -1463,10 +1930,10 @@ function masterSuperviseTick(): void {
     masterState.lastActionAt = new Date(now).toISOString();
     masterState.lastAction = 'start';
     saveMasterState();
-    const ev = masterEvent({ kind: 'start', reason: 'Start master (board)', by: 'board' });
-    const recorded = recordMasterEvent(briefingStore, projectId, ev, log);
+    const ev = masterEvent({ kind: 'start', reason: pressReason, by: 'board' });
+    const recorded = recordEvent(ev, log);
     runMasterCommand(MASTER_START_CMD, MASTER_DIR, log, (outcome) => {
-      void recorded.then(() => recordMasterEvent(briefingStore, projectId, { ...ev, ...outcome }, log));
+      void recorded.then(() => recordEvent({ ...ev, ...outcome }, log));
     });
     return;
   }
@@ -1497,10 +1964,158 @@ function masterSuperviseTick(): void {
   // completed when it exits — after the first write settled, so the update
   // finds the record instead of creating a second one.
   const ev = supervisorEvent(d.action, d.why);
-  const recorded = recordMasterEvent(briefingStore, projectId, ev, log);
+  const recorded = recordEvent(ev, log);
   runMasterCommand(cmd, MASTER_DIR, log, (outcome) => {
-    void recorded.then(() => recordMasterEvent(briefingStore, projectId, { ...ev, ...outcome }, log));
+    void recorded.then(() => recordEvent({ ...ev, ...outcome }, log));
   });
+}
+
+// ── the master device (lib/master-device.ts) ────────────────────────────────
+// One master, on the device meta/settings.masterDeviceId names. Only its
+// daemon runs the two jobs above, publishes the master's status to
+// devices/{self}.master and takes other devices' masterRequests. Before the
+// device backfill every device is its own master (as before).
+
+/** This device runs the master. */
+function masterHere(): boolean {
+  return isMasterDevice(sharedSettings, SELF.deviceId, deviceMode);
+}
+
+/** Store-side master work applies in device mode, and not on PocketBase (one device, the board uses local files). */
+function masterStoreSide(): boolean {
+  return deviceMode && provider.name !== 'pocketbase';
+}
+
+let masterRequestsUnsub: (() => void) | null = null;
+
+/** meta/settings named a (new) master device: start or stop being it. */
+function onMasterDeviceChanged(before: string | null, now: string): void {
+  const self = SELF.deviceId;
+  if (before !== null) log(`devices: master device is now ${now}${now === self ? ' (this device)' : ''}`);
+  if (now === self) {
+    if (before !== null && before !== self) log('master: this device is the master device now — the Briefing schedule and the master supervisor run here');
+    watchMasterRequests();
+  } else {
+    if (before === self) {
+      log(`master: ${now} is the master device now — the Briefing schedule and the master supervisor stop here; a master session still running on this device is left as it is`);
+    }
+    masterRequestsUnsub?.();
+    masterRequestsUnsub = null;
+  }
+  scheduleMasterPublish();
+}
+
+/** Its name for logs and events: name ?? defaultName, else the id. */
+async function deviceLabel(deviceId: string): Promise<string> {
+  try {
+    const d = await devicesStore.getDevice(deviceId);
+    return d?.name || d?.defaultName || deviceId;
+  } catch {
+    return deviceId;
+  }
+}
+
+// devices/{self}.master: always written whole (every field, nulls included),
+// on change; `master: null` once when this device is (no longer) the master.
+let lastMasterSig: string | null = null;
+let masterPublishTimer: NodeJS.Timeout | null = null;
+let masterPublishing = false;
+
+function scheduleMasterPublish(): void {
+  if (masterPublishTimer) return;
+  masterPublishTimer = setTimeout(() => {
+    masterPublishTimer = null;
+    void masterStatusTick().catch((e) => log('master: status not published', (e as Error)?.message));
+  }, 500);
+}
+
+async function masterStatusTick(): Promise<void> {
+  if (!deviceMode || masterPublishing) return;
+  masterPublishing = true;
+  try {
+    if (!masterHere()) {
+      if (lastMasterSig === 'null') return;
+      await devicesStore.mergeDevice(SELF.deviceId, { master: null });
+      lastMasterSig = 'null';
+      return;
+    }
+    const b = briefingSettings();
+    const st = readMasterStatus(MASTER_DIR, { briefing: { enabled: b.enabled, schedule: b.schedule } });
+    const sig = masterStatusSig(st);
+    if (sig === lastMasterSig) return;
+    await devicesStore.mergeDevice(SELF.deviceId, { master: st as unknown as DeviceMasterStatus });
+    lastMasterSig = sig;
+  } finally {
+    masterPublishing = false;
+  }
+}
+
+// masterRequests: another device's board asking for a start, a run or a restart.
+const BOARD_REASON: Record<'button' | 'restart', string> = {
+  button: 'Brief me now',
+  restart: 'Restart master',
+};
+
+/** Turn one request into the local file this device's board would have written, and record it. */
+async function handleMasterRequest(req: MasterRequestDoc, expired: boolean): Promise<void> {
+  const from = await deviceLabel(req.from);
+  const label = req.trigger === 'start' ? 'Start master' : BOARD_REASON[req.trigger];
+  const reason = `${label} (board on ${from})`;
+  const kind = req.trigger === 'start' ? 'start' : 'request';
+  const trigger = req.trigger === 'start' ? undefined : req.trigger;
+  if (expired) {
+    const mins = Math.round((Date.now() - Date.parse(req.createdAt)) / 60_000);
+    log(`master: ${req.trigger} request from ${from} dropped: ${Number.isFinite(mins) ? `${mins} min old` : 'no time'} (requests expire after 15 min)`);
+    await recordEvent(masterEvent({ kind, trigger, reason, by: 'board', result: 'dropped', detail: 'asked more than 15 min ago' }));
+    return;
+  }
+  if (req.trigger === 'start') {
+    // The master job takes it (and records the event) like a local press.
+    writeStartRequest(MASTER_DIR, { by: 'board', from });
+    setTimeout(masterSuperviseTick, 250);
+    log(`master: start requested from ${from}`);
+    return;
+  }
+  const b = briefingSettings();
+  if (!readMasterStatus(MASTER_DIR, { briefing: { enabled: b.enabled, schedule: b.schedule } }).alive) {
+    log(`master: ${req.trigger} request from ${from} dropped: no master is running`);
+    await recordEvent(masterEvent({ kind, trigger, reason, by: 'board', result: 'dropped', detail: 'no master is running' }));
+    return;
+  }
+  const written = writeRequest(MASTER_DIR, { trigger: req.trigger, slot: null, prompt: BOARD_PROMPTS[req.trigger] });
+  log(`master: ${req.trigger} request from ${from} ${written ? 'written' : 'dropped (one is already pending)'}`);
+  await recordEvent(
+    masterEvent({
+      kind,
+      trigger,
+      reason,
+      by: 'board',
+      result: written ? 'ok' : 'dropped',
+      detail: written ? `${written.createdAt}-${req.trigger}.json` : `a ${req.trigger} request was already pending`,
+    }),
+  );
+  scheduleMasterPublish();
+}
+
+const masterRequests = new MasterRequestQueue(devicesStore, handleMasterRequest, (m) => log(m));
+
+/** Follow masterRequests live while this is the master device (Firestore). */
+function watchMasterRequests(): void {
+  if (masterRequestsUnsub || !masterStoreSide() || !masterHere() || !devicesStore.watchMasterRequests) return;
+  try {
+    masterRequestsUnsub = devicesStore.watchMasterRequests((list) => {
+      if (list.length) void masterRequests.take(list);
+    });
+  } catch (e) {
+    log('master: masterRequests listener not started (the 15 s tick still takes them):', (e as Error)?.message);
+  }
+}
+
+/** The `masterRequests` job: the listener's fallback. */
+async function masterRequestsTick(): Promise<void> {
+  if (!masterStoreSide() || !masterHere()) return;
+  watchMasterRequests();
+  await masterRequests.take();
 }
 
 // ── lifecycle ───────────────────────────────────────────────────────────────
@@ -1514,6 +2129,10 @@ async function main(): Promise<void> {
   if (cfg.dbProvider === 'pocketbase' && process.env.KS_FLOW_DRYRUN !== '1') {
     pbHandle = await startPocketbase(cfg.pocketbasePort, log);
   }
+  // Versioning: publish this build's status first (the write gate reads it), so
+  // code still behind on the data format writes nothing before its first read.
+  saveVersionStatus();
+  log(`ks-flow ${CODE.version} (schema ${CODE.schemaVersion}, ${BUILD.mode}${CODE.dev ? `, dev build: ${CODE.devReason}` : ''})${versionStatus.readOnly ? ' — still behind on the data format: store writes off' : ''}`);
   // Offline mode (Firestore): writes that couldn't reach the store wait in
   // <dataDir>/outbox; the daemon is the one that syncs them.
   const outbox = provider.outbox?.();
@@ -1525,7 +2144,36 @@ async function main(): Promise<void> {
   const evDay = fileDay(EVENTS_PATH);
   if (evDay && evDay !== activeDay) rotateEvents(evDay);
   liveSessions = readLiveSessions(); // before backfill's first recompute
+  try {
+    writeDeviceFile(DATA_DIR, SELF);
+  } catch (e) {
+    log('devices: device.json not written', (e as Error)?.message);
+  }
+  const idFrom = {
+    env: 'from KS_DEVICE_ID in the environment',
+    config: `stored in ${deviceConfigFile()}`,
+    hardware: DEVICE_ID.stored ? `generated, now stored in ${deviceConfigFile()}` : 'generated (not stored)',
+    hostname: 'from the host name',
+  }[DEVICE_ID.source];
+  log(`device ${SELF.deviceId} (${SELF.defaultName}), ${idFrom}`);
+  if (deviceIdError) log('devices: WARNING the device id was not stored', deviceIdError);
+  if (DEVICE_ID.source === 'hostname') {
+    log('devices: WARNING no hardware id on this machine — the device id comes from the host name and is not stored (ks-config set ks.KS_DEVICE_ID <id> to pin one)');
+  }
+  if (DEVICE_ID.source === 'config' && DEVICE_ID.hardwareId &&DEVICE_ID.hardwareId !== SELF.deviceId) {
+    log(
+      `devices: WARNING the device id ${SELF.deviceId} is not this Mac's own (${DEVICE_ID.hardwareId}): ` +
+        'the config was copied from another Mac, or the logic board was replaced. If another Mac uses this id, ' +
+        'the two fight over the cards: on the copy, ks-config unset ks.KS_DEVICE_ID and restart ks-flow.',
+    );
+  }
+  await Promise.race([
+    checkDeviceMode().catch((e) => log('devices: check failed', (e as Error)?.message)),
+    new Promise<void>((res) => setTimeout(res, 10_000).unref()),
+  ]);
+  if (deviceMode) await deviceHeartbeat().catch((e) => log('devices: heartbeat failed', (e as Error)?.message));
   await seedWriteGate();
+  watchOwners();
   await backfill();
   // Backfill-only mode: ingest once, flush, exit (deterministic verification /
   // one-shot debug). No watchers, no live tailing.

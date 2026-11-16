@@ -3,8 +3,8 @@
 Monorepo for Claude Code plugins:
 
 - **`ks`** — KarmaSuite development workflows: a 10-phase project lifecycle orchestrated with slash commands, agents, and Linear integration.
-- **`ks-flow`** — a per-project Kanban board over your Claude Code sessions, with macOS notifications when a session blocks waiting for you. See `plugins/ks-flow/README.md`.
-- **`ks-master`** — the master session (Briefing over Slack, log-in / log-off); on demand, started by `claude-ks-master`.
+- **`ks-flow`** — a per-project Kanban board over your Claude Code sessions, with macOS notifications when a session blocks waiting for you. One board can span several devices on a shared Firestore store: each card belongs to one device, settings are shared, the master runs on the device you choose. See `plugins/ks-flow/README.md` ("Brand-new setup", "Several devices").
+- **`ks-master`** — the master session (Briefing over Slack, log-in / log-off); on demand, started by `claude-ks-master`, on the one device chosen in ks-flow's Settings → Devices.
 - **`ks-browser`** — browser testing and test videos; on demand, started by `claude-ks-test`.
 - **`ks-suite`** — a dependencies-only bundle: installs `ks` and `ks-flow`.
 - **`ks-agent-limit`** — disabled, not maintained (kept in the repo).

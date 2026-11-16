@@ -1,18 +1,28 @@
 'use client';
 // useBoard — the board's store subscription (one instance, in
-// lib/boardData.tsx's provider; pages read it with useBoardData()). It subscribes to the project
-// doc, work-units, and in-project sessions in real time and keeps the board
+// lib/boardData.tsx's provider; pages read it with useBoardData()). It subscribes to the
+// devices, the shared settings, work-units, and in-project sessions in real time and keeps the board
 // components provider-agnostic: they never import a backend. Which backend it
 // talks to is decided by cfg.dbProvider (resolved identically on the daemon):
 //   - pocketbase (default): REST initial load + SSE realtime, local server.
 //   - firestore: the board server's live stream (app/api/store/live, firebase-admin).
+//
+// One board for several devices: `devices` holds every device's record (its
+// worktrees, Inbox, last Linear read), `settings` is meta/settings (null until
+// the store is set up for devices: scripts/one-off/backfill-devices.ts), and
+// `self` is this device's id. The retired meta/project is not read.
 import { useEffect, useRef, useState } from 'react';
 import { openLive, type LiveStatus } from './liveStore';
 import { getPb } from './pocketbase';
-import type { BoardConfig, ProjectDoc, ReminderDoc, SessionDoc, WorkUnitDoc } from './types';
+import type { BoardConfig, DeviceDoc, ReminderDoc, SessionDoc, SettingsDoc, WorkUnitDoc } from './types';
 
 export interface BoardData {
-  project: ProjectDoc | null;
+  /** Every known device (any number), forgotten ones included. */
+  devices: DeviceDoc[];
+  /** meta/settings: the shared settings and masterDeviceId; null before the device backfill. */
+  settings: SettingsDoc | null;
+  /** This device's id. */
+  self: string;
   workUnits: WorkUnitDoc[];
   sessions: SessionDoc[];
   reminders: ReminderDoc[];
@@ -27,7 +37,8 @@ export interface BoardData {
 }
 
 export function useBoard(cfg: BoardConfig): BoardData {
-  const [project, setProject] = useState<ProjectDoc | null>(null);
+  const [devices, setDevices] = useState<DeviceDoc[]>([]);
+  const [settings, setSettings] = useState<SettingsDoc | null>(null);
   const [workUnits, setWorkUnits] = useState<WorkUnitDoc[]>([]);
   const [sessions, setSessions] = useState<SessionDoc[]>([]);
   const [reminders, setReminders] = useState<ReminderDoc[]>([]);
@@ -40,7 +51,7 @@ export function useBoard(cfg: BoardConfig): BoardData {
   useEffect(() => {
     // No project configured yet: nothing to subscribe to (the pages say so).
     if (!cfg.projectId) return;
-    const setters = { setProject, setWorkUnits, setSessions, setReminders, setConnected, setStoreStatus };
+    const setters = { setDevices, setSettings, setWorkUnits, setSessions, setReminders, setConnected, setStoreStatus };
     const register = (fn: () => Promise<void>): void => {
       reloadRef.current = fn;
     };
@@ -51,7 +62,9 @@ export function useBoard(cfg: BoardConfig): BoardData {
   }, [cfg]);
 
   return {
-    project,
+    devices,
+    settings,
+    self: cfg.deviceId,
     workUnits,
     sessions,
     reminders,
@@ -62,7 +75,8 @@ export function useBoard(cfg: BoardConfig): BoardData {
 }
 
 interface Setters {
-  setProject: (p: ProjectDoc | null) => void;
+  setDevices: (d: DeviceDoc[]) => void;
+  setSettings: (s: SettingsDoc | null) => void;
   setWorkUnits: (u: WorkUnitDoc[]) => void;
   setSessions: (s: SessionDoc[]) => void;
   setReminders: (r: ReminderDoc[]) => void;
@@ -82,11 +96,16 @@ function subscribePocketbase(cfg: BoardConfig, s: Setters, register: RegisterRel
 
   const reload = async (): Promise<void> => {
     try {
-      const [proj, wus, sess, rems] = await Promise.all([
+      const [devs, meta, wus, sess, rems] = await Promise.all([
         pb
-          .collection('projects')
-          .getFirstListItem(pb.filter('key={:k}', { k: pid }))
-          .then((r) => r.data as ProjectDoc)
+          .collection('devices')
+          .getFullList()
+          .then((rs) => rs.map((r) => ({ ...(r.data as DeviceDoc), deviceId: String(r.key) })))
+          .catch(() => [] as DeviceDoc[]),
+        pb
+          .collection('meta')
+          .getFirstListItem(pb.filter('key={:k}', { k: 'settings' }))
+          .then((r) => r.data as SettingsDoc)
           .catch(() => null),
         pb
           .collection('work_units')
@@ -104,7 +123,8 @@ function subscribePocketbase(cfg: BoardConfig, s: Setters, register: RegisterRel
       ]);
       if (cancelled) return;
       s.setConnected(true);
-      s.setProject(proj);
+      s.setDevices(devs);
+      s.setSettings(meta);
       s.setWorkUnits(wus);
       s.setSessions(sess);
       s.setReminders(rems);
@@ -116,20 +136,25 @@ function subscribePocketbase(cfg: BoardConfig, s: Setters, register: RegisterRel
   register(reload);
   void reload();
 
-  const cols = ['projects', 'work_units', 'sessions', 'reminders'];
-  for (const col of cols) {
+  // devices / meta are not per project (PocketBase holds this device alone).
+  const cols: Array<[string, string | undefined]> = [
+    ['devices', undefined],
+    ['meta', undefined],
+    ['work_units', pb.filter('projectKey={:k}', { k: pid })],
+    ['sessions', pb.filter('projectKey={:k}', { k: pid })],
+    ['reminders', pb.filter('projectKey={:k}', { k: pid })],
+  ];
+  for (const [col, filter] of cols) {
     pb.collection(col)
-      .subscribe('*', () => void reload(), {
-        filter: pb.filter('projectKey={:k}', { k: pid }),
-      })
+      .subscribe('*', () => void reload(), filter ? { filter } : {})
       .catch(() => {
-        // realtime unavailable — the initial load still rendered
+        // realtime unavailable (or the collection predates the migration) — the initial load still rendered
       });
   }
 
   return () => {
     cancelled = true;
-    for (const col of cols) pb.collection(col).unsubscribe();
+    for (const [col] of cols) pb.collection(col).unsubscribe().catch(() => {});
   };
 }
 
@@ -138,7 +163,8 @@ function subscribePocketbase(cfg: BoardConfig, s: Setters, register: RegisterRel
 function subscribeFirestore(cfg: BoardConfig, s: Setters, register: RegisterReload): () => void {
   const live = openLive('board', {
     onSnap: (key, docs) => {
-      if (key === 'project') s.setProject((docs[0] as ProjectDoc | undefined) ?? null);
+      if (key === 'devices') s.setDevices(docs as DeviceDoc[]);
+      else if (key === 'settings') s.setSettings((docs[0] as SettingsDoc | undefined) ?? null);
       else if (key === 'workUnits') s.setWorkUnits(docs as WorkUnitDoc[]);
       else if (key === 'sessions') s.setSessions(docs as SessionDoc[]);
       else if (key === 'reminders') s.setReminders(docs as ReminderDoc[]);

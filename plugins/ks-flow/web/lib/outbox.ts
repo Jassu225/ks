@@ -10,6 +10,7 @@
 // what it shows (app/api/store/live, serverdb reads while offline).
 import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { ReadOnlyError, readOnlyReason } from './readonly';
 
 export type OutboxOp = 'set' | 'delete' | 'merge';
 
@@ -116,6 +117,10 @@ export async function writeOrQueue(
   apply: (ops: StoreOp[]) => Promise<void>,
 ): Promise<void> {
   if (ops.length === 0) return;
+  // Behind on the store's data format (lib/readonly.ts): never written, never
+  // queued. The routes answer 409 before getting here; this is the backstop.
+  const readOnly = readOnlyReason(dataDir);
+  if (readOnly) throw new ReadOnlyError(readOnly);
   if (outboxFiles(dataDir).length > 0) {
     enqueue(dataDir, ops, 'order');
     return;

@@ -124,7 +124,7 @@ function toLocalInput(iso: string | undefined): string {
 }
 
 // Official Slack mark, inlined (CSP blocks external assets).
-function SlackIcon(): JSX.Element {
+function SlackIcon(): React.JSX.Element {
   return (
     <svg viewBox="0 0 122.8 122.8" width="14" height="14" aria-label="Slack" className="shrink-0">
       <path
@@ -155,7 +155,7 @@ function ReminderControl({
   note: ReminderDoc;
   onSet: (iso: string) => void;
   onClear: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(toLocalInput(note.dueAt));
   const lapsed = note.dueAt ? Date.parse(note.dueAt) <= Date.now() : false;
@@ -243,7 +243,7 @@ function NoteCard({
   onEdit: (uid: string, text: string) => void;
   onDone: (uid: string) => void;
   onDelete: (uid: string) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const overdue = note.dueAt != null && Date.parse(note.dueAt) <= now;
   const isSlack = note.section === 'slack';
   const [editing, setEditing] = useState(false);
@@ -362,7 +362,7 @@ function WorkTypeToggle({
 }: {
   value: WorkType;
   onChange: (w: WorkType) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="inline-flex overflow-hidden rounded border border-slate-700 text-[11px]">
       {(['professional', 'personal'] as WorkType[]).map((w) => (
@@ -395,7 +395,7 @@ function NoteModal({
   error: string | null;
   onSubmit: (v: { text?: string; url?: string; workType: WorkType; dueAt?: string }) => void;
   onClose: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [workType, setWorkType] = useState<WorkType>('professional');
   const [text, setText] = useState('');
   const [url, setUrl] = useState('');
@@ -494,7 +494,7 @@ function NoteModal({
   );
 }
 
-export default function Notes(): JSX.Element {
+export default function Notes(): React.JSX.Element {
   const now = useNow(30_000);
   const [config, setConfig] = useState<NotesConfig | null>(null);
   const [notes, setNotes] = useState<ReminderDoc[]>([]);
@@ -713,7 +713,7 @@ export default function Notes(): JSX.Element {
     onDelete: (uid: string) => setConfirmDelete(notes.find((n) => n.uid === uid) ?? null),
   };
 
-  const column = (title: string, items: ReminderDoc[]): JSX.Element => (
+  const column = (title: string, items: ReminderDoc[]): React.JSX.Element => (
     <section>
       <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h2>
       {items.length === 0 ? (

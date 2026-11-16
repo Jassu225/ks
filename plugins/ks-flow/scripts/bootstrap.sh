@@ -5,6 +5,10 @@
 #   1. resolve PROJECT_COMMON_DIR + write project.conf  (skip rest if unset)
 #   2. node_modules diff-install + build into $CLAUDE_PLUGIN_DATA/daemon
 #   3. render + (re)load the launchd agent so the daemon runs 24/7
+# Run as the SessionStart hook (KS_FLOW_HOOK=1, hooks.json), it also prints one
+# line when this device is behind the store's ks-flow version (versioning:
+# <dataDir>/version-status.json, written by the daemon). KS_FLOW_NO_RESTART=1
+# (`ks-flow update`, which restarts it itself) skips the daemon restart.
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -81,6 +85,29 @@ fi
 DAEMON_DIR="$DATA_DIR/daemon"
 mkdir -p "$DATA_DIR"
 
+# Versioning: one line for the session when this device is behind (or its last
+# update failed), as a systemMessage. Printed on exit, whatever step ends the run.
+version_line() {
+  [ "${KS_FLOW_HOOK:-}" = 1 ] || return 0
+  local f="$DATA_DIR/version-status.json" msg
+  [ -f "$f" ] || return 0
+  msg="$(jq -r '
+    def failed: ((.update.state // "") as $s | $s == "failed" or $s == "refused");
+    if (.versionBehind or .schemaBehind) then
+      "ks-flow on this device is "
+      + (if .versionBehind then "behind (\(.version) → \(.storeVersion))"
+         else "behind on the data format (schema \(.schemaVersion) → \(.storeSchemaVersion))" end)
+      + (if .schemaBehind then "; its board is read-only" else "" end)
+      + (if .dev then ": run `ks-flow update` (dev build: \(.devReason // "not a release"))"
+         elif failed then ": run `ks-flow update` (\(.update.reason // "see update.log"))"
+         else ": it is updating itself (ks-flow update)" end)
+    elif failed then "ks-flow on this device could not update: run `ks-flow update` (\(.update.reason // "see update.log"))"
+    else empty end' "$f" 2>/dev/null)" || return 0
+  [ -n "$msg" ] && jq -nc --arg m "$msg" '{systemMessage: $m}'
+  return 0
+}
+trap version_line EXIT
+
 # worktree paths (realpath'd) as a JSON array
 WORKTREES_JSON=$(git -C "$PROJECT_PATH" worktree list --porcelain 2>/dev/null \
   | awk '/^worktree /{print substr($0,10)}' \
@@ -128,6 +155,15 @@ else
   fi
 fi
 
+# The release the daemon reports (ks-flow's plugin.json version, not its
+# package.json) and the plugin folder it came from: <daemon>/build.json. A new
+# version or folder alone needs no rebuild, only the file and a restart.
+PLUGIN_VERSION="$(jq -r '.version // empty' "$PLUGIN_ROOT/.claude-plugin/plugin.json" 2>/dev/null || true)"
+BUILD_STALE=0
+if [ "$(jq -r '"\(.version // "")|\(.pluginRoot // "")"' "$DAEMON_DIR/build.json" 2>/dev/null || true)" != "$PLUGIN_VERSION|$PLUGIN_ROOT" ]; then
+  BUILD_STALE=1
+fi
+
 if [ "$NEED_BUILD" = "1" ]; then
   echo "[ks-flow] installing/building daemon into $DAEMON_DIR" >&2
   mkdir -p "$DAEMON_DIR"
@@ -142,6 +178,11 @@ if [ "$NEED_BUILD" = "1" ]; then
   rsync -a --exclude node_modules --exclude dist --exclude .claude "$PLUGIN_ROOT/src/" "$DAEMON_DIR/"
   # Use a data-dir-local npm cache to avoid the common ~/.npm root-owned EPERM.
   ( cd "$DAEMON_DIR" && npm install --no-audit --no-fund --cache "$DATA_DIR/.npm" && npm run build ) >&2
+fi
+if [ "$NEED_BUILD" = "1" ] || [ "$BUILD_STALE" = "1" ]; then
+  mkdir -p "$DAEMON_DIR"
+  jq -n --arg v "$PLUGIN_VERSION" --arg r "$PLUGIN_ROOT" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{version: $v, pluginRoot: $r, builtAt: $t}' >"$DAEMON_DIR/build.json"
 fi
 
 # 2b) PocketBase store -------------------------------------------------------
@@ -286,9 +327,9 @@ else
   if ! launchctl print "gui/$UID_NUM/$LABEL" >/dev/null 2>&1; then
     launchctl bootstrap "gui/$UID_NUM" "$PLIST" 2>/dev/null || true
     launchctl enable "gui/$UID_NUM/$LABEL" 2>/dev/null || true
-  elif [ "$NEED_BUILD" = "1" ]; then
-    # Rebuilt the daemon but the plist didn't change — the running process is
-    # still on old code, so restart it to load the fresh dist.
+  elif { [ "$NEED_BUILD" = "1" ] || [ "$BUILD_STALE" = "1" ]; } && [ -z "${KS_FLOW_NO_RESTART:-}" ]; then
+    # Rebuilt the daemon (or its version changed) but the plist didn't — the
+    # running process is still on old code, so restart it to load the fresh dist.
     launchctl kickstart -k "gui/$UID_NUM/$LABEL" 2>/dev/null || true
     echo "[ks-flow] daemon restarted (new build)" >&2
   fi

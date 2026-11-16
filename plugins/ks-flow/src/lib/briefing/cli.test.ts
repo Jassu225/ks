@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MemoryBriefing } from '../db/providers/memory.js';
-import type { BriefingItemDoc, ProjectDoc, SlackRef, WorkUnitDoc } from '../db/types.js';
+import type { BriefingItemDoc, DeviceDoc, ProjectDoc, SlackRef, WorkUnitDoc } from '../db/types.js';
 import type { BriefingSettings } from '../boardsettings.js';
 import {
   add,
@@ -342,14 +342,15 @@ test('boardSummary: live worktrees and live sessions, inbox counts', () => {
       title: `${id} title`,
       linearStatus: 'In Progress',
       worktreeDir: wt,
+      deviceId: 'dev-a',
       currentPhase: { number: 10, name: 'Implementation' },
       pr: null,
       waiting: null,
       ...extra,
     }) as WorkUnitDoc;
-  const project = { worktreePaths: ['/wt/a', '/wt/b'] } as ProjectDoc;
+  const devices = [{ deviceId: 'dev-a', worktreePaths: ['/wt/a', '/wt/b'] }] as DeviceDoc[];
   const thread = { subject: 'Two questions', open: 2, picked: 1 } as NonNullable<WorkUnitDoc['inbox']>['threads'][number];
-  const s = boardSummary(project, [
+  const s = boardSummary(devices, [
     unit('KAR-2', '/wt/b', {
       inbox: { needsYou: true, stopped: false, since: null, threads: [thread] },
       waiting: { active: true, tool: 'Inbox', since: 'x', sessionId: 's' },

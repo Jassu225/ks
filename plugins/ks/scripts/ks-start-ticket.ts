@@ -28,7 +28,7 @@ import { loadEnv, SCRIPTS_DIR } from './lib/env.js';
 import { getLinearClient, getPriorityName } from './lib/linear-client.js';
 import type { SlackThread, Phase, PrEntry, TimeSpent } from './lib/workflow-types.js';
 import { parseSlackMessageUrl } from './lib/slack.js';
-import { createWorktreeAndLaunchClaude, findExistingWorktree, offerCloudRestore } from './lib/worktree.js';
+import { claimTicketDevice, createWorktreeAndLaunchClaude, findExistingWorktree, offerCloudRestore } from './lib/worktree.js';
 
 loadEnv();
 
@@ -456,6 +456,10 @@ ${chalk.cyan('Example:')}
     // Fetch issue
     const issue = await fetchIssueData(identifier);
     console.log(chalk.green(`✓ Found issue: ${issue.identifier} - ${issue.title}`));
+
+    // One ks-flow board for several devices: the ticket must not be live on
+    // another device; a card left behind by one is moved here (lib/worktree.ts).
+    claimTicketDevice(issue.identifier);
 
     // Get branch name from Linear (falls back to identifier if not available)
     const branchName = issue.branchName || identifier.toLowerCase();

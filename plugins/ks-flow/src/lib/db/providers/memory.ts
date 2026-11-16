@@ -9,6 +9,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DATA_DIR } from '../../paths.js';
 import { join as pjoin } from 'node:path';
+import { MemoryDocDb } from '../docdb.js';
+import { docDeviceStore } from '../devicestore.js';
 import type {
   BackupRunDoc,
   BackupStore,
@@ -181,8 +183,12 @@ export function createMemoryProvider(): DbProvider {
   const writer = new MemoryWriter();
   const backups = new MemoryBackups();
   const briefing = new MemoryBriefing();
+  const docs = new MemoryDocDb();
+  const devices = docDeviceStore(docs);
   return {
     name: 'memory',
+    devices: () => devices,
+    docDb: () => docs,
     writer: () => writer,
     source: () => noopSource,
     backups: () => backups,

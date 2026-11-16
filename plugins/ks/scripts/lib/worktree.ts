@@ -151,6 +151,46 @@ const ksFlow = (args: string[], cwd: string, inherit = false) =>
   });
 
 /**
+ * One ks-flow board for several devices: a ticket is worked on one device.
+ * Before starting it here, ask ks-flow which device its card is on
+ * (`ks-flow card-owner <unit> --json`):
+ *
+ * - on another device that still has its worktree or a live session: refuse
+ *   (throws "KAR-123 is on <name>: remove it there first");
+ * - on another device that no longer has it: move the card here
+ *   (`ks-flow card-move`) and say so -- the only way a card changes device;
+ * - on this device, or no card yet: nothing to do.
+ *
+ * Only when ks-flow is installed and its store answers: otherwise (no
+ * ks-flow, an older one without card-owner, the store unreachable) it moves on
+ * as before.
+ */
+export function claimTicketDevice(unitId: string): void {
+  const cwd = process.env.KS_ORIGINAL_DIR || process.cwd();
+  const res = ksFlow(['card-owner', unitId, '--json'], cwd);
+  if (res.error || res.status !== 0) return;
+  let info: { decision?: string; message?: string };
+  try {
+    info = JSON.parse(res.stdout || '{}');
+  } catch {
+    return;
+  }
+  if (info.decision === 'refuse') throw new Error(info.message ?? `${unitId} is on another device: remove it there first`);
+  if (info.decision !== 'move') return;
+  console.log(chalk.yellow(`\n${info.message}`));
+  const move = ksFlow(['card-move', unitId, '--json'], cwd);
+  if (move.error || move.status !== 0) {
+    let why = (move.stderr || '').trim();
+    try {
+      why = JSON.parse(move.stdout || '{}').message ?? why;
+    } catch {
+      /* keep stderr */
+    }
+    throw new Error(`could not move ${unitId} to this device${why ? `: ${why}` : ''}`);
+  }
+}
+
+/**
  * Offer to bring back a ticket's missing workflow files and sessions from
  * ks-flow's cloud backup, when that backup is switched on (`ks-flow
  * backup-enabled`: gcsArchive.enabled in the board settings). One question

@@ -21,7 +21,11 @@ import type {
   BriefingStore,
   DailyLogDoc,
   DbProvider,
+  DeviceDoc,
+  DeviceStore,
   MasterEventDoc,
+  MasterRequestDoc,
+  SettingsDoc,
   ProjectDoc,
   ReminderDoc,
   SessionDoc,
@@ -41,6 +45,9 @@ const BRIEFING_ITEMS = 'briefing_items';
 const BRIEFING_RUNS = 'briefing_runs';
 const DAILY_LOGS = 'daily_logs';
 const MASTER_EVENTS = 'master_events';
+const DEVICES = 'devices';
+const META = 'meta';
+const MASTER_REQUESTS = 'master_requests';
 
 function statusOf(e: unknown): number {
   return (e as { status?: number } | null)?.status ?? 0;
@@ -484,13 +491,107 @@ class PocketbaseBriefing implements BriefingStore {
   }
 }
 
+/**
+ * Devices on PocketBase (pb_migrations/1700000007_devices.js): `devices` and
+ * `meta` rows keyed by `key` with the doc in `data`, `master_requests` by
+ * `uid`. PocketBase is one device's local store, so there is no legacy
+ * meta/project to retire (its `projects` row stays) and no listener.
+ */
+class PocketbaseDevices implements DeviceStore {
+  private pb: PocketBase;
+  constructor(cfg: Config) {
+    this.pb = client(cfg);
+  }
+
+  private async row(col: string, field: string, value: string): Promise<{ id: string; data: Record<string, unknown> } | null> {
+    try {
+      const r = await this.pb.collection(col).getFirstListItem(this.pb.filter(`${field}={:v}`, { v: value }));
+      return { id: r.id, data: (r.data ?? {}) as Record<string, unknown> };
+    } catch (e) {
+      if (statusOf(e) === 404) return null;
+      throw e;
+    }
+  }
+
+  /** Read-modify-write merge of `data` (one writer per row: a device writes its own). */
+  private async merge(col: string, key: string, patch: Record<string, unknown>): Promise<void> {
+    const clean = JSON.parse(JSON.stringify(patch)) as Record<string, unknown>;
+    const cur = await this.row(col, 'key', key);
+    if (cur) await this.pb.collection(col).update(cur.id, { data: { ...cur.data, ...clean } });
+    else await this.pb.collection(col).create({ key, data: clean });
+  }
+
+  async getDevices(): Promise<DeviceDoc[]> {
+    const recs = await this.pb.collection(DEVICES).getFullList();
+    return recs.map((r) => ({ ...(r.data as DeviceDoc), deviceId: String(r.key) }));
+  }
+  async getDevice(deviceId: string): Promise<DeviceDoc | null> {
+    const r = await this.row(DEVICES, 'key', deviceId);
+    return r ? ({ ...(r.data as unknown as DeviceDoc), deviceId }) : null;
+  }
+  async mergeDevice(deviceId: string, patch: Partial<DeviceDoc>): Promise<void> {
+    await this.merge(DEVICES, deviceId, { ...patch, deviceId });
+  }
+  async getSettings(): Promise<SettingsDoc | null> {
+    return ((await this.row(META, 'key', 'settings'))?.data as SettingsDoc | undefined) ?? null;
+  }
+  async mergeSettings(patch: Partial<SettingsDoc>): Promise<void> {
+    await this.merge(META, 'settings', patch as Record<string, unknown>);
+  }
+  /** Read-modify-write (PocketBase is one device's own store: no second writer to race). */
+  async raiseVersion(patch: (current: SettingsDoc | null) => Partial<SettingsDoc> | null): Promise<SettingsDoc | null> {
+    const row = await this.row(META, 'key', 'settings');
+    const p = patch((row?.data as SettingsDoc | undefined) ?? null);
+    if (!p || !row) return null;
+    const next = { ...row.data, ...(JSON.parse(JSON.stringify(p)) as Record<string, unknown>) };
+    await this.pb.collection(META).update(row.id, { data: next });
+    return next as unknown as SettingsDoc;
+  }
+  async createSettings(doc: SettingsDoc): Promise<boolean> {
+    try {
+      await this.pb.collection(META).create({ key: 'settings', data: JSON.parse(JSON.stringify(doc)) });
+      return true;
+    } catch (e) {
+      // the unique index on `key` refuses a second one
+      if (statusOf(e) === 400 && (await this.row(META, 'key', 'settings'))) return false;
+      throw e;
+    }
+  }
+  async getMasterRequests(): Promise<MasterRequestDoc[]> {
+    const recs = await this.pb.collection(MASTER_REQUESTS).getFullList({ sort: 'createdAt' });
+    return recs.map((r) => r.data as MasterRequestDoc);
+  }
+  async addMasterRequest(doc: MasterRequestDoc): Promise<void> {
+    await this.pb.collection(MASTER_REQUESTS).create({ uid: doc.uid, createdAt: doc.createdAt, data: doc });
+  }
+  async deleteMasterRequest(uid: string): Promise<void> {
+    const r = await this.row(MASTER_REQUESTS, 'uid', uid);
+    if (r) await this.pb.collection(MASTER_REQUESTS).delete(r.id);
+  }
+  async getWorkUnit(unitId: string): Promise<WorkUnitDoc | null> {
+    return ((await this.row(WORK_UNITS, 'key', unitId))?.data as WorkUnitDoc | undefined) ?? null;
+  }
+  async setWorkUnitOwner(unitId: string, deviceId: string): Promise<void> {
+    const cur = await this.row(WORK_UNITS, 'key', unitId);
+    if (cur) await this.pb.collection(WORK_UNITS).update(cur.id, { data: { ...cur.data, deviceId } });
+  }
+  async getLegacyProject(): Promise<ProjectDoc | null> {
+    return null;
+  }
+  async deleteLegacyProject(): Promise<void> {
+    /* PocketBase keeps its projects row */
+  }
+}
+
 export function createPocketbaseProvider(cfg: Config): DbProvider {
   let writer: PocketbaseWriter | undefined;
   let source: PocketbaseSource | undefined;
   let backups: PocketbaseBackups | undefined;
   let briefing: PocketbaseBriefing | undefined;
+  let devices: PocketbaseDevices | undefined;
   return {
     name: 'pocketbase',
+    devices: () => (devices ??= new PocketbaseDevices(cfg)),
     writer: () => (writer ??= new PocketbaseWriter(cfg)),
     source: () => (source ??= new PocketbaseSource(cfg)),
     backups: () => (backups ??= new PocketbaseBackups(cfg)),

@@ -58,7 +58,7 @@ type Doc = Record<string, unknown>;
 
 interface Source {
   key: string;
-  /** A query, or a single doc path for the project doc. */
+  /** A query, or a single doc path (meta/settings). */
   query?: Query<DocumentData>;
   doc?: string;
   /** For the outbox overlay: the collection path, the doc id field, and the
@@ -76,12 +76,15 @@ function sources(fs: Firestore, projectId: string, scope: Scope): Source[] {
   // Flat collections at the database root (see src/lib/db/providers/firestore.ts);
   // `projectId` is not part of any path.
   void projectId;
-  const project = fs.collection('meta').doc('project');
   const col = (name: string) => fs.collection(name);
   const path = (name: string) => name;
   if (scope === 'board') {
+    // meta/project is retired (one board for several devices): each device's
+    // facts are in devices/{id}, the shared settings in meta/settings, and the
+    // board derives its columns from the cards.
     return [
-      { key: 'project', doc: project.path },
+      { key: 'devices', query: col('devices'), coll: path('devices'), idField: 'deviceId' },
+      { key: 'settings', doc: 'meta/settings' },
       { key: 'workUnits', query: col('workUnits'), coll: path('workUnits'), idField: 'unitId' },
       {
         key: 'sessions',
