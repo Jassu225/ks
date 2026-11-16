@@ -98,9 +98,14 @@ case "$cmd" in
       # would otherwise stay in the build (as /api/linear-refresh did).
       rm -rf "$WEB/app" "$WEB/components" "$WEB/lib"
       rsync -a --exclude node_modules --exclude .next "$PLUGIN_ROOT/web/" "$WEB/"
-      ( cd "$WEB" && npm install --no-audit --no-fund --cache "$DATA_DIR/.npm" && npm run build ) \
-        && { jq -r '.version // empty' "$PLUGIN_ROOT/.claude-plugin/plugin.json" >"$WEB/.ks-flow-version" 2>/dev/null || true; }
+      ( cd "$WEB" && npm install --no-audit --no-fund --cache "$DATA_DIR/.npm" && npm run build ) || BUILD_FAILED=1
     fi
+    # The ks-flow version the board serves (the header's v…, the Processes page):
+    # the plugin's, whenever the build matches its sources, rebuilt or not. A
+    # release that changed no board file needs no rebuild but is still the
+    # version it runs; recorded only after a build, the header kept the old one.
+    [ -n "${BUILD_FAILED:-}" ] \
+      || jq -r '.version // empty' "$PLUGIN_ROOT/.claude-plugin/plugin.json" >"$WEB/.ks-flow-version" 2>/dev/null || true
 
     echo "Board → http://localhost:$BOARD_PORT" >&2
     # A board already listening: without a rebuild, reuse it. After a rebuild it

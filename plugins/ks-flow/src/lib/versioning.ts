@@ -244,8 +244,17 @@ export function writeReleaseCheck(dataDir: string, c: ReleaseCheck): void {
 const updateRunning = (u: UpdateState | null, alive: (pid: number) => boolean): boolean =>
   u?.state === 'running' && !!u.pid && alive(u.pid);
 
-/** An update finished well after the check: its answer no longer holds (re-checked at once). */
-function checkOutdated(c: ReleaseCheck, update: UpdateState | null): boolean {
+/**
+ * The check's answer no longer holds (re-checked at once): an update finished
+ * after it, or a plugin's installed version now differs from the one it
+ * recorded (a `ks-setup update` run by hand, or by another ks-flow, leaves no
+ * update record here).
+ */
+function checkOutdated(c: ReleaseCheck, update: UpdateState | null, installed: Record<string, string | null> = {}): boolean {
+  for (const p of c.plugins ?? []) {
+    const now = installed[p.plugin];
+    if (now && p.installed && now !== p.installed) return true;
+  }
   if (update?.state !== 'ok') return false;
   const ended = Date.parse(update.endedAt ?? '');
   const at = Date.parse(c.checkedAt ?? '');
@@ -264,15 +273,20 @@ export function decideRelease(
   code: CodeVersion,
   update: UpdateState | null,
   alive: (pid: number) => boolean = () => true,
+  /** Each plugin's installed version now (plugin → version), to spot an update made elsewhere. */
+  installed: Record<string, string | null> = {},
+  /** A newer release was announced in the store (lib/release-announce.ts): check now. */
+  force = false,
 ): boolean {
   if (code.dev) return false;
   if (updateRunning(update, alive)) return false;
   if (!prev) return true;
   const busy = Date.parse(prev.busyAt ?? '');
   if (Number.isFinite(busy) && now - busy < RELEASE_BUSY_RETRY_MS) return false;
+  if (force) return true;
   const at = Date.parse(prev.checkedAt ?? '');
   if (!Number.isFinite(at)) return true;
-  if (checkOutdated(prev, update)) return true;
+  if (checkOutdated(prev, update, installed)) return true;
   return now - at >= RELEASE_CHECK_MS;
 }
 

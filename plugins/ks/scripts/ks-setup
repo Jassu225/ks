@@ -37,6 +37,9 @@
 #                                  available, 1 refused or failed, 2 usage, 3 another
 #                                  update is running. Log: ~/.config/ks/update.log
 #   ks-setup shims                 quiet: rewrite the ~/.local/bin shims, prune the registry
+#   ks-setup deps                  install the ks CLI dependencies (npm) for the copy the
+#                                  commands run and the one Claude loads; an installed copy
+#                                  shares one install in Claude's plugin data dir
 #   ks-setup tools [--yes] [name...]   install the missing tools setup checks (node,
 #                                  git, jq, tmux, terminal-notifier, zstd, ffmpeg, gh)
 #                                  with Homebrew; only those, after a yes
@@ -294,7 +297,7 @@ doctor() {
   fi
 
   if [ -d "$KS_ROOT_DIR/scripts/node_modules/tsx" ]; then check deps error 1 "ks CLI dependencies installed"
-  else check deps error 0 "ks CLI dependencies missing ($KS_ROOT_DIR/scripts/node_modules)" "cd $KS_ROOT_DIR/scripts && npm ci   (installed plugins: start a new session)"; fi
+  else check deps error 0 "ks CLI dependencies missing ($KS_ROOT_DIR/scripts/node_modules)" "ks-setup deps"; fi
 
   local proj; proj="$(ksc_project_root 2>/dev/null || true)"
   if [ -n "$proj" ] && [ -d "$proj" ]; then check config:KS_PROJECT_ROOT_PATH error 1 "project: $proj ($(ksc_source KS_PROJECT_ROOT_PATH))"
@@ -552,6 +555,43 @@ remote_control_settings() {
 # offers (as of its last update). ks-flow adds its daemon's and the store's.
 plugin_version() { jq -r '.version // empty' "$1/.claude-plugin/plugin.json" 2>/dev/null; }
 claude_plugins_dir() { printf '%s/plugins' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; }
+
+# ── ks CLI dependencies ─────────────────────────────────────────────────────
+# deps_install <ks root>: nothing when scripts/node_modules has them. A clone:
+# npm ci in place. An installed copy (a versioned plugin-cache folder, shipped
+# without node_modules): the SessionStart step (ensure-setup.sh), i.e. install
+# into ~/.claude/plugins/data/ks-karmasuite/deps (reinstalled only when
+# package-lock.json changes, so a new version usually reuses them) and link
+# scripts/node_modules there. ks-setup is sandbox-excluded, so an agent can
+# run this itself (ks-setup deps); a plain npm ci in the cache can't.
+deps_install() {
+  local root="$1"
+  [ -d "$root/scripts/node_modules/tsx" ] && return 0
+  command -v npm >/dev/null 2>&1 || return 1
+  case "$root" in
+    "$(claude_plugins_dir)/cache/"*|"$HOME/.claude/plugins/cache/"*)
+      [ -x "$root/scripts/ensure-setup.sh" ] || return 1
+      ( cd "$root" && CLAUDE_PLUGIN_ROOT="$root" CLAUDE_PLUGIN_DATA="$(claude_plugins_dir)/data/ks-$MARKETPLACE" \
+          "$root/scripts/ensure-setup.sh" </dev/null >/dev/null 2>&1 ) ;;
+    *) ( cd "$root/scripts" && npm ci --no-audit --no-fund >/dev/null 2>&1 ) ;;
+  esac
+  [ -d "$root/scripts/node_modules/tsx" ]
+}
+# ks-setup deps: the dependencies of the ks copy the commands run, and of the
+# one Claude loads for the project when that is another folder.
+deps_cmd() {
+  local roots=() r seen=" " rc=0 live
+  roots+=("$KS_ROOT_DIR")
+  live="$(cd "$(ksc_project_root 2>/dev/null || echo "$PWD")" 2>/dev/null; ksr_live_root ks 2>/dev/null)" && roots+=("$live")
+  for r in "${roots[@]}"; do
+    [ -n "$r" ] && [ -d "$r" ] || continue
+    case "$seen" in *" $r "*) continue ;; esac; seen="$seen$r "
+    if [ -d "$r/scripts/node_modules/tsx" ]; then say "ok   ks CLI dependencies already installed ($r)"
+    elif deps_install "$r"; then say "ok   ks CLI dependencies installed ($r)"
+    else say "ERR  ks CLI dependencies not installed ($r): needs npm and the network; log: $(claude_plugins_dir)/data/ks-$MARKETPLACE/deps/install.log"; rc=1; fi
+  done
+  return $rc
+}
 # installed_plugins.json's entries for <plugin>@karmasuite, one JSON object per line
 # ({scope, projectPath?, installPath, version, ...}; v2: an array per id).
 ip_entries() {
@@ -869,12 +909,14 @@ update_cmd() {
     # node_modules, and the SessionStart hook (ensure-setup.sh) that links
     # them runs only when a session starts, so the KS commands that need them
     # failed until then. Same step, same data dir as the hook would use.
-    if [ -n "$new" ] && [ ! -d "$new/scripts/node_modules/tsx" ] && [ -x "$new/scripts/ensure-setup.sh" ]; then
-      out="$(cd "${proj:-$PWD}" 2>/dev/null; CLAUDE_PLUGIN_ROOT="$new" CLAUDE_PLUGIN_DATA="$(claude_plugins_dir)/data/ks-$MARKETPLACE" \
-        "$new/scripts/ensure-setup.sh" </dev/null 2>&1 >/dev/null)"
-      ulog_out "$out"
+    if [ -n "$new" ] && [ ! -d "$new/scripts/node_modules/tsx" ]; then
+      # The new copy's own `ks-setup deps` when it has one (a change to this
+      # step then applies on the update that ships it), else this copy's.
+      if grep -q '^  deps) deps_cmd' "$new/scripts/ks-setup" 2>/dev/null; then
+        out="$(cd "${proj:-$PWD}" 2>/dev/null; "$new/scripts/ks-setup" deps </dev/null 2>&1)"; ulog_out "$out"
+      else deps_install "$new"; fi
       if [ -d "$new/scripts/node_modules/tsx" ]; then ulog "ks CLI dependencies installed for $new"
-      else ulog "ks CLI dependencies not installed for $new: a new Claude session installs them (or ks-setup doctor's fix)"; fi
+      else ulog "ks CLI dependencies not installed for $new: run ks-setup deps (a new Claude session also installs them)"; fi
     fi
     if [ "$restart" = 1 ] && [ "$U_FLOW_CHANGED" = 1 ]; then
       local flow; flow="$(cd "${proj:-$PWD}" 2>/dev/null; ksr_live_root ks-flow 2>/dev/null)" || flow=""
@@ -1027,8 +1069,8 @@ apply() {
 
   if [ ! -d "$KS_ROOT_DIR/scripts/node_modules/tsx" ]; then
     say "== ks CLI dependencies"
-    if [ -w "$KS_ROOT_DIR/scripts" ]; then ( cd "$KS_ROOT_DIR/scripts" && npm ci --no-audit --no-fund ) || say "  npm ci failed"
-    else say "  installed plugin: a new Claude session installs them (SessionStart)"; fi
+    if deps_install "$KS_ROOT_DIR"; then say "  installed"
+    else say "  not installed (npm and the network needed): ks-setup deps"; fi
   fi
 
   say "== project"
@@ -1199,6 +1241,7 @@ case "$sub" in
   remote-control) remote_control_settings "$@" ;;
   update) update_cmd "$@" ;;
   shims) shims_refresh ;;
+  deps) deps_cmd "$@" ;;
   -h|--help|help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0" ;;
   *) echo "ks-setup: unknown command $sub (try: ks-setup help)" >&2; exit 2 ;;
 # `exit` on the same line as `esac`: `ks-setup update` may rewrite this file

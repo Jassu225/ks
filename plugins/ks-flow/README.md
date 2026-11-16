@@ -537,6 +537,19 @@ when another update is running, never from a dev build or while an update
 runs). The answer is kept in `<dataDir>/release-check.json` and shown as
 `release` in `version-status.json`; when it says a newer ks, ks-flow,
 ks-master, ks-browser or ks-suite is out, the daemon starts the same update.
+It also checks at once when an installed version changed since its last check
+(a `ks-setup update` run by hand).
+
+**Release announcements** (`src/lib/release-announce.ts`). A push reaches the
+other devices in a minute or two instead of at their hourly check:
+`meta/settings.releases` holds each KS plugin's newest pushed version. A daemon
+running from a clone that is on `main`, clean and level with its upstream
+(pushed) raises it once a minute from the clone's `.claude-plugin/marketplace.json`,
+only upward, in a transaction; anything unpushed is never announced. Every
+daemon watches `meta/settings` (onSnapshot): when it names a plugin newer than
+the one installed here, the daemon runs its release check at once, and an
+available release starts the update (a new target is not held by the hourly
+limit).
 
 **Auto-update, always on** (no setting). A device behind on either, or with a
 new release, starts `ks-flow update` as a detached process (its own session,

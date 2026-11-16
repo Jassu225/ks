@@ -84,7 +84,8 @@ import { activeRun, doneSweeps, listRuns, type BackupRun } from './lib/backup-ru
 import { notify, terminalNotifierAvailable } from './lib/notify.js';
 import { ksPluginRoot, liveRoot, rootContext } from './lib/ksroot.js';
 import { parseKsSetup } from './lib/update.js';
-import { detectBuild } from './lib/build-info.js';
+import { cloneState, detectBuild, realGit } from './lib/build-info.js';
+import { announcePatch, marketplaceVersions, newerAnnounced } from './lib/release-announce.js';
 import {
   currentRelease,
   decideRelease,
@@ -290,6 +291,56 @@ const LOGIN_PRELUDE =
   '[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"; } 2>/dev/null;';
 const RELEASE_CHECK_TIMEOUT_MS = 10 * 60_000;
 let releaseChecking = false;
+/** A newer release was announced in meta/settings.releases: the next releaseTick checks at once. */
+let releaseForce = false;
+
+// ── release announcements (lib/release-announce.ts) ─────────────────────────
+/** The announced map last acted on (so one announcement starts one check). */
+let releasesSeen: string | null = null;
+/** meta/settings changed: a release newer than what is installed here → check now. */
+function onReleasesAnnounced(settings: SettingsDoc): void {
+  const sig = JSON.stringify(settings.releases ?? {});
+  if (sig === releasesSeen) return;
+  releasesSeen = sig;
+  const newer = newerAnnounced(settings.releases, installedVersions(Object.keys(settings.releases ?? {})));
+  if (!newer.length || CODE.dev) return;
+  log(`version: announced in the store: ${newer.map((n) => `${n.plugin} ${n.installed} → ${n.announced}`).join(', ')}`);
+  releaseForce = true;
+  releaseTick();
+}
+
+/** The pushed clone's HEAD last announced (one transaction per new commit). */
+let announcedHead: string | null = null;
+/**
+ * A daemon running from a clone on main, clean and level with its upstream
+ * (pushed): raise meta/settings.releases to the clone's marketplace.json
+ * versions, only upward. Anything else announces nothing.
+ */
+async function maybeAnnounceRelease(): Promise<void> {
+  if (BUILD.mode !== 'clone' || !BUILD.pluginRoot || !devicesStore.raiseVersion) return;
+  const st = cloneState(BUILD.pluginRoot, realGit);
+  if (!st || st.branch !== 'main' || st.dirty) return;
+  let head: string;
+  try {
+    head = realGit(['rev-parse', 'HEAD'], st.top);
+    if (head !== realGit(['rev-parse', '@{upstream}'], st.top)) return; // not pushed (or behind)
+  } catch {
+    return;
+  }
+  if (head === announcedHead) return;
+  let mine: Record<string, string>;
+  try {
+    mine = marketplaceVersions(readFileSync(join(st.top, '.claude-plugin', 'marketplace.json'), 'utf8'));
+  } catch {
+    return;
+  }
+  const next = await devicesStore.raiseVersion((cur) => {
+    const r = announcePatch(cur?.releases, mine);
+    return r ? { releases: r, releasesBy: SELF.deviceId, releasesAt: nowIso() } : null;
+  });
+  announcedHead = head;
+  if (next) log(`version: announced the pushed release in the store: ${Object.entries(next.releases ?? {}).map(([p, v]) => `${p} ${v}`).join(', ')}`);
+}
 
 /** The KarmaSuite checkout, when it exists (the cwd ks-setup and the resolver see). */
 function checkoutDir(): string | null {
@@ -307,11 +358,35 @@ function findKsSetup(): string | null {
   return bin && existsSync(bin) ? bin : null;
 }
 
+/** The installed version now of each named plugin (null: not found). */
+function installedVersions(plugins: string[]): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  const ctx = rootContext();
+  const cwd = checkoutDir();
+  for (const name of plugins) {
+    const p = { plugin: name };
+    let v: string | null = null;
+    try {
+      const root =
+        liveRoot(p.plugin, { ...ctx, cwd: cwd ?? ctx.cwd, projectPath: process.env.KS_PROJECT_ROOT_PATH || projectPath || undefined }) ??
+        ksPluginRoot(p.plugin);
+      if (root) v = (JSON.parse(readFileSync(join(root, '.claude-plugin', 'plugin.json'), 'utf8')) as { version?: string }).version ?? null;
+    } catch {
+      v = null;
+    }
+    out[p.plugin] = v;
+  }
+  return out;
+}
+
 /** Start the release check when it is due (async; its end re-runs versionTick). */
 function releaseTick(): void {
   if (releaseChecking || BUILD.mode === 'unknown') return;
   const prev = readReleaseCheck(DATA_DIR);
-  if (!decideRelease(prev, Date.now(), CODE, readUpdateState(DATA_DIR), pidAlive)) return;
+  const force = releaseForce;
+  if (!decideRelease(prev, Date.now(), CODE, readUpdateState(DATA_DIR), pidAlive, installedVersions((prev?.plugins ?? []).map((p) => p.plugin)), force)) return;
+  releaseForce = false;
+  if (force) log('version: release check now: a newer release was announced in the store');
   const save = (c: ReturnType<typeof releaseCheckFrom>): void => {
     try {
       writeReleaseCheck(DATA_DIR, c);
@@ -486,6 +561,7 @@ function settingsWritePending(): boolean {
 function applySettings(settings: SettingsDoc): void {
   const before = sharedSettings?.masterDeviceId;
   sharedSettings = settings;
+  onReleasesAnnounced(settings);
   // First: a newer data format in the store turns this device's writes off
   // before anything else here writes.
   versionTick(settings);
@@ -599,6 +675,7 @@ async function deviceHeartbeat(): Promise<void> {
   };
   await devicesStore.mergeDevice(SELF.deviceId, beat);
   await refreshDeviceLabel();
+  await maybeAnnounceRelease().catch((e) => log('version: release announcement failed', (e as Error)?.message));
 }
 
 // ── this device's label (lib/device-label.ts) and live session names ────────

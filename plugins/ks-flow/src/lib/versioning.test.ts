@@ -315,6 +315,12 @@ test('decideRelease: not while an update runs; at once after one succeeded; 10 m
   const ok: UpdateState = { state: 'ok', startedAt: ago(4 * 60_000), endedAt: ago(60_000) };
   assert.equal(decideRelease(recent, now, release('0.3.0'), ok), true);
   assert.equal(decideRelease(recent, now, release('0.2.2'), { ...ok, state: 'failed' }), false, 'a failed one changes nothing');
+  const rec = check({ checkedAt: ago(10 * 60_000), plugins: [{ plugin: 'ks', installed: '1.2.0', latest: '1.2.0' }] });
+  assert.equal(decideRelease(rec, now, release('0.2.2'), null, () => true, { ks: '1.2.1' }), true, 'installed elsewhere since the check');
+  assert.equal(decideRelease(rec, now, release('0.2.2'), null, () => true, { ks: '1.2.0' }), false, 'same version: hourly');
+  assert.equal(decideRelease(rec, now, release('0.2.2'), null, () => true, { ks: null }), false, 'not found: hourly');
+  assert.equal(decideRelease(rec, now, release('0.2.2'), null, () => true, {}, true), true, 'announced: at once');
+  assert.equal(decideRelease(rec, now, { ...release('0.2.2'), dev: true, devReason: 'x' }, null, () => true, {}, true), false, 'never from a dev build');
   // ks-setup was busy 5 min ago: wait; 10 min on: try.
   assert.equal(decideRelease(check({ checkedAt: ago(2 * RELEASE_CHECK_MS), busyAt: ago(5 * 60_000) }), now, release('0.2.2'), null), false);
   assert.equal(decideRelease(check({ checkedAt: ago(2 * RELEASE_CHECK_MS), busyAt: ago(RELEASE_BUSY_RETRY_MS) }), now, release('0.2.2'), null), true);

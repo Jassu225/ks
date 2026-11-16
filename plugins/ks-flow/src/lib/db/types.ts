@@ -152,6 +152,11 @@ export interface SettingsDoc {
   /** The device that last raised them, and when. */
   versionBy?: string | null;
   versionAt?: string | null;
+  /** The newest pushed version of each KS plugin (lib/release-announce.ts): a device
+   * behind on one runs its release check at once. Raised only upward, by a pushed clone. */
+  releases?: Record<string, string> | null;
+  releasesBy?: string | null;
+  releasesAt?: string | null;
 }
 
 /** `masterRequests/{uid}`: a board on another device asking the master device's daemon for a pass. */

@@ -50,7 +50,8 @@ why in one line, and wait for it before step 2.
   shims to `~/.local/bin` and adds that
   folder to PATH in the shell's startup file (zsh: `~/.zshrc`; bash:
   `~/.bash_profile` on macOS, else `~/.bashrc`), installs the CLI dependencies
-  in a clone and copies the plugin switches into existing worktrees. For a
+  (`ks-setup deps`: in place in a clone, shared in Claude's plugin data dir for an
+  installed copy; run it yourself when the doctor lists them missing) and copies the plugin switches into existing worktrees. For a
   clone in `launcher` mode, first ask whether to load the clone as the
   karmasuite directory marketplace (`ks-setup apply --dev --yes`), so plain
   `claude`, the desktop app and IDEs get the plugins; an installed machine
@@ -114,5 +115,5 @@ Run `ks-setup doctor` again and report what is left. For versions (asked which
 version runs, or after an update), `ks-setup version`: per plugin the copy the
 KS commands run, the one Claude loads and the marketplace's newest, plus
 ks-flow's daemon and store, each with its fix when behind. A new shell (for PATH) or
-a new Claude session (for plugin changes and installed dependencies) may be
+a new Claude session (for plugin changes) may be
 needed; say which.
