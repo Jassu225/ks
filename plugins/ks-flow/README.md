@@ -302,9 +302,13 @@ local, so a PocketBase board is one device.
 - **`KS_DEVICE_ID`** in the environment (or the data dir's `.env`) overrides
   the stored id, for test daemons side by side. To keep an old id on new
   hardware, `ks-config set ks.KS_DEVICE_ID <id>` before the first start.
-- The daemon also writes `<dataDir>/device.json` (`{deviceId, defaultName}`)
-  for the name. `ks-flow device-id --json` prints the id, where it came from
-  and whether it matches the hardware; `ks-setup doctor` shows it
+- The daemon also writes `<dataDir>/device.json` for the CLIs and the board:
+  `{ deviceId, defaultName, label, name, deviceCount }` (`label`: its label
+  below, or null; `name`: your name for it, or null; `deviceCount`: devices
+  not forgotten). It is rewritten on the heartbeat whenever the label, the name
+  or the count changes; a file from before 0.4.0 reads as `label: null,
+  name: null, deviceCount: 1`. `ks-flow device-id --json` prints the id, where
+  it came from and whether it matches the hardware; `ks-setup doctor` shows it
   (`ks-flow:device`).
 - **A daemon that ran under a wrong id** (the 0.2.0 dev build under launchd):
   stop it, wait 3 minutes, then move that id's docs to this device and delete
@@ -313,14 +317,40 @@ local, so a PocketBase board is one device.
   (then without `--dry-run`).
 - **Its name** starts as the Mac's ComputerName (else the host name). Rename it
   in Settings → **Devices**; the new name shows everywhere at once.
+- **Its label** is a short tag (`A`, `B`, … `A2`), shown before its name on
+  every chip (`B · Mac mini`, `A · This device`), so Claude sessions can be
+  named `<label>:<unit>` (`B:KAR-123`) and peers listed per device. A label is
+  1–3 characters, `A`–`Z`/`0`–`9`, a letter first, unique among the devices not
+  forgotten. The daemon gives its device one on the heartbeat when it has none:
+  the lowest free of `A`..`Z`, then `A2`..`Z2`, `A3`…. When two devices hold one
+  label (two new devices picking at once), the master device keeps it, else the
+  smaller id, and the other picks again a minute later. A valid label nobody
+  else holds is never changed by a daemon: set your own in Settings →
+  **Devices** (uppercased as you type; a label another device holds is refused;
+  empty = a free one is assigned). A forgotten device taken back onto a label
+  someone else holds now gives it up and gets a free one. `ks-flow devices`
+  lists them all.
+- **Its live session names** (`liveSessionNames`): the names of the Claude
+  sessions running on it now (each live `~/.claude/sessions/<pid>.json`'s
+  `name`, the one ListAgents prints; pid alive; sorted, deduped). Names only:
+  no prompt, no working directory. Its daemon publishes them on the heartbeat
+  when they change, so a session can see its peers on every device.
+- **The local devices cache**, `<dataDir>/devices.json`: on each heartbeat's
+  read of the devices the daemon writes
+  `{ updatedAt, self, devices: [the rows of ks-flow devices --json] }`
+  (write-then-rename; `updatedAt` is the last successful store read).
+  `ks-flow devices` reads it (instant, works offline; `stale` is worked out
+  against now) and says how old it is; `--live` reads the store instead, as
+  does a missing cache.
 - **Its record**, `devices/<id>`, is written by its own daemon every 60 s: name,
   platform, ks-flow version (`daemonVersion`: its `plugin.json` version), data
   format and dev build, last seen, the project path, its current worktrees,
   its Plannotator Inbox address, when it last read Linear, and, on the master
   device, the master's status (written when it changes, and at least every
-  ~30 s while the master is alive, since its heartbeat moves). The board writes
-  only its name and `forgotten` (Settings → Devices; the route `/api/devices`
-  answers 409 until the backfill has run).
+  ~30 s while the master is alive, since its heartbeat moves), its label
+  when it has none, and its live session names when they change. The board writes only its name, its label and `forgotten`
+  (Settings → Devices; the route `/api/devices` answers 409 until the backfill
+  has run).
 
 ### Each card belongs to one device
 
@@ -568,6 +598,7 @@ Settings → Devices shows each device's version, amber when it is behind.
 | `ks-flow backup [target] [options]` | **The one uploader.** Targets: nothing = every live worktree; `--unit <id>`; `--worktree <path> [--identifier <id>]` (one worktree, live or about to be deleted); `--completed` (units whose worktree is gone). Options: `--since-hours <n>`, `--force`, `--dry-run`, `--json`, `--reindex` (upload nothing; rebuild the store's backup index from the bucket), `--runs` (upload nothing; print the run history), `--trigger <daily\|manual\|unit\|removal\|completed>` (recorded with the run; inferred from the target when left out). |
 | `ks-flow session [<unit>] [--json]` | The Claude Code process live in a unit's worktree, as the daemon recorded it: `{ unitId, worktreeDir, workflowDir, activeSession, liveSessions, deviceId, device, local }`. A card on another device prints `on <name>` (`--json`: the record with `local: false`) and exits 1, since its pid and tmux pane are that device's. Exit 1 for an unknown unit or one with no live session; exit 2 when the store is unreachable or the running daemon predates live-session tracking. No unit lists every unit with a live session. The record can be up to one tick (15s) old, so check the pid before signalling it. |
 | `ks-flow device-id [--json]` | This device's id on the shared board (`KS_DEVICE_ID`, else the stored `ks.KS_DEVICE_ID`, else the daemon's `device.json`, else generated). `--json`: `{ deviceId, defaultName, source, hardwareMatches }`. See [Several devices](#several-devices). |
+| `ks-flow devices [--json] [--live]` | Every device on the board: this device first (marked `*`), then by label. Read from the daemon's cache `<dataDir>/devices.json` (instant, offline; a line says how old it is), from the store with `--live` or when the cache is missing. Plain: a table of label, name, id, last seen and flags (`this device`, `master`, `stale`, `forgotten`), each device's live session names under it. `--json`: `{ source: cache\|store, updatedAt, self: <deviceId>, devices: [{ label, name, deviceId, lastSeenAt, self, master, forgotten, stale, liveSessionNames }] }` (`name`: yours, else its default name; `stale`: not seen for 5 min, against now; `updatedAt`: the cache's last store read, or now). Exit 2 when the store can't answer (10 s). See [Several devices](#several-devices). |
 | `ks-flow card-owner <unit> [--json]` | Which device a card is on: owner id and name, whether it is this one, whether the owner still has its worktree or a live session, and what `ks-start-ticket` would do (`none`, `refuse`, `move`). Exit 2 when the store can't answer. |
 | `ks-flow card-move <unit> [--json]` | Move a card to this device, only once its owner no longer has its worktree or a live session; else refuse (exit 1). The only way a card changes device; `ks-start-ticket` runs it. |
 | `ks-flow backup-enabled` | Exit 0 when cloud (GCS) backup is switched on in Settings, else 1. Checked by `remove_worktree` and `ks-start-ticket`. |

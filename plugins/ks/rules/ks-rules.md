@@ -132,3 +132,20 @@ How:
 - Run `claude-ks-rc-restart --dry-run` first. If it succeeds, tell the user in one line that this session ends now and which pane the next one opens in, then run `claude-ks-rc-restart`. Nothing after it runs: the session ends about 2 s later.
 - If the dry run fails (not in tmux, ks-flow not running, not a ticket checkout), give the manual command: `cd <worktree> && claude-ks "/ks:project-manager Let's work on ./<workflow dir>/ project"`.
 - `claude-ks-rc <dir> [--prompt <text>]` starts a Remote Control session in another directory, in a new tmux window, without ending this one.
+
+## Peers
+
+Sessions started with `claude-ks` are named `<device label>:<unit>` (`B:KAR-123`) once two or more Macs share the ks-flow board; with one Mac, just the unit (`KAR-123`). The `ks-master` session has no prefix.
+
+When you list peers (ListAgents) for the user, show one markdown table with these columns:
+- **Device**: `B · <device name>`, from `ks-flow devices --json` (its own Bash command, nothing chained; `devices[].label` and `.name`); mark this device (`self`), e.g. `A · MacBook Pro (this Mac)`.
+- **Peer**: the exact name to address it by.
+- **Kind**: interactive or Remote Control.
+- **State** and **Started**.
+
+Group the rows by device, this device first. Match each peer to its device in this order:
+1. Its name is in exactly one device's `liveSessionNames` (each daemon publishes the names of its live sessions): that device.
+2. Its name starts with a device's label (`B:`): that device.
+3. Otherwise "unknown device". The `[ref]` in ListAgents is not the session id, so it can't be matched.
+
+`ks-flow devices --json` reads the local cache (updated every minute, works offline); `--live` reads the store. To message a peer, address it by its exact name; add the `[ref]` only when two peers share a name.

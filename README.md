@@ -44,9 +44,13 @@ the same per-project way (Claude reads the plugins in place; edits apply on
 `/reload-plugins`), installs the CLI dependencies, and runs the same `ks-setup`
 steps as `/ks:setup`.
 
-After either, a plain `claude` — and the desktop app and IDEs — gets the
+After either, start Claude in the checkout with `claude-ks`: it names the
+session after the ticket (`B:KAR-123`, with this Mac's ks-flow device label once
+2+ Macs share the board, so agents can message each other across Macs), turns
+Remote Control on when `ks-setup remote-control` set it, and loads on-demand
+plugins. A plain `claude` — and the desktop app and IDEs — still gets the
 plugins, the KS rules (SessionStart context), a task list per worktree
-(`.claude/settings.local.json`) and the tokens. `claude-ks` is deprecated.
+(`.claude/settings.local.json`) and the tokens.
 
 **Updating.** `ks-setup update` brings every KS plugin on the machine to the
 newest release: installed, each out-of-date install (the checkout and every

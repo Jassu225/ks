@@ -80,6 +80,10 @@ export interface DeviceMasterStatus {
 export interface DeviceDoc {
   deviceId: string;
   name?: string | null;
+  /** Short label on the shared board (A, B, … A2; lib/device-label.ts): the daemon assigns one, Settings → Devices sets it. */
+  label?: string | null;
+  /** Names of this device's live Claude sessions (~/.claude/sessions/<pid>.json `name`, pid alive): sorted, deduped. Names only. */
+  liveSessionNames?: string[];
   defaultName: string;
   platform: string;
   daemonVersion: string;

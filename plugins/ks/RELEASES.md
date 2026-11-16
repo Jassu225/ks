@@ -1,5 +1,12 @@
 # Releases
 
+## 2026-11-17
+
+- **`claude-ks` is the command again** (no longer deprecated): it starts Claude for KarmaSuite through `scripts/ks-claude`, naming the session, turning on Remote Control when configured, and loading on-demand plugins. A plain `claude` still gets the plugins, rules and tokens, but not the following.
+  - **Session names carry the device:** once 2+ Macs share the ks-flow board, sessions are named `<device label>:<unit>` (`B:KAR-123`, or `B:<folder>` with no workflow unit), so `ListAgents` shows which Mac each one runs on and `SendMessage` can address it. `ks-master` stays unprefixed. Labels (A, B, C…) live on each device's record in ks-flow (`devices/{id}.label`, ks-flow 0.4.0), are assigned by its daemon, editable in Settings → Devices, and listed by `ks-flow devices`.
+  - **Remote Control by config:** `ks-setup remote-control` sets `ks.KS_REMOTE_CONTROL=1`, and `claude-ks` (every KS launcher) adds `--rc`. It replaces the `claude()` shell function, which a script can't see; `ks-setup remote-control --yes` removes the old function and `ks-setup doctor` warns while it remains (`remote-control:shell`).
+  - **Peers as a table:** the KS rules say how to list peers: one table grouped by device (`B · <device name>`), with the exact peer name to address. Each ks-flow daemon publishes its live session names (`devices/{id}.liveSessionNames`), so even an unprefixed session (plain `claude`, the master) is placed on its Mac; `ks-flow devices` reads a local cache (`<dataDir>/devices.json`, refreshed every minute, works offline; `--live` reads the store).
+
 ## 2026-11-15
 
 - **One setup for a clone and for an install.** In the KarmaSuite checkout, `claude plugin install --scope local ks-suite@karmasuite` (per project: the switch is in that checkout's gitignored `.claude/settings.local.json`; `ks-setup apply` copies it into existing worktrees, `create-worktree` into new ones) + `/ks:setup`, or `plugins/ks/init-dev` (loads the clone as the `karmasuite` directory marketplace, read in place). Both end in the state `ks-setup doctor` checks. A plain `claude` — and the desktop app, IDEs — then gets the plugins, the KS rules (SessionStart context), a task list per worktree (`create-worktree` writes it into `.claude/settings.local.json`) and the tokens. `claude-ks` is deprecated (one release); the launchers run `scripts/ks-claude`.

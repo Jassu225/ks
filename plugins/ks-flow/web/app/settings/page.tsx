@@ -14,6 +14,7 @@ import {
   isDeviceStale,
 } from '@/components/DeviceChip';
 import { useShared } from '@/lib/boardData';
+import { LABEL_MAX, isValidLabel, labelFormatError, normalizeLabel } from '@/lib/device-label';
 import type { DeviceDoc } from '@/lib/types';
 import { compareSemver } from '@/lib/versioning';
 
@@ -38,6 +39,7 @@ interface BriefingSettingsForm {
 
 type DevicesChange =
   | { action: 'rename'; deviceId: string; name: string | null }
+  | { action: 'label'; deviceId: string; label: string | null }
   | { action: 'forget'; deviceId: string; forgotten: boolean }
   | { action: 'master'; deviceId: string };
 
@@ -94,6 +96,7 @@ function DevicesSection() {
   const { board, now } = useShared();
   const { devices, settings, self } = board;
   const [names, setNames] = useState<Record<string, string>>({});
+  const [labels, setLabels] = useState<Record<string, string>>({});
   const [master, setMaster] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -114,12 +117,33 @@ function DevicesSection() {
   );
 
   const nameOf = (d: DeviceDoc): string => names[d.deviceId] ?? d.name ?? '';
+  const labelOf = (d: DeviceDoc): string => labels[d.deviceId] ?? d.label ?? '';
+  // Why each drafted label is refused (format, or another live device holds it).
+  const labelErrors: Record<string, string> = {};
+  for (const d of devices) {
+    if (labels[d.deviceId] === undefined || d.forgotten === true) continue;
+    const l = normalizeLabel(labelOf(d));
+    const bad = labelFormatError(l);
+    if (bad) {
+      labelErrors[d.deviceId] = bad;
+      continue;
+    }
+    const other = isValidLabel(l)
+      ? devices.find((o) => o.deviceId !== d.deviceId && o.forgotten !== true && normalizeLabel(labelOf(o)) === l)
+      : undefined;
+    if (other) labelErrors[d.deviceId] = `${l} is taken by ${deviceLabel(other, other.deviceId)}.`;
+  }
+  const labelsOk = Object.keys(labelErrors).length === 0;
   const changes = (): DevicesChange[] => {
     const out: DevicesChange[] = [];
     for (const d of devices) {
       const draft = names[d.deviceId];
       if (draft !== undefined && draft.trim() !== (d.name ?? '').trim()) {
         out.push({ action: 'rename', deviceId: d.deviceId, name: draft.trim() || null });
+      }
+      const label = labels[d.deviceId];
+      if (label !== undefined && normalizeLabel(label) !== (d.label ?? '')) {
+        out.push({ action: 'label', deviceId: d.deviceId, label: normalizeLabel(label) || null });
       }
     }
     if (master && master !== currentMaster) out.push({ action: 'master', deviceId: master });
@@ -130,7 +154,7 @@ function DevicesSection() {
   const save = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     const list = changes();
-    if (list.length === 0) return;
+    if (list.length === 0 || !labelsOk) return;
     setSaving(true);
     setSaved(false);
     setError(null);
@@ -138,6 +162,7 @@ function DevicesSection() {
       await postDevices(list);
       // The live subscription brings the new values; drop the drafts.
       setNames({});
+      setLabels({});
       setMaster(null);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -175,8 +200,10 @@ function DevicesSection() {
       </h2>
       <p className="mt-1 text-xs text-slate-400">
         Every device whose ks-flow writes to this store. Each card belongs to the device its worktree is on;
-        only that device backs it up, refreshes or removes it. Your name for a device shows on its chips. The
-        master session runs on one device: Brief me and Restart from any other device are sent to it.
+        only that device backs it up, refreshes or removes it. Your name for a device shows on its chips, after
+        its label (A, B, …: each device gets a free one, and you can change it here), which also names its Claude
+        sessions (B:KAR-123). The master session runs on one device: Brief me and Restart from any other device
+        are sent to it.
       </p>
 
       {!settings ? (
@@ -249,6 +276,31 @@ function DevicesSection() {
                       </label>
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <label htmlFor={`device-label-${d.deviceId}`} className="sr-only">
+                        Label for {d.defaultName}
+                      </label>
+                      <input
+                        id={`device-label-${d.deviceId}`}
+                        type="text"
+                        value={labelOf(d)}
+                        maxLength={LABEL_MAX}
+                        disabled={forgotten}
+                        onChange={(e) => {
+                          const v = e.target.value.toUpperCase().replace(/\s/g, '');
+                          setLabels((l) => ({ ...l, [d.deviceId]: v }));
+                          setSaved(false);
+                        }}
+                        placeholder="auto"
+                        spellCheck={false}
+                        autoCapitalize="characters"
+                        aria-invalid={!!labelErrors[d.deviceId]}
+                        title="Label: 1–3 letters or digits, a letter first, unique among the devices (empty: one is assigned)"
+                        className={`w-16 rounded border bg-slate-800 px-2 py-1 text-center font-mono text-sm font-semibold text-slate-100 placeholder-slate-500 focus:outline-none disabled:opacity-50 ${
+                          labelErrors[d.deviceId]
+                            ? 'border-red-600 focus:border-red-500'
+                            : 'border-slate-700 focus:border-indigo-500'
+                        }`}
+                      />
                       <label htmlFor={`device-name-${d.deviceId}`} className="sr-only">
                         Name for {d.defaultName}
                       </label>
@@ -290,6 +342,11 @@ function DevicesSection() {
                         </button>
                       )}
                     </div>
+                    {labelErrors[d.deviceId] && (
+                      <p role="alert" className="mt-1 text-[11px] text-red-400">
+                        {labelErrors[d.deviceId]}
+                      </p>
+                    )}
                     <p className="mt-1.5 text-[11px] text-slate-500">
                       <span className={stale && !forgotten ? 'text-amber-400/80' : ''}>
                         last seen {agoText(d.lastSeenAt, now)}
@@ -315,14 +372,15 @@ function DevicesSection() {
             )}
             <button
               type="submit"
-              disabled={saving || !dirty}
+              disabled={saving || !dirty || !labelsOk}
               className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
             >
               {saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save devices'}
             </button>
             <p className="text-[11px] text-slate-500">
-              An empty name goes back to the device&apos;s own name. A new master device takes over within a
-              minute; the old one stops supervising the master.
+              An empty name goes back to the device&apos;s own name; an empty label gets a free one from its
+              device within a minute. A new master device takes over within a minute; the old one stops
+              supervising the master.
             </p>
           </form>
         </>

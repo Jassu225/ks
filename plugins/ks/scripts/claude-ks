@@ -1,14 +1,17 @@
 #!/bin/bash
-# claude-ks — DEPRECATED. Once the plugins are installed (ks-setup apply --dev for
-# a clone, or `claude plugin install ks-suite@karmasuite`), a plain `claude` gets
-# the same plugins, rules, task list and tokens, and so do the desktop app and
-# IDEs. Kept for one release: it still works, through scripts/ks-claude (old
-# clone setup included). Same arguments as before (--plugin / --local-plugin
-# <name>, then any claude arguments).
+# claude-ks — the way to start Claude for KarmaSuite (in the checkout or one of
+# its worktrees). A plain `claude` gets the plugins, rules, task list and tokens
+# too; claude-ks adds:
+#   - the session (peer) name: the workflow unit (KAR-123), prefixed with this
+#     Mac's ks-flow device label once 2+ Macs share the board (B:KAR-123), so
+#     agents on other Macs can tell it apart and message it;
+#   - Remote Control when it is on (ks.KS_REMOTE_CONTROL=1, `ks-setup remote-control`);
+#   - on-demand plugins: --local-plugin / --plugin <name> (ks-master, ks-browser)
+#     load for this session only.
+#
+#   claude-ks [--local-plugin <name>]… [claude args…]
+#
+# It runs scripts/ks-claude, the launcher behind every KS launcher (old clone
+# setup included).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ "$(jq -r '.enabledPlugins["ks@karmasuite"] // false' "$HOME/.claude/settings.json" 2>/dev/null)" = true ]; then
-  echo "claude-ks is deprecated: plain \`claude\` does the same now (claude -n <name> to name a session)." >&2
-else
-  echo "claude-ks is deprecated: run plugins/ks/init-dev (or /ks:setup) once, then use plain \`claude\`." >&2
-fi
 exec "$SCRIPT_DIR/ks-claude" "$@"

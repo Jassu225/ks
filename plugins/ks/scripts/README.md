@@ -50,11 +50,13 @@ ks-config list
   KarmaSuite checkout's `.claude/settings.local.json` (that checkout only) and
   copies it to its worktrees; asks first, `--yes` from Claude's `!`.
   **`ks-setup remote-control [--yes|--remove]`** — optional; suggested (a doctor
-  `warn`) once 2+ devices share the ks-flow board: a marked `claude` function
-  in the shell's startup file that adds `--rc` when the folder belongs to the
-  `ks.KS_PROJECT_ROOT_PATH` checkout's repository (main checkout or a worktree),
-  so agents on different Macs can message each other. Claude honours
-  `remoteControlAtStartup: true` only in user settings, never a project's.
+  `warn`) once 2+ devices share the ks-flow board: sets `ks.KS_REMOTE_CONTROL=1`
+  (`--remove` unsets it), so `claude-ks` starts Claude with `--rc` and agents on
+  different Macs can message each other. Claude honours
+  `remoteControlAtStartup: true` only in user settings, never a project's. The
+  marked `claude` shell function earlier versions wrote into the shell's startup
+  file is no longer used: it offers to remove it (the doctor's
+  `remote-control:shell` warns while it is there).
   **`ks-setup version [--json]`** — each KS plugin's version three ways: the copy
   the commands run (resolved live, as the shims do), the one Claude loads in the
   checkout, and the marketplace's newest (as of its last update), plus
@@ -97,12 +99,20 @@ ks-config list
   `~/.local/bin` shims (`# ks-shim v2`) carry the same resolver inline, with no
   folder baked in and no `claude` call; the SessionStart hook rewrites older
   shims once.
-- **`ks-claude`** — the launcher behind `claude-ks-rc`, `claude-ks-master`,
-  `claude-ks-test` and `ks-start-ticket`: plain `claude` once the plugins are
-  installed (in the checkout's `.claude/settings*.json` or user-wide), the old
-  `--plugin-dir` launch before. An on-demand plugin (ks-master, ks-browser) is
-  never installed: it loads for that session with `--plugin-dir` from the
-  karmasuite marketplace's copy of the repo (`ksr_marketplace_root`). **`claude-ks`** is a deprecated alias.
+- **`claude-ks [--local-plugin <name>]… [claude args…]`** — the command to
+  start Claude for KarmaSuite. It runs `ks-claude`.
+- **`ks-claude`** — the launcher behind `claude-ks`, `claude-ks-rc`,
+  `claude-ks-master`, `claude-ks-test` and `ks-start-ticket`: plain `claude`
+  once the plugins are installed (in the checkout's `.claude/settings*.json` or
+  user-wide), the old `--plugin-dir` launch before. An on-demand plugin
+  (ks-master, ks-browser) is never installed: it loads for that session with
+  `--plugin-dir` from the karmasuite marketplace's copy of the repo
+  (`ksr_marketplace_root`). It names the session (`--name`) after the workflow
+  unit, prefixed with this Mac's ks-flow device label once 2+ Macs share the
+  board (`B:KAR-123`, or `B:<folder>` with no unit; `lib/peer-name.sh` reads
+  `<ks-flow dataDir>/device.json`), unless the caller passes `--name` (taken as
+  is), `--resume` or `--continue`; and adds `--rc` when `ks.KS_REMOTE_CONTROL`
+  is `1` and the caller didn't pass `--rc` / `--remote-control`.
 - **Hooks:** `ensure-setup.sh` (SessionStart: registry for a clone, old shims
   upgraded, deps into
   `${CLAUDE_PLUGIN_DATA}/deps` for an installed copy, the KS rules as context,
@@ -305,7 +315,7 @@ Use it only for files that are *already* failing on the main branch — otherwis
 
 - **`statusline`**: the settings `statusLine` command (shim `~/.local/bin/statusline`; `ks-setup statusline` sets it in the KarmaSuite checkout). It prints session name (`@<name>`), context, branch, the checkout's Linear ticket as an OSC 8 link, and the rate-limit windows. Under `claude-ks` (`KS_MOD_STATUSLINE=1`, exported by `claude-ks`) it stops after session, context and branch: the ks plugin draws the ticket and phase pills and the rate limits under the prompt (`hooks/register.tsx`; see the plugin README, "Statusline").
 - **`workflow-unit`**: prints the ks workflow unit that owns the current checkout, tab-separated: `<state.yaml path>  <ticket|project>  <identifier or ->  <linear url>  <name>`. It matches the `state.yaml` under `workflow/` whose `worktree_dir` is the git root, else (older states) the ticket id in the branch name. Exits 1 outside a workflow checkout. The statusline and `session-title.sh` use it; the plugin's hooks do the same lookup in-process.
-- **`session-title.sh`**: a `SessionStart` hook (startup, resume, clear) that sets `sessionTitle` to the ticket id (`KAR-123`), or a project's workflow folder name. It stays short and space-free because it is also the peer name `ListAgents` prints and `SendMessage` takes. That peer name is fixed at startup, before hooks run, so the hook alone only renames the transcript; `claude-ks` passes `--name "$(session-title.sh --print)"` at launch (skipped when you pass `--name`, `--resume` or `--continue`) so a new session answers to `KAR-123` from the start.
+- **`session-title.sh`**: a `SessionStart` hook (startup, resume, clear) that sets `sessionTitle` to the ticket id (`KAR-123`), or a project's workflow folder name. It stays short and space-free because it is also the peer name `ListAgents` prints and `SendMessage` takes. That peer name is fixed at startup, before hooks run, so the hook alone only renames the transcript; `claude-ks` passes `--name "$(session-title.sh --print)"` at launch (with the device label in front once 2+ Macs share the ks-flow board: `B:KAR-123`; skipped when you pass `--name`, `--resume` or `--continue`) so a new session answers to that name from the start.
 
 ### Browser testing (`claude-ks-test`)
 
@@ -315,7 +325,7 @@ Use it only for files that are *already* failing on the main branch — otherwis
 
 Remote Control can be switched on only at launch (`claude --remote-control`) or by you typing `/remote-control`; an agent can do neither from inside its session. These two scripts let it swap itself for a fresh session that has Remote Control on. Agents also use the restart when you ask for a new session and at `/ks:project-manager` phase boundaries (`rules/ks-rules.md`, "New sessions and Remote Control").
 
-- **`claude-ks-rc <dir> [--prompt <text>] [--name <name>] [--pane <tmux-pane>] [-- <claude-ks args>]`** starts `claude-ks --remote-control <name> [prompt]` in `<dir>`. The Remote Control name defaults to the checkout's unit (`KAR-123`), else the folder name.
+- **`claude-ks-rc <dir> [--prompt <text>] [--name <name>] [--pane <tmux-pane>] [-- <claude-ks args>]`** starts `claude-ks --name <name> --remote-control <name> [prompt]` in `<dir>`. The name (peer and Remote Control) defaults to the checkout's unit (`KAR-123`), else the folder name, with the device label in front once 2+ Macs share the ks-flow board (`B:KAR-123`).
   - It runs in the `--pane` tmux pane, replacing what runs there (`respawn-pane -k`), if that pane still exists.
   - Otherwise it opens a new tmux window when tmux is running, or runs in this terminal.
   - In tmux, the pane drops to a login shell when Claude exits.

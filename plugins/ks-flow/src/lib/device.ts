@@ -14,8 +14,14 @@
 //        Linux: /etc/machine-id, then /var/lib/dbus/machine-id.
 //        Neither: a hash of the host name (the caller warns; never stored).
 // The daemon stores a generated hardware id on its first start
-// (ensureStoredDeviceId) and writes <dataDir>/device.json {deviceId,
-// defaultName}, which the board and the CLIs use for the name.
+// (ensureStoredDeviceId) and writes <dataDir>/device.json, which the board
+// and the CLIs use for the name:
+//   { deviceId, defaultName,
+//     label: this device's label on the shared board (lib/device-label.ts) | null,
+//     name: the user's name for it (Settings → Devices) | null,
+//     deviceCount: devices on the board, forgotten ones left out }
+// rewritten by the heartbeat whenever label, name or deviceCount change. A
+// file from before them reads as label null, name null, deviceCount 1.
 //
 // A stored id that differs from this machine's hardware id means the config
 // was copied from another Mac (Migration Assistant, synced dotfiles) or the
@@ -35,6 +41,13 @@ export const DEVICE_ID_KEY = 'KS_DEVICE_ID';
 export interface DeviceIdentity {
   deviceId: string;
   defaultName: string;
+}
+
+/** <dataDir>/device.json: the identity plus what the daemon last read from the store. */
+export interface DeviceFile extends DeviceIdentity {
+  label: string | null;
+  name: string | null;
+  deviceCount: number;
 }
 
 /** Where the id came from: env override, the stored config, generated from the hardware, or the host name. */
@@ -206,23 +219,36 @@ export function computeDeviceId(env: NodeJS.ProcessEnv = process.env): string {
   return r.deviceId;
 }
 
-/** <dataDir>/device.json, or null when missing or malformed. */
-export function readDeviceFile(dataDir: string): DeviceIdentity | null {
+/** <dataDir>/device.json, or null when missing or malformed (fields added later get their defaults). */
+export function readDeviceFile(dataDir: string): DeviceFile | null {
   try {
-    const j = JSON.parse(readFileSync(join(dataDir, DEVICE_FILE), 'utf8')) as Partial<DeviceIdentity>;
+    const j = JSON.parse(readFileSync(join(dataDir, DEVICE_FILE), 'utf8')) as Partial<DeviceFile>;
     if (typeof j.deviceId !== 'string' || !j.deviceId) return null;
-    return { deviceId: j.deviceId, defaultName: typeof j.defaultName === 'string' ? j.defaultName : j.deviceId };
+    return {
+      deviceId: j.deviceId,
+      defaultName: typeof j.defaultName === 'string' ? j.defaultName : j.deviceId,
+      label: typeof j.label === 'string' && j.label ? j.label : null,
+      name: typeof j.name === 'string' && j.name ? j.name : null,
+      deviceCount: typeof j.deviceCount === 'number' && j.deviceCount >= 0 ? j.deviceCount : 1,
+    };
   } catch {
     return null;
   }
 }
 
-/** Write <dataDir>/device.json (write-then-rename). */
-export function writeDeviceFile(dataDir: string, id: DeviceIdentity): void {
+/** Write <dataDir>/device.json (write-then-rename); a field left out gets its default. */
+export function writeDeviceFile(dataDir: string, f: DeviceIdentity & Partial<DeviceFile>): void {
+  const doc: DeviceFile = {
+    deviceId: f.deviceId,
+    defaultName: f.defaultName,
+    label: f.label ?? null,
+    name: f.name ?? null,
+    deviceCount: f.deviceCount ?? 1,
+  };
   mkdirSync(dataDir, { recursive: true });
   const path = join(dataDir, DEVICE_FILE);
   const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(id, null, 2) + '\n');
+  writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n');
   renameSync(tmp, path);
 }
 
@@ -240,7 +266,7 @@ export function deviceIdentity(dataDir: string, env: NodeJS.ProcessEnv = process
   const file = readDeviceFile(dataDir);
   const id = env[DEVICE_ID_KEY]?.trim() || readStoredDeviceId(env);
   if (id) return { deviceId: id, defaultName: file?.deviceId === id ? file.defaultName : defaultDeviceName() };
-  if (file) return file;
+  if (file) return { deviceId: file.deviceId, defaultName: file.defaultName };
   return computeDeviceIdentity(env);
 }
 

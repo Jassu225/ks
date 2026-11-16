@@ -3,9 +3,13 @@
 // GET  → { devices, settings, self } (the board reads them live; this is for scripts and checks)
 // POST { changes: [
 //        { action: 'rename', deviceId, name: string | null },   // null/'' = back to its default name
+//        { action: 'label', deviceId, label: string | null },   // 1–3 chars A–Z/0–9, a letter first (uppercased);
+//                                                               // unique among non-forgotten devices (409);
+//                                                               // null/'' = its daemon assigns one
 //        { action: 'forget', deviceId, forgotten: boolean },    // only a stale, non-master device
 //        { action: 'master', deviceId } ] }                     // meta/settings.masterDeviceId
-//   Every change is checked first; then all are written (merges), or none.
+//   Every change is checked first; then all are written (merges), or none. A
+//   device taken back onto a label another device holds gives it up (null).
 //   409 before the device backfill (no meta/settings).
 import { NextResponse } from 'next/server';
 import { applyDevicesChanges, DevicesError, parseChanges, readDevices } from '@/lib/devicesdb';

@@ -1,7 +1,10 @@
 // lib/devicesdb.ts — SERVER-side Settings → Devices writes (app/api/devices).
 //
-// The board writes only three things about devices, all store-only, all merges:
+// The board writes only four things about devices, all store-only, all merges:
 //   devices/{id}.name           your name for a device (null = its default name)
+//   devices/{id}.label          its short label (A, B, … A2; lib/device-label.ts):
+//                               unique among the devices not forgotten; null =
+//                               its daemon assigns one on its next heartbeat
 //   devices/{id}.forgotten      Forget a stale device (the doc is kept; its cards
 //                               become removed cards), or take it back
 //   meta/settings.masterDeviceId  the device that runs the master
@@ -19,6 +22,7 @@ import { outboxEntries, overlay } from './outbox';
 import { adminFirestore, fsRead, fsWrite, pbClient, plainData, serverConfig, SETTINGS_PATH, type ServerConfig } from './serverdb';
 import { readScopeCache } from './storeCache';
 import { deviceId as selfDeviceId } from './device';
+import { isValidLabel, labelFormatError, normalizeLabel } from './device-label';
 import type { DeviceDoc, SettingsDoc } from './types';
 
 const DEVICES = 'devices';
@@ -29,6 +33,7 @@ const NAME_MAX = 40;
 
 export type DevicesChange =
   | { action: 'rename'; deviceId: string; name: string | null }
+  | { action: 'label'; deviceId: string; label: string | null }
   | { action: 'forget'; deviceId: string; forgotten: boolean }
   | { action: 'master'; deviceId: string };
 
@@ -128,6 +133,11 @@ export async function applyDevicesChanges(changes: DevicesChange[], now: number 
   const byId = new Map(state.devices.map((d) => [d.deviceId, d]));
   const merges: Merge[] = [];
   let master = state.settings.masterDeviceId;
+  // Labels and forgotten flags as they will be once every change is written:
+  // uniqueness is checked against that (a swap A↔B in one save is fine).
+  const finalLabel = new Map(state.devices.map((d) => [d.deviceId, d.label ?? null]));
+  const finalForgotten = new Map(state.devices.map((d) => [d.deviceId, d.forgotten === true]));
+  const labelled = new Set<string>();
 
   for (const c of changes) {
     const d = byId.get(c.deviceId);
@@ -136,6 +146,13 @@ export async function applyDevicesChanges(changes: DevicesChange[], now: number 
     if (c.action === 'rename') {
       const name = (c.name ?? '').trim().slice(0, NAME_MAX);
       merges.push({ path: `${DEVICES}/${c.deviceId}`, data: { name: name || null } });
+    } else if (c.action === 'label') {
+      const l = normalizeLabel(c.label ?? '');
+      const bad = labelFormatError(l);
+      if (bad) throw new DevicesError(bad, 400);
+      finalLabel.set(c.deviceId, l || null);
+      labelled.add(c.deviceId);
+      merges.push({ path: `${DEVICES}/${c.deviceId}`, data: { label: l || null } });
     } else if (c.action === 'forget') {
       if (c.forgotten) {
         if (c.deviceId === state.self) throw new DevicesError('This device cannot forget itself.', 400);
@@ -147,6 +164,7 @@ export async function applyDevicesChanges(changes: DevicesChange[], now: number 
           throw new DevicesError(`${label} is the master device: pick another master first.`, 409);
         }
       }
+      finalForgotten.set(c.deviceId, c.forgotten);
       merges.push({ path: `${DEVICES}/${c.deviceId}`, data: { forgotten: c.forgotten } });
     } else if (c.action === 'master') {
       if (d.forgotten) throw new DevicesError(`${label} is forgotten: take it back before making it the master.`, 409);
@@ -155,6 +173,33 @@ export async function applyDevicesChanges(changes: DevicesChange[], now: number 
         merges.push({ path: SETTINGS_PATH, data: { masterDeviceId: c.deviceId } });
       }
     }
+  }
+  // Labels: unique among the devices not forgotten. A label set here that
+  // another device holds is refused; a device taken back onto a label someone
+  // else holds now gives it up (its daemon picks a free one).
+  const holder = new Map<string, string>();
+  const takenBack = (d: DeviceDoc): boolean => d.forgotten === true && !finalForgotten.get(d.deviceId);
+  const nameOf = (id: string): string => {
+    const o = byId.get(id);
+    return o?.name || o?.defaultName || id;
+  };
+  // Labelled in this request first, devices taken back last: those give way.
+  const rank = (d: DeviceDoc): number => (labelled.has(d.deviceId) ? 0 : takenBack(d) ? 2 : 1);
+  const live = state.devices.filter((d) => !finalForgotten.get(d.deviceId)).sort((a, b) => rank(a) - rank(b));
+  for (const d of live) {
+    const l = finalLabel.get(d.deviceId);
+    if (!isValidLabel(l)) continue;
+    const other = holder.get(l);
+    if (!other) {
+      holder.set(l, d.deviceId);
+    } else if (labelled.has(d.deviceId)) {
+      throw new DevicesError(`Label ${l} is given to two devices.`, 409);
+    } else if (takenBack(d)) {
+      merges.push({ path: `${DEVICES}/${d.deviceId}`, data: { label: null } });
+    } else if (labelled.has(other)) {
+      throw new DevicesError(`Label ${l} is taken by ${nameOf(d.deviceId)}.`, 409);
+    }
+    // Else two devices already shared it before this save: their daemons settle it.
   }
   await applyMerges(cfg, merges);
   return readDevices(cfg).catch(() => state);
@@ -171,6 +216,10 @@ export function parseChanges(body: unknown): DevicesChange[] {
     if (c.action === 'rename') {
       if (c.name !== null && typeof c.name !== 'string') throw new DevicesError('rename: name must be a string or null', 400);
       return { action: 'rename', deviceId: id, name: c.name as string | null };
+    }
+    if (c.action === 'label') {
+      if (c.label !== null && typeof c.label !== 'string') throw new DevicesError('label: label must be a string or null', 400);
+      return { action: 'label', deviceId: id, label: c.label as string | null };
     }
     if (c.action === 'forget') {
       if (typeof c.forgotten !== 'boolean') throw new DevicesError('forget: forgotten must be true or false', 400);

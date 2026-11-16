@@ -14,6 +14,15 @@
 //   ks-flow card-move <unit> [--json]   move the card to this device, when its
 //                                       owner no longer has its worktree or a
 //                                       live session (else refuse)
+//   ks-flow devices [--json] [--live]   every device on the board (this device
+//                                       first, then by label), from the daemon's
+//                                       cache <dataDir>/devices.json (instant,
+//                                       offline; the store when it is missing),
+//                                       or from the store with --live; --json:
+//     { source: cache | store, updatedAt: the cache's last store read (store: now),
+//       self: <this deviceId>,
+//       devices: [{ label, name, deviceId, lastSeenAt, self, master, forgotten,
+//                   stale (not seen for 5 min, against now), liveSessionNames }] }
 //
 // Exit: 0 answered / moved / nothing to move; 1 card-move refused; 2 usage,
 // or the store can't answer.
@@ -21,6 +30,7 @@ import { dataDir, loadConfig } from './lib/config.js';
 import { createProvider } from './lib/db/index.js';
 import { deviceIdentity, resolveDeviceId } from './lib/device.js';
 import { cardOwner, moveCard, startDecision } from './lib/card-owner.js';
+import { formatDevices, listDevices, readDevicesCache, refreshRows } from './lib/device-list.js';
 
 const READ_TIMEOUT_MS = 10_000;
 
@@ -52,7 +62,27 @@ async function main(): Promise<void> {
     } else console.log(self.deviceId);
     process.exit(0);
   }
-  if (cmd !== 'card-owner' && cmd !== 'card-move') fail(2, 'usage: device-cli.js {device-id|card-owner <unit>|card-move <unit>} [--json]');
+  if (cmd === 'devices') {
+    const now = Date.now();
+    const cache = rest.includes('--live') ? null : readDevicesCache(dataDir());
+    let out: { source: 'cache' | 'store'; updatedAt: string; self: string; devices: ReturnType<typeof listDevices> };
+    if (cache) {
+      out = { source: 'cache', updatedAt: cache.updatedAt, self: self.deviceId, devices: refreshRows(cache.devices, self.deviceId, now) };
+    } else {
+      const store = createProvider(loadConfig()).devices();
+      try {
+        const [devices, settings] = await timed(Promise.all([store.getDevices(), store.getSettings()]));
+        const list = listDevices(devices, self.deviceId, settings?.masterDeviceId ?? null, now);
+        out = { source: 'store', updatedAt: new Date(now).toISOString(), self: self.deviceId, devices: list };
+      } catch (e) {
+        fail(2, `can't read the store (${(e as Error).message})`);
+      }
+    }
+    if (json) console.log(JSON.stringify(out, null, 2));
+    else console.log(formatDevices(out.devices, now, out.source === 'cache' ? out.updatedAt : null));
+    process.exit(0);
+  }
+  if (cmd !== 'card-owner' && cmd !== 'card-move') fail(2, 'usage: device-cli.js {device-id|devices|card-owner <unit>|card-move <unit>} [--json]');
   if (!unit) fail(2, `usage: ks-flow ${cmd} <unit> [--json]`);
 
   const store = createProvider(loadConfig()).devices();

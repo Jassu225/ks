@@ -2,7 +2,8 @@
 // DeviceChip — which device a card, a backup run or a master event belongs to.
 //
 // One board for several devices (any number): the chip names the device (your
-// name for it, else its default name), coloured from a fixed palette by a
+// name for it, else its default name), after its short label when it has one
+// ("B · Mac mini", "A · This device"), coloured from a fixed palette by a
 // stable hash of its id, so every board picks the same colour for it. Two ids
 // that land on one colour still differ by name.
 //
@@ -107,13 +108,15 @@ export function DeviceChip({
   const id = deviceId || board.self;
   const d = board.devices.find((x) => x.deviceId === id) ?? null;
   const name = deviceLabel(d, id);
+  // Its short label on the board (lib/device-label.ts), before the name.
+  const tag = d?.label ? `${d.label} · ` : '';
   const forgotten = d?.forgotten === true;
   const stale = !forgotten && isDeviceStale(d, now);
   const title = forgotten
-    ? `${name}: removed device (forgotten in Settings → Devices) · last seen ${agoText(d?.lastSeenAt, now)}`
+    ? `${tag}${name}: removed device (forgotten in Settings → Devices) · last seen ${agoText(d?.lastSeenAt, now)}`
     : stale
-      ? `${name}: last seen ${agoText(d?.lastSeenAt, now)}`
-      : `${name}${id === board.self ? ' (this device)' : ''} · seen ${agoText(d?.lastSeenAt, now)}`;
+      ? `${tag}${name}: last seen ${agoText(d?.lastSeenAt, now)}`
+      : `${tag}${name}${id === board.self ? ' (this device)' : ''} · seen ${agoText(d?.lastSeenAt, now)}`;
   const mine = id === board.self && !!selfLabel;
   const look = forgotten
     ? 'border-slate-700 bg-slate-900 text-slate-500 line-through'
@@ -126,6 +129,7 @@ export function DeviceChip({
       title={title}
     >
       {prefix}
+      {tag}
       {mine ? selfLabel : name}
     </span>
   );

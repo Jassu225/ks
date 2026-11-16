@@ -1,7 +1,7 @@
 #!/bin/bash
-# ks-claude — start `claude` for the KS launchers (claude-ks-rc, claude-ks-master,
-# claude-ks-test, ks-start-ticket). Not something to type: a plain `claude` is
-# the normal way once the plugins are installed.
+# ks-claude — start `claude` for KarmaSuite: behind claude-ks (the command to
+# type) and the other KS launchers (claude-ks-rc, claude-ks-master,
+# claude-ks-test, ks-start-ticket).
 #
 #   ks-claude [--local-plugin <name>]… [--plugin <name>]… [claude args…]
 #
@@ -20,12 +20,16 @@
 # --append-system-prompt-file, and the legacy scripts/.env exported.
 #
 # Both: CLAUDE_CODE_TASK_LIST_ID from the branch when unset, KS_MOD_STATUSLINE=1,
-# and --name from the checkout's workflow unit unless the caller names or
-# resumes the session.
+# --name from the checkout's workflow unit unless the caller names or resumes
+# the session (prefixed with this Mac's ks-flow device label once 2+ devices
+# share the board: B:KAR-123; lib/peer-name.sh), and --rc when the config key
+# ks.KS_REMOTE_CONTROL is 1 (`ks-setup remote-control`) unless the caller
+# already passes --rc / --remote-control.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$SCRIPT_DIR/lib/ks-config.sh"
 . "$SCRIPT_DIR/lib/ks-root.sh"
+. "$SCRIPT_DIR/lib/peer-name.sh"
 MARKETPLACE=karmasuite
 SETTINGS="$HOME/.claude/settings.json"
 
@@ -116,15 +120,26 @@ else
 fi
 
 # Name the session after the checkout's workflow unit (KAR-123, or a project's
-# folder name). Only --name sets the peer name ListAgents prints and SendMessage
-# takes. Skipped when the caller names the session, or resumes one.
-NAMED=
+# folder name), with this Mac's device label in front when 2+ Macs share the
+# ks-flow board (B:KAR-123, or B:<folder> outside a workflow checkout). Only
+# --name sets the peer name ListAgents prints and SendMessage takes. Skipped
+# when the caller names the session (taken as is), or resumes one.
+NAMED= RC=
 for arg in "${PASSTHROUGH[@]}"; do
-  case "$arg" in -n|--name|--name=*|-r|--resume|--resume=*|-c|--continue) NAMED=1 ;; esac
+  case "$arg" in
+    -n|--name|--name=*|-r|--resume|--resume=*|-c|--continue) NAMED=1 ;;
+    --rc|--rc=*|--remote-control|--remote-control=*) RC=1 ;;
+  esac
 done
 if [ -z "$NAMED" ]; then
-  SESSION_NAME=$("$SCRIPT_DIR/session-title.sh" --print 2>/dev/null)
+  SESSION_NAME="$(ks_peer_name "$("$SCRIPT_DIR/session-title.sh" --print 2>/dev/null)")"
   [ -n "$SESSION_NAME" ] && ARGS+=(--name "$SESSION_NAME")
+fi
+# Remote Control by config (ks-setup remote-control). First in the line: --rc
+# takes an optional name, and an option after it keeps it from taking the
+# prompt (ARGS always holds --append-system-prompt-file).
+if [ -z "$RC" ] && [ "$(ksc_get KS_REMOTE_CONTROL 2>/dev/null)" = 1 ]; then
+  ARGS=(--rc "${ARGS[@]}")
 fi
 
 exec claude "${ARGS[@]}" "${PASSTHROUGH[@]}"

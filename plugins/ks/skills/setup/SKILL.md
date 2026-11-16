@@ -72,10 +72,12 @@ why in one line, and wait for it before step 2.
   2+ devices on the ks-flow board it is a `warn`: suggest it, since without it
   agents on different Macs can't message each other. With one Mac it is `info`:
   mention it once as optional, don't push. Say that Remote Control keeps those
-  transcripts on Anthropic's servers. On yes `ks-setup remote-control --yes`: a
-  `claude` shell function in the shell's startup file that adds `--rc` in the
-  KarmaSuite checkout and its worktrees only (Claude has no per-project setting
-  for it); `--remove` takes it out.
+  transcripts on Anthropic's servers. On yes `ks-setup remote-control --yes`:
+  sets `ks.KS_REMOTE_CONTROL=1`, so sessions started with `claude-ks` get
+  `--rc` (Claude has no per-project setting for it; a plain `claude` is
+  unchanged); `--remove` unsets it. `remote-control:shell` (warn): the old
+  `claude` shell function an earlier setup wrote is still in the shell's
+  startup file; ask, then `ks-setup remote-control --yes` removes it.
 - **ks-flow's store**, when they want the shared Firestore board: they copy the
   service-account key file onto the Mac themselves (never through chat or git)
   and tell you its path; then ask and run

@@ -131,7 +131,7 @@ test('device.json: written, read back; the board/CLI view prefers KS_DEVICE_ID, 
   const env = cfgEnv();
   assert.equal(readDeviceFile(dir), null);
   writeDeviceFile(dir, { deviceId: 'abc123', defaultName: 'Laptop A' });
-  assert.deepEqual(readDeviceFile(dir), { deviceId: 'abc123', defaultName: 'Laptop A' });
+  assert.deepEqual(readDeviceFile(dir), { deviceId: 'abc123', defaultName: 'Laptop A', label: null, name: null, deviceCount: 1 });
   assert.equal(deviceId(dir, env), 'abc123');
   assert.deepEqual(deviceIdentity(dir, { ...env, KS_DEVICE_ID: 'abc123' }), { deviceId: 'abc123', defaultName: 'Laptop A' });
   assert.equal(deviceId(dir, { ...env, KS_DEVICE_ID: 'test-c' }), 'test-c');
@@ -144,4 +144,23 @@ test('device.json: written, read back; the board/CLI view prefers KS_DEVICE_ID, 
   assert.equal(readDeviceFile(dir), null);
   const env3 = cfgEnv();
   assert.equal(deviceId(dir, env3), computeDeviceId(env3), 'nothing stored, no usable file: generated');
+});
+
+test('device.json: label, name and deviceCount written and read back; an older file reads with defaults', () => {
+  const dir = tmp();
+  writeDeviceFile(dir, { deviceId: 'abc', defaultName: 'Laptop', label: 'B', name: 'Work', deviceCount: 3 });
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'device.json'), 'utf8')), {
+    deviceId: 'abc',
+    defaultName: 'Laptop',
+    label: 'B',
+    name: 'Work',
+    deviceCount: 3,
+  });
+  assert.deepEqual(readDeviceFile(dir), { deviceId: 'abc', defaultName: 'Laptop', label: 'B', name: 'Work', deviceCount: 3 });
+  writeFileSync(join(dir, 'device.json'), JSON.stringify({ deviceId: 'abc', defaultName: 'Laptop' }));
+  assert.deepEqual(readDeviceFile(dir), { deviceId: 'abc', defaultName: 'Laptop', label: null, name: null, deviceCount: 1 });
+  writeFileSync(join(dir, 'device.json'), JSON.stringify({ deviceId: 'abc', label: 7, name: '', deviceCount: -1 }));
+  assert.deepEqual(readDeviceFile(dir), { deviceId: 'abc', defaultName: 'abc', label: null, name: null, deviceCount: 1 });
+  // The board/CLI identity stays {deviceId, defaultName}.
+  assert.deepEqual(deviceIdentity(dir, { ...cfgEnv(), KS_DEVICE_ID: '' }), { deviceId: 'abc', defaultName: 'abc' });
 });

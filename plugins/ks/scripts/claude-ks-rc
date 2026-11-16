@@ -4,8 +4,10 @@
 #   claude-ks-rc <dir> [--prompt <text>] [--name <name>] [--pane <tmux-pane>] [-- <claude-ks args>]
 #
 #   --prompt  the session's first message
-#   --name    its Remote Control name (claude.ai/code); default: the checkout's
-#             workflow unit (KAR-123), else the directory's name
+#   --name    its session (peer) and Remote Control name (claude.ai/code), taken
+#             as is; default: the checkout's workflow unit (KAR-123), else the
+#             directory's name, with this Mac's device label in front once 2+
+#             Macs share the ks-flow board (B:KAR-123; lib/peer-name.sh)
 #   --pane    tmux pane (%42) to run it in, replacing whatever runs there now
 #
 # Where it opens: the --pane pane if it still exists; else a new tmux window
@@ -38,13 +40,17 @@ done
 DIR="$(cd "$DIR" 2>/dev/null && pwd)" || { echo "claude-ks-rc: no such directory: $DIR" >&2; exit 1; }
 
 if [ -z "$NAME" ]; then
-  NAME="$(cd "$DIR" && "$SCRIPT_DIR/session-title.sh" --print 2>/dev/null || true)"
+  . "$SCRIPT_DIR/lib/ks-config.sh"
+  . "$SCRIPT_DIR/lib/ks-root.sh"
+  . "$SCRIPT_DIR/lib/peer-name.sh"
+  NAME="$(cd "$DIR" && ks_peer_name "$("$SCRIPT_DIR/session-title.sh" --print 2>/dev/null)" || true)"
   [ -n "$NAME" ] || NAME="$(basename "$DIR")"
 fi
 
-# `--remote-control [name]` takes the next word as its name, so the name is
-# always given and the prompt comes after it.
-ARGS=("$SCRIPT_DIR/ks-claude" --remote-control "$NAME")
+# The same name for the peer (--name) and Remote Control. `--remote-control
+# [name]` takes the next word as its name, so the name is always given and the
+# prompt comes after it.
+ARGS=("$SCRIPT_DIR/ks-claude" --name "$NAME" --remote-control "$NAME")
 [ -z "$PROMPT" ] || ARGS+=("$PROMPT")
 [ ${#EXTRA[@]} -eq 0 ] || ARGS+=("${EXTRA[@]}")
 

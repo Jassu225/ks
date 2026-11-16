@@ -68,10 +68,14 @@ import {
   defaultDeviceName,
   deviceConfigFile,
   ensureStoredDeviceId,
+  readDeviceFile,
   resolveDeviceId,
   writeDeviceFile,
+  type DeviceFile,
   type DeviceIdResolution,
 } from './lib/device.js';
+import { planSelfLabel } from './lib/device-label.js';
+import { listDevices, liveSessionNames, sameNames, writeDevicesCache } from './lib/device-list.js';
 import { sharedBlocks } from './lib/device-backfill.js';
 import { pendingSettingsWrite, syncSharedSettings } from './lib/sharedsettings.js';
 import { pruneFired, readFired, recordFired, shouldFire, writeFired } from './lib/reminders-fired.js';
@@ -574,7 +578,7 @@ function watchOwners(): void {
   }
 }
 
-/** The `devices` job: device mode check, then this device's heartbeat (merge; never `name`). */
+/** The `devices` job: device mode check, then this device's heartbeat (merge; never `name`), then its label. */
 async function deviceHeartbeat(): Promise<void> {
   await checkDeviceMode();
   // Every minute: an update's outcome (update-state.json) reaches the status file and the notice.
@@ -594,6 +598,77 @@ async function deviceHeartbeat(): Promise<void> {
     commonDir: PROJECT_COMMON_DIR,
   };
   await devicesStore.mergeDevice(SELF.deviceId, beat);
+  await refreshDeviceLabel();
+}
+
+// ── this device's label (lib/device-label.ts) and live session names ────────
+// Read every device each heartbeat: give this one a label when it has none (or
+// loses a duplicate), publish its live Claude sessions' names when they
+// changed (names only: no prompt, no cwd), keep <dataDir>/device.json's label,
+// name and deviceCount current for the CLIs and the session names
+// (`B:KAR-123`), and cache every device in <dataDir>/devices.json for
+// `ks-flow devices` (lib/device-list.ts).
+/** device.json as last written (null before the first write). */
+let deviceFileLast: DeviceFile | null = null;
+/** The last devices read failed (logged once until one succeeds). */
+let labelReadFailing = false;
+
+function saveDeviceFile(next: DeviceFile): void {
+  const same =
+    deviceFileLast &&
+    deviceFileLast.deviceId === next.deviceId &&
+    deviceFileLast.defaultName === next.defaultName &&
+    deviceFileLast.label === next.label &&
+    deviceFileLast.name === next.name &&
+    deviceFileLast.deviceCount === next.deviceCount;
+  if (same) return;
+  try {
+    writeDeviceFile(DATA_DIR, next);
+    deviceFileLast = next;
+  } catch (e) {
+    log('devices: device.json not written', (e as Error)?.message);
+  }
+}
+
+async function refreshDeviceLabel(): Promise<void> {
+  let devices: DeviceDoc[];
+  try {
+    // Offline, firebase-admin retries reads until its own deadline: don't hold the heartbeat.
+    devices = await Promise.race([
+      devicesStore.getDevices(),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timed out after 10s')), 10_000).unref()),
+    ]);
+  } catch (e) {
+    if (!labelReadFailing) log('devices: label check skipped until the devices are readable again:', (e as Error)?.message);
+    labelReadFailing = true;
+    return;
+  }
+  labelReadFailing = false;
+  const masterId = sharedSettings?.masterDeviceId ?? null;
+  const plan = planSelfLabel(SELF.deviceId, devices, masterId);
+  const selfDoc = devices.find((d) => d.deviceId === SELF.deviceId);
+  const names = liveSessionNames(liveSessions);
+  const patch: Partial<DeviceDoc> = {};
+  if (plan.write && plan.label) patch.label = plan.label;
+  if (!sameNames(selfDoc?.liveSessionNames, names)) patch.liveSessionNames = names;
+  if (Object.keys(patch).length) {
+    await devicesStore.mergeDevice(SELF.deviceId, patch);
+    if (patch.label) log(`devices: label ${plan.label}${selfDoc?.label ? ` (was ${selfDoc.label}, held by another device)` : ''}`);
+  }
+  saveDeviceFile({ ...SELF, label: plan.label, name: plan.name, deviceCount: plan.deviceCount });
+  // The cache: the devices as just read, with this device's own write applied.
+  const merged = selfDoc
+    ? devices.map((d) => (d.deviceId === SELF.deviceId ? { ...d, ...patch } : d))
+    : devices;
+  try {
+    writeDevicesCache(DATA_DIR, {
+      updatedAt: nowIso(),
+      self: SELF.deviceId,
+      devices: listDevices(merged, SELF.deviceId, masterId, Date.now()),
+    });
+  } catch (e) {
+    log('devices: devices.json not written', (e as Error)?.message);
+  }
 }
 
 const IDLE_MS = cfg.idleMinutes * 60_000;
@@ -2253,10 +2328,17 @@ async function main(): Promise<void> {
   const evDay = fileDay(EVENTS_PATH);
   if (evDay && evDay !== activeDay) rotateEvents(evDay);
   liveSessions = readLiveSessions(); // before backfill's first recompute
-  try {
-    writeDeviceFile(DATA_DIR, SELF);
-  } catch (e) {
-    log('devices: device.json not written', (e as Error)?.message);
+  {
+    // The last label, name and count carry over a restart (same device): the
+    // first heartbeat rewrites them from the store.
+    const prev = readDeviceFile(DATA_DIR);
+    const carried = prev?.deviceId === SELF.deviceId ? prev : null;
+    saveDeviceFile({
+      ...SELF,
+      label: carried?.label ?? null,
+      name: carried?.name ?? null,
+      deviceCount: carried?.deviceCount ?? 1,
+    });
   }
   const idFrom = {
     env: 'from KS_DEVICE_ID in the environment',

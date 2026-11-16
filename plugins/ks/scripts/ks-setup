@@ -20,9 +20,10 @@
 #                                  checkout (its .claude/settings.local.json and
 #                                  its worktrees), runs ~/.local/bin/statusline
 #   ks-setup remote-control [--yes|--remove]  optional, suggested once 2+ devices
-#                                  share the ks-flow board: a `claude` shell function
-#                                  that adds --rc in the KarmaSuite checkout and its
-#                                  worktrees, so agents can message across machines
+#                                  share the ks-flow board: sets ks.KS_REMOTE_CONTROL=1,
+#                                  so claude-ks starts Claude with --rc and agents can
+#                                  message across machines (also offers to remove the
+#                                  old `claude` shell function from the rc file)
 #   ks-setup version [--json]      each KS plugin's version: the copy the commands run,
 #                                  the one Claude loads, the marketplace's newest, and
 #                                  ks-flow's daemon and store; with the fix when behind
@@ -80,7 +81,8 @@ SHIMS=(ks:linear ks:slack ks:grain ks:ks-time ks:ks-config ks:ks-setup ks:ks-roo
 STATUSLINE_CMD='~/.local/bin/statusline'
 YES=0
 DEVICE_COUNT=""   # devices sharing the ks-flow store (device_check); empty when unknown
-# The shell block `ks-setup remote-control` writes into the rc file.
+# The shell block earlier `ks-setup remote-control` wrote into the rc file (a
+# `claude` function adding --rc); now only found and removed.
 RC_BEGIN='# >>> ks remote-control (ks-setup remote-control) >>>'
 RC_END='# <<< ks remote-control <<<'
 interactive() { [ "$YES" = 0 ] && [ -t 0 ] && [ -t 1 ]; }
@@ -453,33 +455,11 @@ statusline_settings() {
 # ── Remote Control in the project (optional; suggested from 2 devices) ─────
 # Claude honours remoteControlAtStartup=true only in user or managed settings,
 # never in a project's own (a repo can't switch it on), so the project-only way
-# is a `claude` shell function that adds --rc when the folder belongs to the
-# configured KarmaSuite checkout's repository (the main checkout or any
-# worktree). Remote Control sessions on your other Macs can then message each
-# other (/peers, SendMessage).
-rc_block() {
-  printf '%s\n' "$RC_BEGIN"
-  cat <<'BLOCK'
-# Claude in the KarmaSuite checkout (ks.KS_PROJECT_ROOT_PATH) and its worktrees
-# starts with Remote Control, so agents on your other Macs can message it.
-# Subcommands (claude plugin ...) are left alone.
-claude() {
-  if [ $# -eq 0 ] || [[ "$1" == -* ]]; then
-    local proj here there
-    proj="$(ks-config get ks.KS_PROJECT_ROOT_PATH 2>/dev/null)"
-    if [ -n "$proj" ]; then
-      here="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
-      there="$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
-      if [ -n "$here" ] && [ "$here" = "$there" ]; then command claude --rc "$@"; return; fi
-    fi
-  fi
-  command claude "$@"
-}
-BLOCK
-  printf '%s\n' "$RC_END"
-}
+# is the launcher: with ks.KS_REMOTE_CONTROL=1, claude-ks (scripts/ks-claude)
+# adds --rc. Remote Control sessions on your other Macs can then message each
+# other (ListAgents, SendMessage). Earlier versions wrote a `claude` shell
+# function into the rc file instead (RC_BEGIN … RC_END): found and removed here.
 rc_has_block() { [ -f "$1" ] && grep -qF "$RC_BEGIN" "$1"; }
-rc_current_block() { awk -v b="$RC_BEGIN" -v e="$RC_END" '$0==b{p=1} p{print} p&&$0==e{p=0}' "$1"; }
 rc_strip_block() { # file → stdout without the block (and the blank line written before it)
   awk -v b="$RC_BEGIN" -v e="$RC_END" '
     $0==b { skip=1; blank=0; next }
@@ -488,9 +468,14 @@ rc_strip_block() { # file → stdout without the block (and the blank line writt
     { if (blank) print ""; blank=0; print }
     END { if (blank) print "" }' "$1"
 }
-# On: the block in the shell's startup file, or Remote Control for every session.
+rc_key_on() { [ "$(ksc_get KS_REMOTE_CONTROL 2>/dev/null)" = 1 ]; }
+# The rc file that still holds the old block, if any.
+rc_old_block_file() {
+  local rc; rc="$(rc_file 2>/dev/null)" && rc_has_block "$rc" && printf '%s\n' "$rc"
+}
+# On: the config key, or Remote Control for every session.
 remote_control_on() {
-  local rc; rc="$(rc_file 2>/dev/null)" && rc_has_block "$rc" && return 0
+  rc_key_on && return 0
   [ "$(jq -r '.remoteControlAtStartup // empty' "$SETTINGS" 2>/dev/null)" = true ]
 }
 many_devices() { [ -n "$DEVICE_COUNT" ] && [ "$DEVICE_COUNT" -ge 2 ] 2>/dev/null; }
@@ -500,40 +485,64 @@ remote_control_reason() {
 }
 remote_control_check() {
   if remote_control_on; then
-    check remote-control info 1 "Remote Control on for Claude in the project (agents can message across machines)"
+    check remote-control info 1 "Remote Control on for Claude in the project (claude-ks; agents can message across machines)"
   elif many_devices; then
-    check remote-control warn 0 "$DEVICE_COUNT devices share the ks-flow board, but Claude in the project starts without Remote Control, so agents on different Macs can't message each other" "ks-setup remote-control --yes"
+    check remote-control warn 0 "$DEVICE_COUNT devices share the ks-flow board, but claude-ks starts Claude without Remote Control, so agents on different Macs can't message each other" "ks-setup remote-control --yes"
   else
     check remote-control info 0 "Remote Control for the project is off (optional with one Mac; suggested once a second Mac shares the board)" "ks-setup remote-control --yes"
   fi
+  local old; old="$(rc_old_block_file || true)"
+  [ -z "$old" ] || check remote-control:shell warn 0 "$old still has the old ks \`claude\` function (Remote Control now comes through claude-ks)" "ks-setup remote-control --yes"
 }
-remote_control_settings() {
-  local remove=0 a rc
-  for a in "$@"; do case "$a" in --yes) YES=1 ;; --remove) remove=1 ;; esac; done
-  if ! rc="$(rc_file)"; then
-    say "Couldn't tell your shell (SHELL=${SHELL:-unset}). Add this to its startup file:"; rc_block; return 1
-  fi
-  if [ "$remove" = 1 ]; then
-    rc_has_block "$rc" || { say "$rc has no ks remote-control block"; return 0; }
-    rc_strip_block "$rc" >"$rc.tmp.$$" && mv "$rc.tmp.$$" "$rc" && say "removed the block from $rc (open a new terminal)"
-    return 0
-  fi
-  ksc_project_root >/dev/null 2>&1 \
-    || say "Note: the KarmaSuite checkout isn't set yet (ks-config set ks.KS_PROJECT_ROOT_PATH <path>); until it is, the function does nothing."
-  if rc_has_block "$rc"; then
-    [ "$(rc_current_block "$rc")" = "$(rc_block)" ] && { say "$rc already has it"; return 0; }
-    say "To update the ks remote-control block in $rc"
-  else
-    say "To add to $rc: a \`claude\` function that starts Claude with --rc (Remote Control)"
-    say "in the KarmaSuite checkout and its worktrees only; every other folder is unchanged."
-    say "Remote Control keeps those sessions' transcripts on Anthropic's servers; commands still run only here."
-  fi
-  if ! ask "Apply?"; then
-    interactive || say "Once you agree:  ks-setup remote-control --yes"
+# Offer to take the old `claude` function out of the rc file. $1 = the command
+# that does it once agreed (printed when there is no one to ask).
+rc_remove_old_block() {
+  local rc; rc="$(rc_old_block_file || true)"
+  [ -n "$rc" ] || return 0
+  say "$rc still has the \`claude\` function an earlier ks-setup remote-control wrote;"
+  say "claude-ks does that job now."
+  if ! ask "Remove it from $rc?"; then
+    interactive || say "Once you agree:  $1"
     return 1
   fi
-  { if [ -f "$rc" ]; then rc_strip_block "$rc"; fi; printf '\n'; rc_block; } >"$rc.tmp.$$" && mv "$rc.tmp.$$" "$rc" \
-    && say "updated $rc (open a new terminal, or: source $rc)"
+  rc_strip_block "$rc" >"$rc.tmp.$$" && mv "$rc.tmp.$$" "$rc" && say "removed the block from $rc (open a new terminal)"
+}
+remote_control_settings() {
+  local remove=0 a
+  for a in "$@"; do case "$a" in --yes) YES=1 ;; --remove) remove=1 ;; esac; done
+  if [ "$remove" = 1 ]; then
+    if rc_key_on; then
+      "$SCRIPT_DIR/ks-config" unset ks.KS_REMOTE_CONTROL >/dev/null && say "Remote Control off for claude-ks sessions (ks.KS_REMOTE_CONTROL unset)"
+      rc_key_on && say "Note: KS_REMOTE_CONTROL is still set in the environment or a legacy file."
+    else
+      say "Remote Control is not on for claude-ks sessions"
+    fi
+    rc_remove_old_block "ks-setup remote-control --remove --yes"
+    return
+  fi
+  if rc_key_on; then
+    say "Remote Control is already on for claude-ks sessions (ks.KS_REMOTE_CONTROL=1)"
+  else
+    say "To set ks.KS_REMOTE_CONTROL=1 in $(ksc_dir)/ks.env: Claude started with claude-ks"
+    say "(and the KS launchers) gets --rc (Remote Control); a plain \`claude\` is unchanged."
+    say "Remote Control keeps those sessions' transcripts on Anthropic's servers; commands still run only here."
+    if ! interactive && [ "$YES" = 0 ]; then
+      # No one to ask: one command does both (the old block, if any, goes too).
+      [ -z "$(rc_old_block_file || true)" ] \
+        || say "It also removes the old \`claude\` function from $(rc_old_block_file) (claude-ks does that job now)."
+      say "Once you agree:  ks-setup remote-control --yes"
+      return 1
+    fi
+    if ask "Apply?"; then
+      "$SCRIPT_DIR/ks-config" set ks.KS_REMOTE_CONTROL 1 >/dev/null \
+        && say "set ks.KS_REMOTE_CONTROL=1 (new claude-ks sessions start with Remote Control)" || return 1
+    else
+      # Declined: the old block may still go (it is unused either way).
+      rc_remove_old_block "ks-setup remote-control --remove --yes"
+      return 1
+    fi
+  fi
+  rc_remove_old_block "ks-setup remote-control --yes"
 }
 
 # ── versions ────────────────────────────────────────────────────────────────
