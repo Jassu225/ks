@@ -865,6 +865,17 @@ update_cmd() {
     fi
     ulog_out "$out"
     if [ "$rc" = 0 ]; then ulog "shims refreshed${new:+ from $new}"; else ulog "refreshing the shims failed (exit $rc): run ks-setup apply"; fi
+    # The new copy's CLI dependencies, now: an installed copy ships without
+    # node_modules, and the SessionStart hook (ensure-setup.sh) that links
+    # them runs only when a session starts, so the KS commands that need them
+    # failed until then. Same step, same data dir as the hook would use.
+    if [ -n "$new" ] && [ ! -d "$new/scripts/node_modules/tsx" ] && [ -x "$new/scripts/ensure-setup.sh" ]; then
+      out="$(cd "${proj:-$PWD}" 2>/dev/null; CLAUDE_PLUGIN_ROOT="$new" CLAUDE_PLUGIN_DATA="$(claude_plugins_dir)/data/ks-$MARKETPLACE" \
+        "$new/scripts/ensure-setup.sh" </dev/null 2>&1 >/dev/null)"
+      ulog_out "$out"
+      if [ -d "$new/scripts/node_modules/tsx" ]; then ulog "ks CLI dependencies installed for $new"
+      else ulog "ks CLI dependencies not installed for $new: a new Claude session installs them (or ks-setup doctor's fix)"; fi
+    fi
     if [ "$restart" = 1 ] && [ "$U_FLOW_CHANGED" = 1 ]; then
       local flow; flow="$(cd "${proj:-$PWD}" 2>/dev/null; ksr_live_root ks-flow 2>/dev/null)" || flow=""
       if [ -n "$flow" ] && [ -x "$flow/bin/ks-flow" ]; then
