@@ -117,8 +117,12 @@ case "$cmd" in
     # Export the plugin root so the board's /api/project route can run bootstrap,
     # and pin CLAUDE_PLUGIN_DATA to the derived dir so the board's Node resolves
     # the same data dir as the daemon/hooks (it has no cwd to derive from).
+    # The whole background subshell is redirected, not just npm: otherwise the
+    # subshell holds our caller's stdout pipe open as long as the board runs,
+    # and `ks-flow update` (spawnSync on `open`) waited for its 20-min timeout.
     if [ -z "$RUNNING" ]; then
-      ( cd "$WEB" && KS_FLOW_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PLUGIN_DATA="$DATA_DIR" PORT="$BOARD_PORT" npm run start >"$DATA_DIR/board.log" 2>&1 & )
+      ( cd "$WEB" && KS_FLOW_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_PLUGIN_DATA="$DATA_DIR" PORT="$BOARD_PORT" exec npm run start ) \
+        >"$DATA_DIR/board.log" 2>&1 </dev/null &
     fi
     # Wait until the server actually answers before opening the browser, so it
     # doesn't hit connection-refused on a slow start.

@@ -1,6 +1,6 @@
 {
   "name": "ks-flow",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Per-project Kanban board over your Claude Code sessions, with macOS notifications when a session blocks waiting for you",
   "author": {
     "name": "Jaswanth Sai Sattenapalli"
