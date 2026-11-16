@@ -25,7 +25,7 @@
       "name": "ks",
       "source": "./plugins/ks",
       "description": "KarmaSuite development tools and workflows",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "author": {
         "name": "Jaswanth Sai Sattenapalli"
       },

@@ -23,6 +23,9 @@
 #                                  share the ks-flow board: a `claude` shell function
 #                                  that adds --rc in the KarmaSuite checkout and its
 #                                  worktrees, so agents can message across machines
+#   ks-setup version [--json]      each KS plugin's version: the copy the commands run,
+#                                  the one Claude loads, the marketplace's newest, and
+#                                  ks-flow's daemon and store; with the fix when behind
 #   ks-setup tools [--yes] [name...]   install the missing tools setup checks (node,
 #                                  git, jq, tmux, terminal-notifier, zstd, ffmpeg, gh)
 #                                  with Homebrew; only those, after a yes
@@ -268,7 +271,15 @@ doctor() {
     esac
   done
 
-  if [ -s "$(ksr_registry)" ]; then check registry info 1 "registry $(ksr_registry)"
+  if [ -s "$(ksr_registry)" ]; then
+    local rp rr ri stale=()
+    for rp in ks ks-flow ks-master ks-browser; do
+      rr="$(jq -r --arg n "$rp" '.[$n].root // empty' "$(ksr_registry)" 2>/dev/null)"; ri="$(installed_root "$rp")"
+      [ -n "$rr" ] && [ -n "$ri" ] && [ "$rr" != "$ri" ] && [ "$(plugin_version "$rr")" != "$(plugin_version "$ri")" ] \
+        && stale+=("$rp $(plugin_version "$rr") (Claude loads $(plugin_version "$ri"))")
+    done
+    if [ ${#stale[@]} = 0 ]; then check registry info 1 "registry $(ksr_registry)"
+    else check registry warn 0 "the KS commands run an older copy than Claude loads: ${stale[*]}" "ks-setup apply"; fi
   else check registry info 0 "no plugin registry yet" "ks-setup apply"; fi
 
   # Token files must not sit in a plugin folder: a marketplace install copies the
@@ -488,6 +499,79 @@ remote_control_settings() {
     && say "updated $rc (open a new terminal, or: source $rc)"
 }
 
+# ── versions ────────────────────────────────────────────────────────────────
+# Three copies of a plugin can differ: the one the KS commands run (the folder in
+# ~/.config/ks/plugins.json, which the shims follow), the one Claude loads in the
+# KarmaSuite checkout (its install), and the newest the karmasuite marketplace
+# offers (as of its last update). ks-flow adds its daemon's and the store's.
+PLUGIN_LIST_JSON=""
+plugin_list_json() { # cached `claude plugin list --json`
+  [ -n "$PLUGIN_LIST_JSON" ] || PLUGIN_LIST_JSON="$(claude plugin list --json 2>/dev/null || echo '[]')"
+  printf '%s' "$PLUGIN_LIST_JSON"
+}
+plugin_version() { jq -r '.version // empty' "$1/.claude-plugin/plugin.json" 2>/dev/null; }
+# The folder Claude loads <plugin> from for the KarmaSuite checkout (a directory
+# marketplace: the clone's folder; an install: its cache copy), else empty.
+installed_root() {
+  local proj; proj="$(ksc_project_root 2>/dev/null || true)"
+  plugin_list_json | jq -r --arg id "$1@$MARKETPLACE" --arg p "$proj" '
+    [ .[]? | select(.id == $id) | select(.scope == "user" or .scope == "managed" or (.projectPath // "") == $p) ]
+    | sort_by(.lastUpdated // "") | last
+    | if . == null then empty else (.readFromFolder // .installPath // empty) end' 2>/dev/null
+}
+marketplace_dir() { jq -r --arg m "$MARKETPLACE" '.[$m].installLocation // empty' "$HOME/.claude/plugins/known_marketplaces.json" 2>/dev/null; }
+marketplace_version() { # plugin → the version the marketplace lists
+  local d; d="$(marketplace_dir)"; [ -n "$d" ] || return 0
+  jq -r --arg n "$1" '.plugins[]? | select(.name == $n) | .version // empty' "$d/.claude-plugin/marketplace.json" 2>/dev/null
+}
+ver_lt() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
+
+versions() {
+  local json=0 a p reg inst cmdv clv latest rows=() dd vs
+  for a in "$@"; do [ "$a" = --json ] && json=1; done
+  for p in ks ks-flow ks-master ks-browser; do
+    reg="$(jq -r --arg n "$p" '.[$n].root // empty' "$(ksc_dir)/plugins.json" 2>/dev/null)"
+    [ -d "$reg" ] || reg="$(ks_root "$p" 2>/dev/null || true)"
+    inst="$(installed_root "$p")"
+    cmdv="$([ -n "$reg" ] && plugin_version "$reg")"
+    clv="$([ -n "$inst" ] && plugin_version "$inst")"
+    latest="$(marketplace_version "$p")"
+    local state="up to date" fix=""
+    if [ -z "$inst" ] && [ -z "$reg" ]; then state="not installed"
+    elif [ -n "$inst" ] && ver_lt "$clv" "$latest"; then state="Claude loads $clv, the marketplace has $latest"; fix="/plugin → Installed → $p → Update (or restart Claude with marketplace auto-update on)"
+    elif [ -n "$inst" ] && [ "$reg" != "$inst" ] && [ "$cmdv" != "$clv" ]; then state="the commands run $cmdv, Claude loads $clv"; fix="ks-setup apply"
+    fi
+    rows+=("$(jq -nc --arg p "$p" --arg c "$cmdv" --arg cr "$reg" --arg l "$clv" --arg lr "$inst" --arg m "$latest" --arg s "$state" --arg f "$fix" \
+      '{plugin:$p, commands:{version:$c, root:$cr}, claude:{version:$l, root:$lr}, marketplace:$m, state:$s, fix:(if $f=="" then null else $f end)}')")
+  done
+  # ks-flow's daemon and the shared store (version-status.json, written by the daemon).
+  local flow; flow="$(ks_root ks-flow 2>/dev/null || true)"
+  dd=""; [ -n "$flow" ] && dd="$(ksc_project_root >/dev/null 2>&1 && node "$flow/src/lib/datadir.mjs" --project "$(ksc_project_root)" 2>/dev/null || true)"
+  vs='null'; [ -n "$dd" ] && [ -f "$dd/version-status.json" ] && vs="$(jq -c '{daemon:.version, store:.storeVersion, schema:.schemaVersion, storeSchema:.storeSchemaVersion, dev:.dev, devReason:.devReason, behind:(.versionBehind or .schemaBehind), update:.update.state}' "$dd/version-status.json" 2>/dev/null || echo null)"
+  local mdate; mdate="$(jq -r --arg m "$MARKETPLACE" '.[$m].lastUpdated // empty' "$HOME/.claude/plugins/known_marketplaces.json" 2>/dev/null)"
+  local all; all="$(printf '%s\n' "${rows[@]}" | jq -s --argjson f "$vs" --arg md "$mdate" --arg mode "$(load_mode)" \
+    '{mode:$mode, marketplaceUpdated:$md, plugins:., ksFlow:$f}')"
+  if [ "$json" = 1 ]; then printf '%s\n' "$all"; return 0; fi
+  printf '%s\n' "$all" | jq -r '"load mode: \(.mode)" + (if .marketplaceUpdated != "" then "   (marketplace last updated \(.marketplaceUpdated[0:16] | sub("T"; " ")))" else "" end)'
+  echo
+  printf '%s\n' "$all" | jq -r '
+    (["plugin", "commands", "Claude", "marketplace", "state"] | @tsv),
+    (.plugins[] | [ .plugin, (.commands.version // "" | if . == "" then "-" else . end), (.claude.version // "" | if . == "" then "-" else . end),
+                    (.marketplace // "" | if . == "" then "-" else . end),
+                    (if .state == "up to date" then "ok" else "\(.state)" + (if .fix then "  → \(.fix)" else "" end) end) ] | @tsv)' \
+    | column -t -s $'\t'
+  echo
+  printf '%s\n' "$all" | jq -r '
+    if .ksFlow then
+      "ks-flow daemon \(.ksFlow.daemon // "?"), store \(.ksFlow.store // "?") (data format \(.ksFlow.schema // "?")\(if .ksFlow.storeSchema and .ksFlow.storeSchema != .ksFlow.schema then " vs store \(.ksFlow.storeSchema)" else "" end))"
+        + ((.plugins[] | select(.plugin == "ks-flow") | .claude.version // "") as $cv
+           | if $cv != "" and .ksFlow.daemon and $cv != .ksFlow.daemon then "  the daemon runs \(.ksFlow.daemon), Claude has \($cv) → ks-flow stop && ks-flow start" else "" end)
+        + (if .ksFlow.behind then "  BEHIND → ks-flow update (the daemon also runs it itself, at most hourly)" else "" end)
+        + (if .ksFlow.dev then "  [dev build: \(.ksFlow.devReason // "not a release")]" else "" end)
+        + (if (.ksFlow.update // "") == "failed" then "  last update failed (see update.log)" else "" end)
+    else "ks-flow: no version yet (the daemon writes it on start)" end'
+}
+
 # ── apply ───────────────────────────────────────────────────────────────────
 write_shim() { # plugin cmd fallback-root
   local f="$LOCAL_BIN/$2" sub=bin
@@ -556,8 +640,13 @@ apply() {
 
   say "== plugin registry"
   local p root
+  # The copy Claude loads in the checkout first: the registry's own entry would
+  # keep pointing at an older version's folder after an update (ks_root reads
+  # the registry before Claude's install list, and old folders stay in the cache).
   for p in ks ks-flow ks-master ks-browser; do
-    if root="$(ks_root "$p")"; then ks_register_root "$p" "$root"; say "  $p → $root"; fi
+    root="$(installed_root "$p")"
+    { [ -n "$root" ] && [ -d "$root" ]; } || root="$(ks_root "$p" 2>/dev/null)" || continue
+    ks_register_root "$p" "$root"; say "  $p → $root ($(plugin_version "$root"))"
   done
 
   say "== commands on PATH ($LOCAL_BIN)"
@@ -740,8 +829,9 @@ case "$sub" in
   claude-settings|sandbox) claude_settings "$@" ;;
   store) store "$@" ;;
   statusline) statusline_settings "$@" ;;
+  version|versions) versions "$@" ;;
   tools) tools_install "$@" ;;
   remote-control) remote_control_settings "$@" ;;
-  -h|--help|help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "ks-setup: unknown command $sub (try: ks-setup help)" >&2; exit 2 ;;
 esac

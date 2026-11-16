@@ -51,6 +51,12 @@ ks-config list
   `ks.KS_PROJECT_ROOT_PATH` checkout's repository (main checkout or a worktree),
   so agents on different Macs can message each other. Claude honours
   `remoteControlAtStartup: true` only in user settings, never a project's.
+  **`ks-setup version [--json]`** — each KS plugin's version three ways: the copy
+  the commands run (the registry, which the shims follow), the one Claude loads
+  in the checkout, and the marketplace's newest (as of its last update), plus
+  ks-flow's daemon and the store, with the fix for whatever is behind. `apply`
+  points the registry at the copy Claude loads, so an update can't leave the
+  commands on the old version (the doctor's `registry` check warns when it has).
   **`ks-setup tools [--yes] [name…]`** — installs the missing tools the doctor
   checks (node, git, jq, tmux, terminal-notifier, zstd, ffmpeg, gh) with
   Homebrew, after a yes; only those. Fixes without a leading `!` are ones

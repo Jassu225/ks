@@ -100,6 +100,9 @@ Give each as a `!` command, one per line, and wait:
 
 ## 4. Verify
 
-Run `ks-setup doctor` again and report what is left. A new shell (for PATH) or
+Run `ks-setup doctor` again and report what is left. For versions (asked which
+version runs, or after an update), `ks-setup version`: per plugin the copy the
+KS commands run, the one Claude loads and the marketplace's newest, plus
+ks-flow's daemon and store, each with its fix when behind. A new shell (for PATH) or
 a new Claude session (for plugin changes and installed dependencies) may be
 needed; say which.
