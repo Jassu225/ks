@@ -510,8 +510,13 @@ ks-master, ks-browser or ks-suite is out, the daemon starts the same update.
 
 **Auto-update, always on** (no setting). A device behind on either, or with a
 new release, starts `ks-flow update` as a detached process (its own session,
-so the daemon restart can't kill it), at most once an hour, output in
-`<dataDir>/update.log`, the outcome in `<dataDir>/update-state.json`. A dev
+so the daemon restart can't kill it), output in
+`<dataDir>/update.log`, the outcome in `<dataDir>/update-state.json`. Each
+update records its target (the store's version, or the new release): a target
+it already tried is retried at most once an hour, so a release that can't be
+fetched yet doesn't loop, while a newer target (e.g. a release out minutes
+after the last update) starts at once. The banner says "updating" only while an
+update runs; otherwise it says how to start one. A dev
 build never updates itself. `ks-flow update` (also by hand; `--dry-run` prints
 the plan):
 

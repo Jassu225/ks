@@ -84,6 +84,7 @@ import { detectBuild } from './lib/build-info.js';
 import {
   currentRelease,
   decideRelease,
+  updateTarget,
   decideVersion,
   newInRelease,
   raisePatch,
@@ -389,6 +390,7 @@ function launchUpdate(): void {
       reason: null,
       pid: child.pid ?? null,
       by: 'auto',
+      target: updateTarget(versionStatus),
     });
     log(`version: started ks-flow update (pid ${child.pid}; log ${join(DATA_DIR, 'update.log')})`);
   } catch (e) {

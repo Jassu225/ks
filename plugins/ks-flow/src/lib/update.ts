@@ -201,6 +201,8 @@ export interface UpdateDeps {
   log: (m: string) => void;
   now?: () => number;
   pid?: number;
+  /** What this update aims at (the daemon's running record carries it); kept in every record it writes. */
+  target?: string | null;
 }
 
 const tail = (s: string, n = 300): string => {
@@ -212,7 +214,7 @@ const tail = (s: string, n = 300): string => {
 export function runUpdate(d: UpdateDeps): UpdateOutcome {
   const now = d.now ?? Date.now;
   const iso = () => new Date(now()).toISOString();
-  const base: UpdateState = { state: 'running', startedAt: iso(), from: d.fromVersion, to: null, reason: null, pid: d.pid ?? process.pid, by: d.by };
+  const base: UpdateState = { state: 'running', startedAt: iso(), from: d.fromVersion, to: null, reason: null, pid: d.pid ?? process.pid, by: d.by, target: d.target ?? null };
   const finish = (s: Partial<UpdateState>): UpdateState => {
     const out: UpdateState = { ...base, ...s, endedAt: iso() };
     d.writeState(out);

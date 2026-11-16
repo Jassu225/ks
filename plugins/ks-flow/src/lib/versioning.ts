@@ -151,6 +151,9 @@ export interface UpdateState {
   pid?: number | null;
   /** auto: started by the daemon; manual: `ks-flow update` by hand. */
   by?: 'auto' | 'manual';
+  /** What the update aimed at (updateTarget: the store's version, or the new
+   * release), so a target that appears later isn't held by the hourly limit. */
+  target?: string | null;
 }
 
 function readJson<T>(path: string): T | null {
@@ -180,13 +183,23 @@ export function writeUpdateState(dataDir: string, s: UpdateState): void {
  * alive), and not within an hour of the last try, whatever its outcome; after
  * "busy" (another update held the lock), ten minutes after it.
  */
-export function mayAutoUpdate(last: UpdateState | null, now: number, alive: (pid: number) => boolean): boolean {
+export function mayAutoUpdate(
+  last: UpdateState | null,
+  now: number,
+  alive: (pid: number) => boolean,
+  target: string | null = null,
+): boolean {
   if (!last) return true;
   if (last.state === 'running' && last.pid && alive(last.pid)) return false;
   if (last.state === 'busy') {
     const b = Date.parse(last.endedAt ?? last.startedAt);
     return !Number.isFinite(b) || now - b >= UPDATE_BUSY_RETRY_MS;
   }
+  // The hourly limit stops a loop on a target an update already tried (and
+  // didn't reach); a newer target, e.g. a release out since the last update,
+  // goes ahead now. A record with no target (a manual or older update) never
+  // aimed at this one.
+  if (target && (last.target ?? null) !== target) return true;
   const t = Date.parse(last.startedAt);
   return !Number.isFinite(t) || now - t >= UPDATE_RETRY_MS;
 }
@@ -388,6 +401,14 @@ export function startupStatus(prev: VersionStatus | null, base: Omit<VersionStat
   };
 }
 
+/** What an update now would aim at: the store's version when behind it, else the
+ * new release (its plugins and versions), else null. */
+export function updateTarget(s: Pick<VersionStatus, 'versionBehind' | 'schemaBehind' | 'storeVersion'> & { release?: ReleaseStatus | null }): string | null {
+  if ((s.versionBehind || s.schemaBehind) && s.storeVersion) return `store ${s.storeVersion}`;
+  const fresh = s.release?.state === 'available' ? newInRelease(s.release) : [];
+  return fresh.length ? `release ${fresh.map((p) => `${p.plugin} ${p.latest}`).join(', ')}` : null;
+}
+
 /** One line on this device's state, or null when it is up to date (macOS notice, SessionStart, doctor). */
 export function behindMessage(
   s: Pick<VersionStatus, 'deviceName' | 'version' | 'storeVersion' | 'schemaVersion' | 'storeSchemaVersion' | 'versionBehind' | 'schemaBehind' | 'dev' | 'devReason' | 'update'> & {
@@ -452,7 +473,8 @@ export function decideVersion(input: {
   // A dev build never updates itself; nor does a folder that is neither a clone nor an install.
   const canAuto = behind && !code.dev && mode !== 'unknown';
   const running = updateRunning(update, alive);
-  const launchUpdate = canAuto && !running && mayAutoUpdate(update, now, alive);
+  const target = updateTarget({ ...st, release });
+  const launchUpdate = canAuto && !running && mayAutoUpdate(update, now, alive, target);
   const status: VersionStatus = {
     ...prev,
     version: code.version,

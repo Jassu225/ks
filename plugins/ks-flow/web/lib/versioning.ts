@@ -78,11 +78,17 @@ export function versionNotices(input: {
   // This device, from its own daemon.
   if (local) {
     const fail = failedReason(local);
+    // "updating" only while an update runs (or waits on another holding ks-setup's
+    // lock); otherwise the daemon starts one on its next tick, or the hourly limit
+    // holds it: say how to do it now.
+    const inProgress = local.update?.state === 'running' || local.update?.state === 'busy';
     const how = local.dev
       ? `run ks-flow update (dev build: ${local.devReason ?? 'not a release'})`
       : fail
         ? `run ks-flow update (${fail})`
-        : 'updating';
+        : inProgress
+          ? 'updating'
+          : 'an update starts by itself shortly, or run ks-flow update';
     if (local.readOnly) {
       out.push({
         key: 'self-schema',
@@ -98,7 +104,9 @@ export function versionNotices(input: {
         ? `run ks-setup update (dev build: ${local.devReason ?? 'not a release'})`
         : fail
           ? `run ks-setup update (${fail})`
-          : 'updating';
+          : inProgress
+            ? 'updating'
+            : 'an update starts by itself shortly, or run ks-setup update';
       out.push({ key: 'self-release', tone: 'amber', text: `A new KS release for this device (${what}): ${doing}.` });
     } else if (fail) {
       out.push({ key: 'self-update', tone: 'amber', text: `ks-flow update failed on this device: ${fail}. Run ks-flow update.` });
@@ -114,7 +122,8 @@ export function versionNotices(input: {
     const who = d.deviceId === self ? 'this device' : nameOf(d, d.deviceId);
     const what = behindVersion ? `behind (${d.daemonVersion || 'unknown'} → ${storeVersion})` : `behind on the data format (schema ${d.schemaVersion} → ${storeSchema})`;
     const paused = behindSchema ? '; its store writes are paused' : '';
-    const how = d.devBuild ? `dev build${d.devReason ? `: ${d.devReason}` : ''} — run ks-flow update there` : 'updating';
+    // The store doesn't say whether that device's update is running: don't claim it.
+    const how = d.devBuild ? `dev build${d.devReason ? `: ${d.devReason}` : ''} — run ks-flow update there` : 'it updates itself, or run ks-flow update there';
     out.push({ key: `dev-${d.deviceId}`, tone: 'amber', text: `ks-flow on ${who} is ${what}${paused}: ${how}.` });
   }
   return out;

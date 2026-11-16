@@ -20,6 +20,7 @@ import {
   decideRelease,
   decideVersion,
   mayAutoUpdate,
+  updateTarget,
   readReleaseCheck,
   RELEASE_BUSY_RETRY_MS,
   RELEASE_CHECK_MS,
@@ -235,7 +236,7 @@ test('decideVersion: behind on version → banner state, one notice, auto-update
   assert.equal(d2.notice, null);
 
   // It failed: a notice with the reason; the retry waits an hour.
-  const failed: UpdateState = { state: 'failed', startedAt: AT, reason: 'marketplace failed (exit 1)' };
+  const failed: UpdateState = { state: 'failed', startedAt: AT, reason: 'marketplace failed (exit 1)', target: 'store 1.5.0' };
   const d3 = decideVersion({ prev: d2.status, settings: { version: '1.5.0', schemaVersion: 1 }, code: release('1.4.2'), mode: 'marketplace', update: failed, now: now + 120_000, alive: () => false });
   assert.equal(d3.launchUpdate, false);
   assert.equal(d3.notice, 'ks-flow on Mac A is behind (1.4.2 → 1.5.0): run `ks-flow update` (marketplace failed (exit 1))');
@@ -412,7 +413,7 @@ test('decideVersion: a new release → one notice per target, the update started
   assert.deepEqual([d2.launchUpdate, d2.notice], [false, null]);
 
   // It failed: one notice with the reason; an hour on it retries quietly.
-  const failed: UpdateState = { state: 'failed', startedAt: AT, endedAt: AT, reason: 'ks-setup update failed: boom' };
+  const failed: UpdateState = { state: 'failed', startedAt: AT, endedAt: AT, reason: 'ks-setup update failed: boom', target: 'release ks 1.1.0, ks-flow 0.3.0' };
   const d3 = decideVersion({ ...base, prev: d2.status, update: failed, release: check(), now: now + 120_000, alive: () => false });
   assert.equal(d3.launchUpdate, false);
   assert.equal(d3.notice, 'a new KS release on Mac A (ks 1.1.0, ks-flow 0.3.0): run `ks-setup update` (ks-setup update failed: boom)');
@@ -646,7 +647,7 @@ test('web versionNotices: every device behind, by name; this board red while rea
   assert.deepEqual(
     behind.map((n) => n.text),
     [
-      'ks-flow on Studio is behind (1.4.2 → 1.5.0): updating.',
+      'ks-flow on Studio is behind (1.4.2 → 1.5.0): it updates itself, or run ks-flow update there.',
       'ks-flow on Mac c is behind (1.4.0 → 1.5.0): dev build: uncommitted changes — run ks-flow update there.',
     ],
   );
@@ -666,7 +667,11 @@ test('web versionNotices: a new release found by the daemon, for this device', a
   const rel = currentRelease(check(), null, { dev: false });
   const settings = { masterDeviceId: 'a', version: '0.2.2', schemaVersion: 1 };
   const n = versionNotices({ devices: [], settings, self: 'a', local: status({ deviceId: 'a', version: '0.2.2', storeVersion: '0.2.2', release: rel }) });
-  assert.deepEqual(n.map((x) => [x.key, x.tone, x.text]), [['self-release', 'amber', 'A new KS release for this device (ks 1.1.0, ks-flow 0.3.0): updating.']]);
+  // No update running yet: says how to do it now, not "updating".
+  assert.deepEqual(n.map((x) => [x.key, x.tone, x.text]), [['self-release', 'amber', 'A new KS release for this device (ks 1.1.0, ks-flow 0.3.0): an update starts by itself shortly, or run ks-setup update.']]);
+  // While one runs: "updating".
+  const running = versionNotices({ devices: [], settings, self: 'a', local: status({ deviceId: 'a', version: '0.2.2', storeVersion: '0.2.2', release: rel, update: { state: 'running', startedAt: AT, pid: 1 } }) });
+  assert.equal(running[0]?.text, 'A new KS release for this device (ks 1.1.0, ks-flow 0.3.0): updating.');
   const failed = versionNotices({
     devices: [],
     settings,
@@ -676,4 +681,26 @@ test('web versionNotices: a new release found by the daemon, for this device', a
   assert.equal(failed[0].text, 'A new KS release for this device (ks 1.1.0, ks-flow 0.3.0): run ks-setup update (boom).');
   const current = versionNotices({ devices: [], settings, self: 'a', local: status({ deviceId: 'a', version: '0.2.2', release: { ...rel!, state: 'current' } }) });
   assert.deepEqual(current, []);
+});
+
+test('the hourly limit holds a retry of the same target, never a newer one', () => {
+  const now = Date.parse('2026-11-16T18:22:08Z');
+  const ago = (ms: number): string => new Date(now - ms).toISOString();
+  // A manual update (no target) 8 min ago: the store's newer version goes ahead.
+  assert.equal(mayAutoUpdate({ state: 'ok', startedAt: ago(8 * 60_000), from: '0.3.0', to: '0.3.1', by: 'manual' }, now, () => false, 'store 0.3.2'), true);
+  // An auto update aimed at 0.3.1 8 min ago, the store now at 0.3.2: goes ahead.
+  assert.equal(mayAutoUpdate({ state: 'ok', startedAt: ago(8 * 60_000), target: 'store 0.3.1' }, now, () => false, 'store 0.3.2'), true);
+  // The same target again (the update didn't reach it): waits the hour.
+  assert.equal(mayAutoUpdate({ state: 'ok', startedAt: ago(8 * 60_000), target: 'store 0.3.2' }, now, () => false, 'store 0.3.2'), false);
+  assert.equal(mayAutoUpdate({ state: 'failed', startedAt: ago(8 * 60_000), target: 'store 0.3.2' }, now, () => false, 'store 0.3.2'), false);
+  assert.equal(mayAutoUpdate({ state: 'failed', startedAt: ago(UPDATE_RETRY_MS), target: 'store 0.3.2' }, now, () => false, 'store 0.3.2'), true);
+  // Still never while one runs.
+  assert.equal(mayAutoUpdate({ state: 'running', startedAt: ago(60_000), pid: 1, target: 'store 0.3.1' }, now, () => true, 'store 0.3.2'), false);
+});
+
+test('updateTarget names the store version when behind, else the new release', () => {
+  assert.equal(updateTarget({ versionBehind: true, schemaBehind: false, storeVersion: '0.3.2' }), 'store 0.3.2');
+  assert.equal(updateTarget({ versionBehind: false, schemaBehind: false, storeVersion: '0.3.2' }), null);
+  const release = { checkedAt: '2026-11-16T18:00:00Z', state: 'available' as const, reason: null, plugins: [{ plugin: 'ks', installed: '1.1.0', latest: '1.2.0' }, { plugin: 'ks-flow', installed: '0.3.2', latest: '0.3.2' }] };
+  assert.equal(updateTarget({ versionBehind: false, schemaBehind: false, storeVersion: '0.3.2', release }), 'release ks 1.2.0');
 });

@@ -177,6 +177,8 @@ function main(): number {
     restartBoard,
     writeState: (s) => writeUpdateState(DATA_DIR, s),
     log,
+    // The daemon's launch record names the target; a manual run has none.
+    target: by === 'auto' && last?.state === 'running' ? (last.target ?? null) : null,
   });
   if (out.state === 'busy') return 0; // logged by runUpdate: "another update is running"
   if (out.state !== 'ok') console.error(`ks-flow update ${out.state}: ${out.reason ?? ''}`);
