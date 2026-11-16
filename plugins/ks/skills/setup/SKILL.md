@@ -58,6 +58,11 @@ Give each as a `!` command, one per line, and wait:
 - sandbox excludes, the deny rules that keep the agent from reading the
   Keychain, and the statusline env (edits `~/.claude/settings.json`):
   `! ks-setup claude-settings`;
+- the KS status line, optional: ask first (AskUserQuestion) whether they want
+  it (session, context, branch, ticket, rate limits) in the KarmaSuite checkout,
+  unless `statusline:project` is ok; on yes `! ks-setup statusline --yes`. It
+  sets the checkout's own `.claude/settings.local.json` and its worktrees, never
+  `~/.claude/settings.json`;
 - ks-flow's store, when the user wants Firestore:
   `! ks-setup store firestore --project <gcp id> --credentials <key.json>`,
   then `! ks-flow stop && ks-flow start && ks-flow open`.

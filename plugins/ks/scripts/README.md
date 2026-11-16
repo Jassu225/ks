@@ -36,7 +36,11 @@ ks-config list
   `security find-generic-password -w`; the KS CLIs call `security` themselves
   and are unaffected) and `env.KS_MOD_STATUSLINE` in `~/.claude/settings.json`
   after a yes (backup
-  `settings.json.bak-ks`). **`ks-setup store …`** — ks-flow's store.
+  `settings.json.bak-ks`). **`ks-setup statusline`** — optional, suggested by
+  `apply` and `/ks:setup`: sets `statusLine` to `~/.local/bin/statusline` in the
+  KarmaSuite checkout's `.claude/settings.local.json` (that checkout only) and
+  copies it to its worktrees; asks first, `--yes` from Claude's `!`.
+  **`ks-setup store …`** — ks-flow's store.
 - **`ks-config list|get|set|secret|unset|import-legacy`** — the config, per
   tool namespace (`lib/ks-config-keys.txt`). Secrets: Keychain service
   `ks.<namespace>`; plain values: `~/.config/ks/<namespace>.env`. Lookup:
@@ -248,7 +252,7 @@ Use it only for files that are *already* failing on the main branch — otherwis
 
 ### Statusline, workflow lookup and session name
 
-- **`statusline`**: the settings `statusLine` command. It prints session name (`@<name>`), context, branch, the checkout's Linear ticket as an OSC 8 link, and the rate-limit windows. Under `claude-ks` (`KS_MOD_STATUSLINE=1`, exported by `claude-ks`) it stops after session, context and branch: the ks plugin draws the ticket and phase pills and the rate limits under the prompt (`hooks/register.tsx`; see the plugin README, "Statusline").
+- **`statusline`**: the settings `statusLine` command (shim `~/.local/bin/statusline`; `ks-setup statusline` sets it in the KarmaSuite checkout). It prints session name (`@<name>`), context, branch, the checkout's Linear ticket as an OSC 8 link, and the rate-limit windows. Under `claude-ks` (`KS_MOD_STATUSLINE=1`, exported by `claude-ks`) it stops after session, context and branch: the ks plugin draws the ticket and phase pills and the rate limits under the prompt (`hooks/register.tsx`; see the plugin README, "Statusline").
 - **`workflow-unit`**: prints the ks workflow unit that owns the current checkout, tab-separated: `<state.yaml path>  <ticket|project>  <identifier or ->  <linear url>  <name>`. It matches the `state.yaml` under `workflow/` whose `worktree_dir` is the git root, else (older states) the ticket id in the branch name. Exits 1 outside a workflow checkout. The statusline and `session-title.sh` use it; the plugin's hooks do the same lookup in-process.
 - **`session-title.sh`**: a `SessionStart` hook (startup, resume, clear) that sets `sessionTitle` to the ticket id (`KAR-123`), or a project's workflow folder name. It stays short and space-free because it is also the peer name `ListAgents` prints and `SendMessage` takes. That peer name is fixed at startup, before hooks run, so the hook alone only renames the transcript; `claude-ks` passes `--name "$(session-title.sh --print)"` at launch (skipped when you pass `--name`, `--resume` or `--continue`) so a new session answers to `KAR-123` from the start.
 

@@ -12,6 +12,9 @@
 #                                  the deny rules on the agent running `security`, and
 #                                  env KS_MOD_STATUSLINE to ~/.claude/settings.json
 #                                  (backup: settings.json.bak-ks)
+#   ks-setup statusline [--yes]    optional: the KS status line in the KarmaSuite
+#                                  checkout (its .claude/settings.local.json and
+#                                  its worktrees), runs ~/.local/bin/statusline
 #   ks-setup store pocketbase | firestore --project <gcp id> --credentials <key.json>
 #                                  ks-flow's store, written to its per-project .env
 #
@@ -39,8 +42,11 @@ DENY=('Bash(security *)' 'Bash(/usr/bin/security *)')
 SHIMS=(ks:linear ks:slack ks:grain ks:ks-time ks:ks-config ks:ks-setup ks:ks-root ks:claude-ks ks:ks-claude
   ks:claude-ks-master ks:claude-ks-rc ks:claude-ks-rc-restart ks:claude-ks-test ks:ks-master-view
   ks:remove_worktree ks:create-worktree ks:ks-start-ticket ks:ks-start-project ks:quality-typecheck.sh
-  ks:spec_metadata.sh ks:deploy.sh ks:pre-deploy.sh ks:quit-chrome ks:mem-info ks:resolve-plugin-dir
+  ks:spec_metadata.sh ks:deploy.sh ks:pre-deploy.sh ks:quit-chrome ks:mem-info ks:resolve-plugin-dir ks:statusline
   ks-flow:ks-flow)
+# The status line command written by `ks-setup statusline`: the shim, so it
+# follows plugin updates and needs no PATH.
+STATUSLINE_CMD='~/.local/bin/statusline'
 YES=0
 interactive() { [ "$YES" = 0 ] && [ -t 0 ] && [ -t 1 ]; }
 ask() { # question → 0 for yes
@@ -268,6 +274,7 @@ doctor() {
   else check master info 0 "the master needs tmux and Ghostty or Terminal.app" "brew install tmux"; fi
   if [ "$(jq -r '.env.KS_MOD_STATUSLINE // empty' "$SETTINGS" 2>/dev/null)" = 1 ]; then check settings:statusline info 1 "statusline split for the ks mod"
   else check settings:statusline info 0 "env KS_MOD_STATUSLINE not set (only claude-ks set it)" "! ks-setup claude-settings"; fi
+  statusline_check
 
   local all; all="$(printf '%s\n' "${CHECKS[@]}" | jq -s --arg mode "$mode" \
     '{mode:$mode, errors:(map(select(.level=="error" and (.ok|not)))|length), checks:.}')"
@@ -278,6 +285,54 @@ doctor() {
       + .message + (if (.ok|not) and .fix then "\n         → " + .fix else "" end))'
   fi
   [ "$(printf '%s' "$all" | jq '.errors')" = 0 ]
+}
+
+# ── status line (optional) ──────────────────────────────────────────────────
+# The status line Claude uses in the KS project: its own .claude/settings.local.json,
+# then .claude/settings.json, then ~/.claude/settings.json (the first that sets one).
+effective_statusline() {
+  local proj f c
+  proj="$(ksc_project_root 2>/dev/null || true)"
+  for f in ${proj:+"$proj/.claude/settings.local.json" "$proj/.claude/settings.json"} "$SETTINGS"; do
+    c="$(jq -r '.statusLine.command // empty' "$f" 2>/dev/null)"
+    [ -n "$c" ] && { printf '%s\n' "$c"; return 0; }
+  done
+  return 1
+}
+# Ours: the shim, the plugin's bin/statusline, or a command that starts with `statusline`.
+is_ks_statusline() { case "$1" in "$STATUSLINE_CMD"*|*/.local/bin/statusline*|statusline|statusline\ *|*/plugins/ks/*statusline*) return 0 ;; esac; return 1; }
+statusline_check() {
+  local c; c="$(effective_statusline || true)"
+  if [ -n "$c" ] && is_ks_statusline "$c"; then check statusline:project info 1 "KS status line on in the project"
+  elif [ -n "$c" ]; then check statusline:project info 0 "the project uses another status line ($c); the KS one is optional" "! ks-setup statusline --yes"
+  else check statusline:project info 0 "no status line in the project; the KS one is optional" "! ks-setup statusline --yes"; fi
+}
+
+statusline_settings() {
+  [ "${1:-}" = --yes ] && YES=1
+  local proj; proj="$(ksc_project_root 2>/dev/null)" \
+    || { say "The KarmaSuite checkout isn't set: ks-config set ks.KS_PROJECT_ROOT_PATH <path>"; return 1; }
+  local f="$proj/.claude/settings.local.json"
+  local want; want="$(jq -nc --arg c "$STATUSLINE_CMD" '{type:"command", command:$c}')"
+  local cur; cur="$(jq -c '.statusLine // empty' "$f" 2>/dev/null)"
+  [ -x "$LOCAL_BIN/statusline" ] || say "Note: $LOCAL_BIN/statusline is missing; ks-setup apply writes it."
+  if [ "$cur" = "$want" ]; then
+    say "$f already has the KS status line"
+  else
+    say "To set in $f (this checkout and its worktrees only):"
+    say "  statusLine: $want"
+    [ -n "$cur" ] && say "  replacing: $cur"
+    local user; user="$(jq -r '.statusLine.command // empty' "$SETTINGS" 2>/dev/null)"
+    [ -n "$user" ] && say "  (your ~/.claude/settings.json status line, $user, stays for every other folder)"
+    if ! ask "Apply?"; then
+      interactive || say "Run it yourself:  ! ks-setup statusline --yes"
+      return 1
+    fi
+    mkdir -p "$proj/.claude"; [ -f "$f" ] || echo '{}' >"$f"
+    jq --argjson s "$want" '.statusLine = $s' "$f" >"$f.tmp.$$" && mv "$f.tmp.$$" "$f" && say "updated $f"
+  fi
+  sync_worktree_plugins
+  say "Applies to new Claude sessions in the checkout."
 }
 
 # ── apply ───────────────────────────────────────────────────────────────────
@@ -318,17 +373,23 @@ sync_worktree_plugins() {
   src="$proj/.claude/settings.local.json"
   [ -f "$src" ] || return 0
   ep="$(jq -c --arg m "@$MARKETPLACE" '(.enabledPlugins // {}) | with_entries(select(.key|endswith($m)))' "$src" 2>/dev/null)"
-  [ -n "$ep" ] && [ "$ep" != "{}" ] || return 0
+  [ -n "$ep" ] || ep='{}'
+  # The KS status line, when the checkout has it (ks-setup statusline), goes along.
+  local sl; sl="$(jq -c '.statusLine // empty' "$src" 2>/dev/null)"
+  [ -n "$sl" ] && ! is_ks_statusline "$(jq -r '.command // empty' <<<"$sl")" && sl=""
+  [ "$ep" != "{}" ] || [ -n "$sl" ] || return 0
   say "== plugins in the project's worktrees"
   while read -r wt; do
     [ -n "$wt" ] && [ "$wt" != "$proj" ] && [ -d "$wt" ] || continue
     f="$wt/.claude/settings.local.json"
     if [ ! -f "$f" ]; then mkdir -p "$wt/.claude" && echo '{}' >"$f"; fi
-    if jq -e --argjson ep "$ep" '(.enabledPlugins // {}) | contains($ep)' "$f" >/dev/null 2>&1; then continue; fi
-    jq --argjson ep "$ep" '.enabledPlugins = ((.enabledPlugins // {}) + $ep)' "$f" >"$f.tmp" && mv "$f.tmp" "$f" \
-      && n=$((n + 1)) && say "  enabled in $wt"
+    if jq -e --argjson ep "$ep" --argjson sl "${sl:-null}" \
+      '((.enabledPlugins // {}) | contains($ep)) and ($sl == null or .statusLine == $sl)' "$f" >/dev/null 2>&1; then continue; fi
+    jq --argjson ep "$ep" --argjson sl "${sl:-null}" \
+      '.enabledPlugins = ((.enabledPlugins // {}) + $ep) | if $sl == null then . else .statusLine = $sl end' "$f" >"$f.tmp" \
+      && mv "$f.tmp" "$f" && n=$((n + 1)) && say "  updated $wt"
   done < <(git -C "$proj" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
-  [ "$n" = 0 ] && say "  every worktree already has them"
+  [ "$n" = 0 ] && say "  every worktree is up to date"
   return 0
 }
 
@@ -405,6 +466,10 @@ apply() {
   todo="$(doctor --json 2>/dev/null | jq -r '.checks[] | select((.ok|not) and .fix != null and .level != "info") | "  \(.fix)    (\(.message))"' 2>/dev/null)"
   if [ -n "$todo" ]; then printf '%s\n' "$todo"
   else say "  nothing left to do (details: ks-setup doctor)"; fi
+  if ! is_ks_statusline "$(effective_statusline || true)"; then
+    say "== optional"
+    say "  ! ks-setup statusline --yes    (the KS status line: session, context, branch, ticket, rate limits)"
+  fi
 }
 
 # ── claude-settings ─────────────────────────────────────────────────────────
@@ -472,6 +537,7 @@ case "$sub" in
   apply) apply "$@" ;;
   claude-settings|sandbox) claude_settings "$@" ;;
   store) store "$@" ;;
-  -h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+  statusline) statusline_settings "$@" ;;
+  -h|--help|help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "ks-setup: unknown command $sub (try: ks-setup help)" >&2; exit 2 ;;
 esac
