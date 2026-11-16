@@ -32,6 +32,8 @@ export interface SharedData {
   inboxCount: number;
   /** This device's version status (GET /api/version; null until its daemon wrote one). */
   version: VersionStatus | null;
+  /** The ks-flow version this board was built from (GET /api/version `board`). */
+  boardVersion: string | null;
 }
 
 const Ctx = createContext<SharedData | null>(null);
@@ -73,12 +75,16 @@ export function BoardDataProvider({ config, children }: { config: BoardConfig; c
   // This device's version status (the banner; read-only while behind on the
   // store's data format). Polled: the daemon rewrites it every minute.
   const [version, setVersion] = useState<VersionStatus | null>(null);
+  const [boardVersion, setBoardVersion] = useState<string | null>(null);
   useEffect(() => {
     const read = (): void => {
       fetch('/api/version', { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
-        .then((d: { status?: VersionStatus | null } | null) => {
-          if (d) setVersion(d.status ?? null);
+        .then((d: { status?: VersionStatus | null; board?: string | null } | null) => {
+          if (d) {
+            setVersion(d.status ?? null);
+            setBoardVersion(d.board ?? null);
+          }
         })
         .catch(() => {});
     };
@@ -110,8 +116,8 @@ export function BoardDataProvider({ config, children }: { config: BoardConfig; c
   const inboxCount = useMemo(() => inboxWaiting(board.workUnits), [board.workUnits]);
 
   const value = useMemo<SharedData>(
-    () => ({ config, board, briefing, activity, master, refreshMaster, now, notesEnabled, bellCount, inboxCount, version }),
-    [config, board, briefing, activity, master, refreshMaster, now, notesEnabled, bellCount, inboxCount, version],
+    () => ({ config, board, briefing, activity, master, refreshMaster, now, notesEnabled, bellCount, inboxCount, version, boardVersion }),
+    [config, board, briefing, activity, master, refreshMaster, now, notesEnabled, bellCount, inboxCount, version, boardVersion],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

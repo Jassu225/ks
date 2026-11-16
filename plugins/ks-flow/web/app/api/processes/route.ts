@@ -2,7 +2,12 @@
 // stray/duplicate daemon (e.g. an old manual `node dist/daemon.js` left running
 // alongside the launchd one) is visible at a glance.
 //
-// GET  → { processes: Array<{ name, pid, startedAt, startedAtRaw, port, command }> }
+// GET  → { processes: Array<{ name, pid, startedAt, startedAtRaw, port, command, versions }> }
+//        versions: what each process runs, e.g. [{name:'ks-flow', version:'0.3.1'},
+//        {name:'Node', version:'24.21.0'}] — the daemon's ks-flow version from the
+//        version-status.json it writes, the board's from the version `ks-flow open`
+//        recorded when it built it (.ks-flow-version), Next.js from its package,
+//        Node and PocketBase from their binaries.
 // POST → { pid } kills that process (SIGTERM). The pid is re-validated against a
 //        fresh `ps` scan: ONLY a process that classifies as a ks-flow daemon may
 //        be killed, so a crafted request can't terminate an arbitrary pid.
@@ -10,9 +15,17 @@
 // Gathered from `ps` (pid + start time + command) joined to `lsof` (pid →
 // listening TCP port). Classifies the daemon, PocketBase, and the board itself.
 import { execFileSync } from 'node:child_process';
+import { readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { NextResponse } from 'next/server';
+import { readVersionStatus } from '@/lib/readonly';
 
 export const dynamic = 'force-dynamic';
+
+interface Version {
+  name: string;
+  version: string;
+}
 
 interface ProcInfo {
   name: string;
@@ -21,6 +34,73 @@ interface ProcInfo {
   startedAtRaw: string; // raw `ps lstart`
   port: number | null;
   command: string;
+  versions: Version[];
+}
+
+// `<binary> --version`, cached per path and mtime (a binary replaced in place
+// by an update gets asked again).
+const binVersions = new Map<string, string | null>();
+function binaryVersion(bin: string): string | null {
+  let key: string;
+  try {
+    key = `${bin}@${statSync(bin).mtimeMs}`;
+  } catch {
+    return null;
+  }
+  if (!binVersions.has(key)) {
+    let v: string | null = null;
+    try {
+      const out = execFileSync(bin, ['--version'], { encoding: 'utf8', timeout: 3000 });
+      v = out.match(/\d+\.\d+\.\d+[\w.+-]*/)?.[0] ?? null;
+    } catch {
+      /* unknown */
+    }
+    binVersions.set(key, v);
+  }
+  return binVersions.get(key) ?? null;
+}
+
+function readTrimmed(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The program a command line runs: its first word when that is a path. */
+function program(command: string): string | null {
+  const first = command.split(/\s+/)[0] ?? '';
+  return first.startsWith('/') ? first : null;
+}
+
+function versionsOf(name: string, pid: number, command: string): Version[] {
+  const out: Version[] = [];
+  const add = (n: string, v: string | null | undefined): void => {
+    if (v) out.push({ name: n, version: v.replace(/^v/, '') });
+  };
+  if (name === 'ks-flow daemon') {
+    add('ks-flow', readVersionStatus()?.version);
+    const bin = program(command);
+    add('Node', bin && /\/node$/.test(bin) ? binaryVersion(bin) : null);
+  } else if (name === 'board (web)') {
+    // The board serves from its own folder ($DATA_DIR/web): the version `open` built.
+    add('ks-flow', readTrimmed(join(process.cwd(), '.ks-flow-version')));
+    try {
+      add('Next.js', JSON.parse(readFileSync(join(process.cwd(), 'node_modules', 'next', 'package.json'), 'utf8')).version);
+    } catch {
+      /* unknown */
+    }
+    if (pid === process.pid) add('Node', process.versions.node);
+    else {
+      const bin = program(command);
+      add('Node', bin && /\/node$/.test(bin) ? binaryVersion(bin) : null);
+    }
+  } else if (name === 'PocketBase') {
+    const bin = program(command);
+    add('PocketBase', bin ? binaryVersion(bin) : null);
+  }
+  return out;
 }
 
 // pid → first listening TCP port.
@@ -91,7 +171,7 @@ function collectProcesses(): ProcInfo[] {
     } catch {
       /* leave null */
     }
-    processes.push({ name, pid, startedAt, startedAtRaw, port, command });
+    processes.push({ name, pid, startedAt, startedAtRaw, port, command, versions: versionsOf(name, pid, command) });
   }
 
   // daemons first (so duplicates are obvious), then by name, then pid.

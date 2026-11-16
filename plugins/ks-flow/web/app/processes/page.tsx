@@ -11,6 +11,7 @@ interface ProcInfo {
   startedAtRaw: string;
   port: number | null;
   command: string;
+  versions?: { name: string; version: string }[];
 }
 
 function fmtStarted(p: ProcInfo): string {
@@ -103,7 +104,7 @@ export default function ProcessesPage() {
         }
       />
 
-      <main className="mx-auto max-w-3xl px-5 py-8">
+      <main className="mx-auto max-w-4xl px-5 py-8">
         <p className="text-xs text-slate-400">
           ks-flow-related processes running on this machine. If more than one{' '}
           <span className="text-slate-300">ks-flow daemon</span> appears, a stray instance is
@@ -125,6 +126,7 @@ export default function ProcessesPage() {
             <thead className="bg-slate-900 text-xs uppercase tracking-wide text-slate-400">
               <tr>
                 <th className="px-4 py-2 font-medium">Process</th>
+                <th className="px-4 py-2 font-medium">Version</th>
                 <th className="px-4 py-2 font-medium">PID</th>
                 <th className="px-4 py-2 font-medium">Started</th>
                 <th className="px-4 py-2 font-medium">Port</th>
@@ -134,7 +136,7 @@ export default function ProcessesPage() {
             <tbody className="divide-y divide-slate-800">
               {procs.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                  <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
                     No ks-flow processes found.
                   </td>
                 </tr>
@@ -150,6 +152,22 @@ export default function ProcessesPage() {
                         <span className="ml-2 text-[10px] uppercase tracking-wide text-emerald-400">
                           kept
                         </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2">
+                      {p.versions && p.versions.length > 0 ? (
+                        <span className="flex flex-wrap gap-1">
+                          {p.versions.map((v) => (
+                            <span
+                              key={v.name}
+                              className="whitespace-nowrap rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 font-mono text-[11px] text-slate-300"
+                            >
+                              <span className="text-slate-500">{v.name}</span> {v.version}
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <span className="text-slate-600">—</span>
                       )}
                     </td>
                     <td className="px-4 py-2 font-mono text-slate-300">{p.pid}</td>

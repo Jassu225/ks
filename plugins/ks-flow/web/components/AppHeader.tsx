@@ -187,7 +187,11 @@ function DevBuildChip() {
 
 export function AppHeader({ toolbar }: { toolbar?: ReactNode }) {
   const pathname = usePathname() ?? '/';
-  const { config, board, notesEnabled, bellCount, inboxCount } = useShared();
+  const { config, board, notesEnabled, bellCount, inboxCount, version, boardVersion } = useShared();
+  // The board's own version; amber when its daemon runs another one (the board
+  // wasn't rebuilt: `ks-flow open` does it).
+  const daemonVersion = version?.version ?? null;
+  const boardStale = !!boardVersion && !!daemonVersion && boardVersion !== daemonVersion;
   // This device's record: its project path and its own (localhost) Inbox.
   const me = board.devices.find((d) => d.deviceId === board.self);
   const projectPath = me?.projectPath ?? config.projectPath;
@@ -228,6 +232,18 @@ export function AppHeader({ toolbar }: { toolbar?: ReactNode }) {
           <Link href="/" className="text-[15px] font-bold text-slate-100 hover:text-white">
             ks-flow
           </Link>
+          {boardVersion && (
+            <span
+              className={`font-mono text-[11px] ${boardStale ? 'text-amber-400' : 'text-slate-500'}`}
+              title={
+                boardStale
+                  ? `This board was built from ks-flow ${boardVersion}; the daemon runs ${daemonVersion}. ks-flow open rebuilds it.`
+                  : `Board: ks-flow ${boardVersion}${daemonVersion ? ` · daemon ${daemonVersion}` : ''}`
+              }
+            >
+              v{boardVersion}
+            </span>
+          )}
           {projectPath && (
             <span className="font-mono text-xs text-slate-400" title={projectPath}>
               {basename(projectPath)}

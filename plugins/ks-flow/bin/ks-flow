@@ -97,7 +97,8 @@ case "$cmd" in
       # would otherwise stay in the build (as /api/linear-refresh did).
       rm -rf "$WEB/app" "$WEB/components" "$WEB/lib"
       rsync -a --exclude node_modules --exclude .next "$PLUGIN_ROOT/web/" "$WEB/"
-      ( cd "$WEB" && npm install --no-audit --no-fund --cache "$DATA_DIR/.npm" && npm run build )
+      ( cd "$WEB" && npm install --no-audit --no-fund --cache "$DATA_DIR/.npm" && npm run build ) \
+        && { jq -r '.version // empty' "$PLUGIN_ROOT/.claude-plugin/plugin.json" >"$WEB/.ks-flow-version" 2>/dev/null || true; }
     fi
 
     echo "Board → http://localhost:$BOARD_PORT" >&2

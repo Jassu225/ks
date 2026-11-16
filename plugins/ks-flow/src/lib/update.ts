@@ -223,7 +223,7 @@ export function runUpdate(d: UpdateDeps): UpdateOutcome {
   if (!plan.ok) return finish({ state: 'refused', reason: plan.reason });
   d.writeState(base);
   const where = plan.mode === 'clone' ? `the clone ${plan.repo}` : `the ${plan.marketplace} marketplace`;
-  d.log(`update: ${plan.steps.length ? where : `no fetch, rebuild from ${where}`} (now ${d.fromVersion})`);
+  d.log(`update: ${plan.steps.length ? where : `no fetch, rebuild from ${where}`} (running ${d.fromVersion})`);
 
   const failedStep = (s: Step, r: RunResult): Partial<UpdateState> => ({
     state: 'failed',
