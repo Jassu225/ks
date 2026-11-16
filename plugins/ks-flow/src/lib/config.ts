@@ -107,7 +107,7 @@ export function loadConfig(): Config {
     gcpProjectId,
     firestoreClientEmail: opt('firestore_client_email') ?? process.env.FIREBASE_CLIENT_EMAIL,
     firestorePrivateKey: opt('firestore_private_key') ?? process.env.FIREBASE_PRIVATE_KEY,
-    firestoreCredentials: opt('firestore_credentials'),
+    firestoreCredentials: opt('firestore_credentials') ?? process.env.FIRESTORE_CREDENTIALS,
     pocketbasePort,
     pocketbaseUrl:
       process.env.POCKETBASE_URL ?? `http://127.0.0.1:${pocketbasePort}`,

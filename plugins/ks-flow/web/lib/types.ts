@@ -74,6 +74,8 @@ export interface ProjectDoc {
   worktreePaths: string[];
   inboxUrl?: string | null;
   inboxRunning?: boolean;
+  /** When the daemon last read the board's tickets from Linear (successfully). */
+  linearCheckedAt?: string | null;
   updatedAt: string;
 }
 
@@ -165,15 +167,6 @@ export interface ReminderDoc {
 
 /** Client-SDK config for the browser (cloud mode). projectId is shared with
  * the daemon; authDomain/storageBucket derive from it unless overridden. */
-export interface FirebaseWebConfig {
-  apiKey: string;
-  authDomain: string;
-  projectId: string;
-  appId?: string;
-  storageBucket?: string;
-  messagingSenderId?: string;
-}
-
 export interface BoardConfig {
   projectId: string;
   projectPath: string;
@@ -184,7 +177,6 @@ export interface BoardConfig {
   dbProvider: 'pocketbase' | 'firestore';
   firestoreMode: 'emulator' | 'cloud';
   gcpProjectId: string;
-  firebase: FirebaseWebConfig | null;
   /** PocketBase REST/realtime base URL (pocketbase provider only). */
   pocketbaseUrl: string;
 }

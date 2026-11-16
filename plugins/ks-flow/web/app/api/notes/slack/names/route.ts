@@ -4,7 +4,7 @@
 //
 // Handles user IDs (`U…`, from <@U…>) via users.info and channel IDs (`C…`, from
 // <#C…>) via conversations.info. Cache-first: the id→name map is persisted in the
-// DB (`slack_names` collection / Firestore `slackNames`, via serverdb). Only cache
+// DB (the top-level `slack_names` collection in both PocketBase and Firestore, via serverdb). Only cache
 // misses hit Slack (needs `users:read` / `channels:read` etc.), and those are
 // written back. Note text in the DB is never rewritten — substitution is render-time.
 // Names are stored bare (no @/# sigil); the client adds the sigil per mention type.

@@ -32,7 +32,6 @@ const SETTINGS: BriefingSettings = {
   schedule: ['00:00', '06:00', '12:00', '18:00'],
   names: ['Jaswanth'],
   halfTime: ['UBOSS'],
-  slackUserId: 'UME',
 };
 
 function env(now = MON): BriefingEnv & { store: MemoryBriefing; clock: { now: Date } } {

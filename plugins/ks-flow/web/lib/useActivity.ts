@@ -6,11 +6,10 @@
 // server (src/lib/backup-runs.ts); `backupRunsVersion` goes up on every change
 // to the collection so the page re-fetches at once instead of waiting to poll.
 // Same two backends as useBriefing: PocketBase (REST load + SSE) or Firestore
-// (onSnapshot). Mounted once, by BoardDataProvider: one subscription per
+// (the board server's live stream, app/api/store/live). Mounted once, by BoardDataProvider: one subscription per
 // collection (PocketBase's unsubscribe() drops every listener on it).
-import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getDb } from './firebase';
+import { openLive } from './liveStore';
 import { getPb } from './pocketbase';
 import type { BoardConfig, MasterEventDoc } from './types';
 
@@ -41,7 +40,7 @@ export function useActivity(cfg: BoardConfig): ActivityData {
     };
     return cfg.dbProvider === 'pocketbase'
       ? subscribePocketbase(cfg, emit, bump, (fn) => (reloadRef.current = fn))
-      : subscribeFirestore(cfg, emit, bump);
+      : subscribeFirestore(emit, bump, (fn) => (reloadRef.current = fn));
   }, [cfg]);
 
   const refresh = useCallback(() => reloadRef.current(), []);
@@ -80,22 +79,18 @@ function subscribePocketbase(
   };
 }
 
+/** Firestore: the board server's live stream (app/api/store/live). */
 function subscribeFirestore(
-  cfg: BoardConfig,
   emit: (docs: MasterEventDoc[]) => void,
   bump: () => void,
+  register: (fn: () => Promise<void>) => void,
 ): () => void {
-  const db = getDb(cfg);
-  const base = `projects/${cfg.projectId}`;
-  const eventsQ = query(collection(db, `${base}/masterEvents`), orderBy('at', 'desc'), limit(EVENTS));
-  const runsQ = query(collection(db, `${base}/backupRuns`), orderBy('startedAt', 'desc'), limit(50));
-  const unsubs = [
-    onSnapshot(
-      eventsQ,
-      (snap) => emit(snap.docs.map((d) => d.data() as MasterEventDoc)),
-      () => emit([]),
-    ),
-    onSnapshot(runsQ, () => bump(), () => {}),
-  ];
-  return () => unsubs.forEach((u) => u());
+  const live = openLive('activity', {
+    onSnap: (key, docs) => {
+      if (key === 'masterEvents') emit(docs as MasterEventDoc[]);
+      else if (key === 'backupRuns') bump();
+    },
+  });
+  register(live.reload);
+  return live.close;
 }

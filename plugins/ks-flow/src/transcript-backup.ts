@@ -228,7 +228,7 @@ async function main(): Promise<void> {
   if (args.runs) {
     if (!conf) return fail(args, 'no project.conf — run `ks-flow start` in the project first.');
     const runs = await listRuns(store, projectId).catch((e: Error) => e);
-    if (runs instanceof Error) return fail(args, `could not read the backup history: the ks-flow store (PocketBase) is not reachable — is the daemon running? (${runs.message})`);
+    if (runs instanceof Error) return fail(args, `could not read the backup history: the ks-flow store is not reachable — is the daemon running (PocketBase), or is this Mac offline (Firestore)? (${runs.message})`);
     return emitAndExit({ ok: true, runs, lastSweepAt: lastSweepAt(runs) }, 0);
   }
 
@@ -245,7 +245,7 @@ async function main(): Promise<void> {
   const isStoreUp = conf ? await store.getBackupRuns(projectId).then(() => true, () => false) : false;
   const isSweep = !args.status && !args.reindex;
   if (!isStoreUp && conf && (args.reindex || (isSweep && !args.force))) {
-    return fail(args, 'the ks-flow store (PocketBase) is not reachable, and it holds the backup index — is the daemon running? `ks-flow start`');
+    return fail(args, 'the ks-flow store is not reachable, and it holds the backup index — is the daemon running (PocketBase: `ks-flow start`), or is this Mac offline (Firestore)?');
   }
   if (!isStoreUp && isSweep) log('WARNING: the ks-flow store is not reachable — this run is not recorded and the index is not updated.');
 

@@ -75,24 +75,6 @@ export function loadBoardConfig(): BoardConfig {
     process.env.CLAUDE_PLUGIN_OPTION_pocketbase_port || process.env.POCKETBASE_PORT || '8090';
   const pocketbaseUrl = process.env.POCKETBASE_URL || `http://127.0.0.1:${pbPort}`;
 
-  // Build the client config from discrete env vars, reusing the project id and
-  // deriving authDomain/storageBucket from it (Firebase's own defaults).
-  const env = (k: string) =>
-    process.env[`CLAUDE_PLUGIN_OPTION_firebase_${k.toLowerCase()}`] ||
-    process.env[`FIREBASE_${k}`];
-  const apiKey = env('API_KEY');
-  const firebase =
-    mode === 'cloud' && apiKey
-      ? {
-          apiKey,
-          projectId: gcpProjectId,
-          authDomain: env('AUTH_DOMAIN') || `${gcpProjectId}.firebaseapp.com`,
-          appId: env('APP_ID') || undefined,
-          storageBucket: env('STORAGE_BUCKET') || `${gcpProjectId}.appspot.com`,
-          messagingSenderId: env('MESSAGING_SENDER_ID') || undefined,
-        }
-      : null;
-
   return {
     projectId,
     projectPath,
@@ -100,7 +82,6 @@ export function loadBoardConfig(): BoardConfig {
     dbProvider,
     firestoreMode: mode === 'cloud' ? 'cloud' : 'emulator',
     gcpProjectId,
-    firebase,
     pocketbaseUrl,
   };
 }

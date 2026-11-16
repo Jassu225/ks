@@ -1,24 +1,16 @@
 'use client';
 // useBriefing — live subscription to the Briefing collections (docs/briefing.md,
 // "Data"): briefing_items, briefing_runs, daily_logs. Same two backends as
-// useBoard: PocketBase (REST load + SSE re-load) or Firestore (onSnapshot).
+// useBoard: PocketBase (REST load + SSE re-load) or Firestore (the board
+// server's live stream, app/api/store/live).
 //
 // What it loads: every OPEN item, plus items archived within the last
 // WINDOW_DAYS (by `archivedAt`, so an item archived today that fell due long
 // ago still shows; enough for "archived today" and the daily log's recent days
 // without pulling the whole history on every change); the newest runs; the
 // daily logs of the same window.
-import {
-  collection,
-  getDocs,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  where,
-} from 'firebase/firestore';
 import { useEffect, useRef, useState } from 'react';
-import { getDb } from './firebase';
+import { openLive } from './liveStore';
 import { getPb } from './pocketbase';
 import type { BoardConfig, BriefingItemDoc, BriefingRunDoc, DailyLogDoc } from './types';
 
@@ -144,24 +136,13 @@ function subscribePocketbase(
   };
 }
 
+/** Firestore: the board server's live stream (app/api/store/live). Open items
+ * and those archived in the window arrive as two keys, merged by uid. */
 function subscribeFirestore(
-  cfg: BoardConfig,
+  _cfg: BoardConfig,
   s: Setters,
   register: (fn: () => Promise<void>) => void,
 ): () => void {
-  const db = getDb(cfg);
-  const base = `projects/${cfg.projectId}`;
-  const itemsCol = collection(db, `${base}/briefingItems`);
-  const runsCol = collection(db, `${base}/briefingRuns`);
-  const logsCol = collection(db, `${base}/dailyLogs`);
-  // Two single-field queries (no composite index needed), merged by uid: the
-  // open items, and those archived in the window (an open item's archivedAt is
-  // null, which a '>=' on a string leaves out).
-  const openQ = query(itemsCol, where('status', '==', 'open'));
-  const recentQ = query(itemsCol, where('archivedAt', '>=', sinceIso()));
-  const runsQ = query(runsCol, orderBy('startedAt', 'desc'), limit(RUNS));
-  const logsQ = query(logsCol, where('date', '>=', sinceDate()));
-
   let open: BriefingItemDoc[] = [];
   let recent: BriefingItemDoc[] = [];
   const emitItems = (): void => {
@@ -170,27 +151,18 @@ function subscribeFirestore(
     s.setItems([...m.values()]);
     s.setLoaded(true);
   };
-
-  register(async () => {
-    const [o, r, ru, l] = await Promise.all([getDocs(openQ), getDocs(recentQ), getDocs(runsQ), getDocs(logsQ)]);
-    open = o.docs.map((d) => d.data() as BriefingItemDoc);
-    recent = r.docs.map((d) => d.data() as BriefingItemDoc);
-    emitItems();
-    s.setRuns(ru.docs.map((d) => d.data() as BriefingRunDoc));
-    s.setDailyLogs(l.docs.map((d) => d.data() as DailyLogDoc));
+  const live = openLive('briefing', {
+    onSnap: (key, docs) => {
+      if (key === 'openItems') {
+        open = docs as BriefingItemDoc[];
+        emitItems();
+      } else if (key === 'recentItems') {
+        recent = docs as BriefingItemDoc[];
+        emitItems();
+      } else if (key === 'runs') s.setRuns((docs as BriefingRunDoc[]).sort(byStartedDesc));
+      else if (key === 'dailyLogs') s.setDailyLogs(docs as DailyLogDoc[]);
+    },
   });
-
-  const unsubs = [
-    onSnapshot(openQ, (snap) => {
-      open = snap.docs.map((d) => d.data() as BriefingItemDoc);
-      emitItems();
-    }),
-    onSnapshot(recentQ, (snap) => {
-      recent = snap.docs.map((d) => d.data() as BriefingItemDoc);
-      emitItems();
-    }),
-    onSnapshot(runsQ, (snap) => s.setRuns(snap.docs.map((d) => d.data() as BriefingRunDoc))),
-    onSnapshot(logsQ, (snap) => s.setDailyLogs(snap.docs.map((d) => d.data() as DailyLogDoc))),
-  ];
-  return () => unsubs.forEach((u) => u());
+  register(live.reload);
+  return live.close;
 }

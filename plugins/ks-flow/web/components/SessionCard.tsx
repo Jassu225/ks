@@ -4,6 +4,7 @@ import type { InboxAddress, InboxThreadRef, ReminderDoc, SessionDoc, WorkUnitDoc
 import { RemoveWorktree } from '@/components/RemoveWorktree';
 import { TranscriptBackup } from '@/components/TranscriptBackup';
 import { useBackupStatus } from '@/lib/backupStatus';
+import { useShared } from '@/lib/boardData';
 
 // A session counts as "active" (glowing border) if it wrote within this window.
 // Derived client-side off a ticking clock (passed down from the board) so the
@@ -237,7 +238,13 @@ function StatusRibbon({ unit, ribbonSpace = false }: { unit: WorkUnitDoc; ribbon
   };
 
   const color = statusColor(unit);
-  const synced = unit.linearSyncedAt ?? null;
+  // A live ticket is read from Linear with the rest of the board: the project
+  // records that read once (linearCheckedAt); a card only stamps its own time
+  // when its Linear values changed. Removed cards aren't polled: theirs stands.
+  const { board } = useShared();
+  const checked = unit.worktreeDir ? (board.project?.linearCheckedAt ?? null) : null;
+  const own = unit.linearSyncedAt ?? null;
+  const synced = checked && (!own || checked > own) ? checked : own;
   const title = timedOut
     ? 'The daemon did not answer — see its log (ks-flow status). Click to retry.'
     : unit.cardRefreshError && !refreshing

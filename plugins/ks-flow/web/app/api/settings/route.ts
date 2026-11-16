@@ -71,7 +71,6 @@ interface Briefing {
   schedule: string[];
   names: string[];
   halfTime: string[];
-  slackUserId: string | null;
 }
 interface Settings {
   removeCommand: string;
@@ -86,7 +85,6 @@ const DEFAULT_BRIEFING: Briefing = {
   schedule: ['00:00', '06:00', '12:00', '18:00'],
   names: ['Jaswanth'],
   halfTime: [],
-  slackUserId: null,
 };
 const SLOT = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -103,12 +101,6 @@ function parseBriefing(b: Record<string, unknown>, base: Briefing): Briefing {
     schedule: strings(b.schedule, base.schedule, (x) => SLOT.test(x)).sort(),
     names: strings(b.names, base.names, (x) => x !== ''),
     halfTime: strings(b.halfTime, base.halfTime, (x) => x !== ''),
-    slackUserId:
-      b.slackUserId === null
-        ? null
-        : typeof b.slackUserId === 'string'
-          ? b.slackUserId.trim() || null
-          : base.slackUserId,
   };
 }
 

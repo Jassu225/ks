@@ -155,7 +155,8 @@ stops the action):
 
 - Items with the same `groupKey` render as **one card** on the board: the card
   lists each item (its own kind, text, due chip, Archive). The card takes the
-  **worst** stage of its open items and sorts by its earliest open `dueAt`.
+  **worst** stage of its open items and sorts by its earliest open `dueAt`
+  (the Overdue section reverses that: most recently due first).
 - Archiving stays per item. The card also has "Archive all…" (one dialog,
   one resolution and note applied to each open item).
 - Before adding, the master looks up existing items by `groupKey`, `messageUrl`
@@ -217,7 +218,8 @@ through the daemon-side store (`src/lib/db`) for the configured project.
 
 Board settings (`board-settings.json`, block `briefing`): `{ enabled: boolean,
 schedule: ['00:00','06:00','12:00','18:00'], names: ['<your name>'], halfTime:
-string[] /* Slack user ids, empty for now */, slackUserId: string | null }`.
+string[] /* Slack user ids, empty for now */ }`. The person's own Slack id is
+not a setting: the master reads it each pass (`slack user me --json`).
 
 ## The master
 
