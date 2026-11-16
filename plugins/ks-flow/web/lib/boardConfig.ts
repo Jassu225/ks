@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BoardConfig } from './types';
+import { loadDataEnv } from '@/lib/envfile';
 
 /** The data dir this board reads. The launcher (bin/ks-flow open) pins
  * CLAUDE_PLUGIN_DATA to the derived dir; KS_FLOW_DATA overrides. See
@@ -20,30 +21,9 @@ export function boardDataDir(): string {
 
 // Pull $CLAUDE_PLUGIN_DATA/.env into process.env (real env wins), so the
 // board reads the same file the daemon does. Mirrors src/lib/envfile.ts.
-function loadEnvFile(path: string): void {
-  let raw: string;
-  try {
-    raw = readFileSync(path, 'utf8');
-  } catch {
-    return;
-  }
-  for (const line of raw.split('\n')) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const eq = t.indexOf('=');
-    if (eq < 0) continue;
-    const key = t.slice(0, eq).trim();
-    if (!key || process.env[key] !== undefined) continue;
-    let val = t.slice(eq + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
-      val = val.slice(1, -1);
-    process.env[key] = val;
-  }
-}
-
 export function loadBoardConfig(): BoardConfig {
   const dataDir = boardDataDir();
-  loadEnvFile(join(dataDir, '.env'));
+  loadDataEnv(join(dataDir, '.env'));
   let projectId = '';
   let projectPath = '';
   try {

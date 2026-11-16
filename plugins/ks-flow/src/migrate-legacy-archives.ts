@@ -31,7 +31,7 @@ import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dataDir, loadConfig, readProjectConf } from './lib/config.js';
-import { loadEnvFile } from './lib/envfile.js';
+import { loadDataEnv } from './lib/envfile.js';
 import {
   copyObject,
   deleteObject,
@@ -132,7 +132,7 @@ interface UnitOutcome {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
-  loadEnvFile(join(dataDir(), '.env'));
+  loadDataEnv(join(dataDir(), '.env'));
   const settings = readArchiveSettings();
   if (!settings.enabled) {
     err('GCS archive is disabled in settings — nothing to migrate.');

@@ -449,7 +449,7 @@ export default function Settings() {
               type="text"
               value={removeCommand}
               onChange={(e) => setRemoveCommand(e.target.value)}
-              placeholder="git worktree remove {{path}}"
+              placeholder="remove_worktree -D {{path}}  (default)"
               spellCheck={false}
               className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 font-mono text-sm text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
             />

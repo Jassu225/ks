@@ -20,7 +20,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 
-import { loadEnv } from './lib/env.js';
+import { loadEnv, SCRIPTS_DIR } from './lib/env.js';
 import { getLinearClient, getPriorityName } from './lib/linear-client.js';
 import type { SlackThread, Phase, PrEntry } from './lib/workflow-types.js';
 import { parseSlackMessageUrl } from './lib/slack.js';
@@ -365,8 +365,7 @@ function formatYaml(state: WorkflowState): string {
   const formattedLines: string[] = [];
 
   // Add schema reference for editor validation (using $HOME for portability)
-  const homeDir = process.env.HOME || '~';
-  formattedLines.push(`# yaml-language-server: $schema=${homeDir}/.claude/plugins/ks/scripts/project-state.schema.json`);
+  formattedLines.push(`# yaml-language-server: $schema=${path.join(SCRIPTS_DIR, 'project-state.schema.json')}`);
   formattedLines.push('');
   formattedLines.push('# Linear Project Information');
 

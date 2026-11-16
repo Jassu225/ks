@@ -1,155 +1,39 @@
 #!/bin/bash
+# plugins/ks/init — set up the KS plugins from a clone. A thin wrapper over
+# scripts/ks-setup, the same tool the /ks:setup skill runs for an install:
+#   ./init        config folder, registry, command shims + PATH line, deps,
+#                 project path, legacy config import, sandbox excludes, doctor
+#   ./init-dev    the same, and loads the clone as the karmasuite directory
+#                 marketplace, so a plain `claude` gets the plugins (live edits)
+# Re-running is safe; every step that changes your Claude settings or Keychain asks.
 set -e
-
-DEV_MODE=false
-while [[ "$#" -gt 0 ]]; do
-  case $1 in
-    --dev) DEV_MODE=true ;;
-    *) echo "Unknown option: $1"; exit 1 ;;
+PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+SETUP="$PLUGIN_DIR/scripts/ks-setup"
+DEV=""
+for a in "$@"; do
+  case "$a" in
+    --dev) DEV=--dev ;;
+    *) echo "Unknown option: $a" >&2; exit 1 ;;
   esac
-  shift
 done
 
-PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPTS_DIR="$PLUGIN_DIR/scripts"
+echo "=== ks CLI dependencies ==="
+( cd "$PLUGIN_DIR/scripts" && npm ci --no-audit --no-fund )
 
-echo "=== Installing dependencies ==="
-cd "$SCRIPTS_DIR"
-npm install
+"$SETUP" apply $DEV
 
 echo ""
-echo "=== Building CLI tools ==="
-npm run build
-
-echo ""
-echo "=== Checking claude-real-video (crv) ==="
-# Optional dependency: `grain recording watch` exports a Grain call and hands the
-# folder to crv, which turns it into keyframes + transcript an agent can read.
+echo "=== Optional: claude-real-video (grain recording watch) ==="
 if command -v crv >/dev/null 2>&1; then
   echo "crv found: $(command -v crv)"
-elif [ ! -t 0 ]; then
-  echo "crv not installed (non-interactive run) — install later with: pipx install \"claude-real-video[whisper]\""
-elif command -v pipx >/dev/null 2>&1 || command -v pip3 >/dev/null 2>&1; then
-  INSTALL_CRV=""
-  read -rp "Install claude-real-video (enables 'grain recording watch')? [y/N]: " INSTALL_CRV || true
-  if [[ "$INSTALL_CRV" =~ ^[Yy]$ ]]; then
-    if command -v pipx >/dev/null 2>&1; then
-      pipx install "claude-real-video[whisper]" || echo "Warning: pipx install failed — install crv manually"
-    else
-      pip3 install --user "claude-real-video[whisper]" || echo "Warning: pip3 install failed — install crv manually"
-    fi
-  else
-    echo "Skipped. Install later with: pipx install \"claude-real-video[whisper]\""
-  fi
 else
-  echo "No pipx or pip3 found — skipping crv. Install later with: pipx install \"claude-real-video[whisper]\""
-fi
-
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "Warning: ffmpeg not found. crv needs ffmpeg/ffprobe — install with: brew install ffmpeg"
+  echo "Not installed. Later: pipx install \"claude-real-video[whisper]\" && brew install ffmpeg"
 fi
 
 echo ""
-echo "=== Configuring shell ==="
-ZSHRC="$HOME/.zshrc"
-
-# Set DEV and KS_PLUGIN_DIR in scripts/.env
-ENV_FILE="$SCRIPTS_DIR/.env"
-
-# Seed a fresh .env from .env.example so every CLI's token slot is visible
-# (LINEAR_API_KEY, SLACK_TOKEN, GRAIN_API_TOKEN). Never overwrites an existing one.
-if [ ! -f "$ENV_FILE" ] && [ -f "$SCRIPTS_DIR/.env.example" ]; then
-  cp "$SCRIPTS_DIR/.env.example" "$ENV_FILE"
-  echo "Created $ENV_FILE from .env.example — fill in the tokens you need"
-fi
-
-if [ "$DEV_MODE" = true ]; then
-  if [ -f "$ENV_FILE" ]; then
-    if grep -q "^DEV=" "$ENV_FILE" 2>/dev/null; then
-      sed -i '' 's/^DEV=.*/DEV=true/' "$ENV_FILE"
-    else
-      echo "" >> "$ENV_FILE"
-      echo "DEV=true" >> "$ENV_FILE"
-    fi
-  else
-    echo "DEV=true" > "$ENV_FILE"
-  fi
-  echo "Set DEV=true in $ENV_FILE"
-fi
-
-# Set KS_PLUGIN_DIR in scripts/.env
-if [ -f "$ENV_FILE" ] && grep -q "^KS_PLUGIN_DIR=" "$ENV_FILE" 2>/dev/null; then
-  sed -i '' "s|^KS_PLUGIN_DIR=.*|KS_PLUGIN_DIR=$PLUGIN_DIR|" "$ENV_FILE"
-else
-  [ -s "$ENV_FILE" ] && [ -n "$(tail -c 1 "$ENV_FILE")" ] && echo "" >> "$ENV_FILE"
-  echo "KS_PLUGIN_DIR=$PLUGIN_DIR" >> "$ENV_FILE"
-fi
-echo "Set KS_PLUGIN_DIR=$PLUGIN_DIR in $ENV_FILE"
-
-# Add scripts to PATH (replace old c-scripts PATH if present)
-PATH_LINE="export PATH=\"$SCRIPTS_DIR:\$PATH\""
-if grep -qF "$SCRIPTS_DIR" "$ZSHRC" 2>/dev/null; then
-  echo "scripts PATH already exists in $ZSHRC, skipping"
-else
-  echo "$PATH_LINE" >> "$ZSHRC"
-  echo "Added scripts to PATH in $ZSHRC"
-fi
+echo "=== Claude settings (sandbox excludes, statusline env) ==="
+"$SETUP" claude-settings || true
 
 echo ""
-echo "=== Configuring project root ==="
-CONFIG_FILE="$PLUGIN_DIR/.config"
-CURRENT_ROOT=""
-if [ -f "$CONFIG_FILE" ] && grep -q "^KS_PROJECT_ROOT_PATH=" "$CONFIG_FILE" 2>/dev/null; then
-  CURRENT_ROOT=$(grep "^KS_PROJECT_ROOT_PATH=" "$CONFIG_FILE" | cut -d'=' -f2-)
-elif [ -f "$CONFIG_FILE" ] && grep -q "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" 2>/dev/null; then
-  # Fallback to legacy key
-  CURRENT_ROOT=$(grep "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" | cut -d'=' -f2-)
-fi
-
-if [ -n "$CURRENT_ROOT" ]; then
-  read -rp "Project root path [$CURRENT_ROOT]: " PROJECT_ROOT
-  PROJECT_ROOT="${PROJECT_ROOT:-$CURRENT_ROOT}"
-else
-  read -rp "Project root path (absolute path to KarmaSuite repo): " PROJECT_ROOT
-fi
-
-if [ -z "$PROJECT_ROOT" ]; then
-  echo "Warning: No project root path provided. You can set it later in $CONFIG_FILE"
-elif [ ! -d "$PROJECT_ROOT" ]; then
-  echo "Warning: Directory '$PROJECT_ROOT' does not exist. Saving anyway."
-fi
-
-if [ -n "$PROJECT_ROOT" ]; then
-  if [ -f "$CONFIG_FILE" ] && grep -q "^KS_PROJECT_ROOT_PATH=" "$CONFIG_FILE" 2>/dev/null; then
-    sed -i '' "s|^KS_PROJECT_ROOT_PATH=.*|KS_PROJECT_ROOT_PATH=$PROJECT_ROOT|" "$CONFIG_FILE"
-  else
-    echo "KS_PROJECT_ROOT_PATH=$PROJECT_ROOT" >> "$CONFIG_FILE"
-  fi
-  echo "Saved KS_PROJECT_ROOT_PATH=$PROJECT_ROOT to $CONFIG_FILE"
-fi
-
-echo ""
-echo "=== Done ==="
-echo "Run 'source ~/.zshrc' to apply changes."
-echo ""
-echo "Next steps:"
-echo "  1. Get a Linear API key (with write permissions) from:"
-echo "     https://linear.app/settings/api"
-echo "     Then add it to $SCRIPTS_DIR/.env:"
-echo "     LINEAR_API_KEY=lin_api_your_key_here"
-echo ""
-echo "  2. Get a Slack bot token from:"
-echo "     https://api.slack.com/apps/A0AFPCG7PQD/oauth"
-echo "     Then add it to $SCRIPTS_DIR/.env:"
-echo "     SLACK_TOKEN=xoxb-your-token-here"
-echo ""
-echo "  3. Get a Grain API token from:"
-echo "     https://grain.com/app/settings/integrations?tab=api"
-echo "     Personal token = your own recordings; Workspace token = all workspace data"
-echo "     Then add it to $SCRIPTS_DIR/.env:"
-echo "     GRAIN_API_TOKEN=your_grain_token_here"
-echo "     Verify with: grain auth check"
-echo ""
-echo "  4. Optional: 'grain recording watch <id>' needs claude-real-video + ffmpeg:"
-echo "       pipx install \"claude-real-video[whisper]\" && brew install ffmpeg"
-echo "     It downloads a call, then turns it into keyframes + transcript to read."
+echo "=== Check ==="
+"$SETUP" doctor || echo "Fix the items above (or run /ks:setup in Claude), then: ks-setup doctor"

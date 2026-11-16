@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveDataDir } from './datadir.mjs';
-import { loadEnvFile } from './envfile.js';
+import { loadDataEnv } from './envfile.js';
 
 function opt(key: string): string | undefined {
   const v = process.env[`CLAUDE_PLUGIN_OPTION_${key}`];
@@ -89,7 +89,7 @@ let envFileLoaded = false;
 export function loadConfig(): Config {
   // Pull in $CLAUDE_PLUGIN_DATA/.env once (real env still wins).
   if (!envFileLoaded) {
-    loadEnvFile(join(dataDir(), '.env'));
+    loadDataEnv(join(dataDir(), '.env'));
     envFileLoaded = true;
   }
   const mode = (opt('firestore_mode') ?? process.env.FIRESTORE_MODE ?? 'emulator') as

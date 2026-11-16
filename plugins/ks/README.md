@@ -17,29 +17,13 @@ After running, restart your terminal (or `source ~/.zshrc`) and use:
 claude-ks
 ```
 
-## Production Setup
+## Setup
 
-Install the plugin from within Claude Code:
-
-```
-# Add marketplace
-/plugin marketplace add karmasuite/ks
-
-# Install the plugin
-/plugin install ks@karmasuite
-```
-
-Then run the init script to install dependencies, build CLI tools, and configure your shell:
-
-```bash
-cd plugins/ks
-./init
-```
-
-This will:
-- Install npm dependencies in `plugins/ks/scripts/`
-- Build the TypeScript CLI tools
-- Add `plugins/ks/scripts/` to your `PATH`
+See the repository README, "Setup": install per project from inside your
+KarmaSuite checkout (`claude plugin install --scope local ks-suite@karmasuite`,
+then `/ks:setup`), or, for a clone, `plugins/ks/init-dev`. Both run
+`scripts/ks-setup`; tokens go in the Keychain (`ks-config secret …`), other
+settings in `~/.config/ks` (`/ks:config`).
 
 ## Adding Components
 

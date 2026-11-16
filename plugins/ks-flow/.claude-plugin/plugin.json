@@ -10,8 +10,8 @@
     "project_path": {
       "type": "directory",
       "title": "Project path",
-      "description": "Main worktree / repo root to track. All of its git worktrees are tracked too; every other project on the machine is ignored.",
-      "required": true
+      "description": "Main worktree / repo root to track (all of its git worktrees too; every other project is ignored). Leave empty to use KS_PROJECT_ROOT_PATH from the ks config (ks-config set ks.KS_PROJECT_ROOT_PATH <path>).",
+      "required": false
     },
     "workflow_user": {
       "type": "string",
@@ -40,33 +40,11 @@
       "title": "GCP project id",
       "description": "Firestore/Firebase project id (service-account 'project_id'). Required when firestore_mode=cloud."
     },
-    "firestore_client_email": {
-      "type": "string",
-      "title": "Service-account client email",
-      "description": "Admin SDK service-account 'client_email' (daemon writer). Required when firestore_mode=cloud.",
-      "sensitive": true
-    },
-    "firestore_private_key": {
-      "type": "string",
-      "title": "Service-account private key",
-      "description": "Admin SDK service-account 'private_key' (PEM). Paste with literal \\n escapes on one line. Required when firestore_mode=cloud.",
-      "sensitive": true
-    },
     "firestore_credentials": {
       "type": "file",
       "title": "Firestore service-account key (optional)",
       "description": "Optional fallback: path to the full service-account JSON, used only if the client-email/private-key fields are unset.",
       "sensitive": true
-    },
-    "firebase_api_key": {
-      "type": "string",
-      "title": "Firebase web API key",
-      "description": "Client-SDK apiKey for the board reader (public; from Project settings → web app). Required when firestore_mode=cloud. authDomain/storageBucket derive from gcp_project_id."
-    },
-    "firebase_app_id": {
-      "type": "string",
-      "title": "Firebase web app id",
-      "description": "Client-SDK appId for the board reader (optional; from the same web app config)."
     },
     "idle_minutes": {
       "type": "number",
@@ -86,5 +64,8 @@
       "description": "Port the Next.js board listens on (ks-flow open).",
       "default": 4317
     }
-  }
+  },
+  "dependencies": [
+    "ks"
+  ]
 }

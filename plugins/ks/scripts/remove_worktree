@@ -32,18 +32,13 @@ error() {
     echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
-# Load .config for KS_PROJECT_ROOT_PATH
+# KS_PROJECT_ROOT_PATH: env, then ~/.config/ks/ks.env, then the legacy .config
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG_FILE="$(cd "$SCRIPT_DIR/.." && pwd)/.config"
-KS_PROJECT_ROOT=""
-if [[ -f "$CONFIG_FILE" ]]; then
-    KS_PROJECT_ROOT=$(grep "^KS_PROJECT_ROOT_PATH=" "$CONFIG_FILE" | cut -d'=' -f2- || true)
-    # Fallback to legacy key
-    [[ -z "$KS_PROJECT_ROOT" ]] && KS_PROJECT_ROOT=$(grep "^PROJECT_ROOT_PATH=" "$CONFIG_FILE" | cut -d'=' -f2- || true)
-fi
+. "$SCRIPT_DIR/lib/ks-config.sh"
+KS_PROJECT_ROOT="$(ksc_project_root || true)"
 
 if [[ -z "$KS_PROJECT_ROOT" ]]; then
-    echo -e "${RED}[ERROR]${NC} KS_PROJECT_ROOT_PATH not configured in .config" >&2
+    echo -e "${RED}[ERROR]${NC} KS_PROJECT_ROOT_PATH is not set (ks-config set ks.KS_PROJECT_ROOT_PATH <path>, or /ks:setup)" >&2
     echo "Run ./init to configure the project root path." >&2
     exit 1
 fi

@@ -8,11 +8,11 @@
 // misses hit Slack (needs `users:read` / `channels:read` etc.), and those are
 // written back. Note text in the DB is never rewritten — substitution is render-time.
 // Names are stored bare (no @/# sigil); the client adds the sigil per mention type.
-import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { NextResponse } from 'next/server';
 import { getSlackNames, putSlackNames } from '@/lib/serverdb';
+import { loadDataEnv } from '@/lib/envfile';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,27 +22,6 @@ function dataDir(): string {
     process.env.CLAUDE_PLUGIN_DATA ||
     join(homedir(), '.claude', 'plugins', 'data', 'ks-flow-karmasuite')
   );
-}
-
-function loadEnvFile(path: string): void {
-  let raw: string;
-  try {
-    raw = readFileSync(path, 'utf8');
-  } catch {
-    return;
-  }
-  for (const line of raw.split('\n')) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const eq = t.indexOf('=');
-    if (eq < 0) continue;
-    const key = t.slice(0, eq).trim();
-    if (!key || process.env[key] !== undefined) continue;
-    let val = t.slice(eq + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
-      val = val.slice(1, -1);
-    process.env[key] = val;
-  }
 }
 
 interface SlackUser {
@@ -73,7 +52,7 @@ async function fetchName(token: string, id: string): Promise<string | null> {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
-  loadEnvFile(join(dataDir(), '.env'));
+  loadDataEnv(join(dataDir(), '.env'));
   let body: { ids?: unknown };
   try {
     body = await req.json();

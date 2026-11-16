@@ -8,7 +8,8 @@
     "start-project": "npx tsx ks-start-project.ts",
     "slack": "npx tsx slack-cli.ts",
     "build": "tsc",
-    "grain": "npx tsx grain-cli.ts"
+    "grain": "npx tsx grain-cli.ts",
+    "test": "node --import tsx --test 'lib/**/*.spec.ts'"
   },
   "bin": {
     "linear-cli": "./dist/linear-cli.js",

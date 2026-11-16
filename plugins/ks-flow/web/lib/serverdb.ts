@@ -13,30 +13,10 @@ import PocketBase from 'pocketbase';
 import { isNetworkError, outboxEntries, overlay, withTimeout, writeOrQueue, type StoreOp } from './outbox';
 import { readScopeCache } from './storeCache';
 import type { BriefingItemDoc, MasterEventDoc, ReminderDoc } from './types';
+import { loadDataEnv } from '@/lib/envfile';
 
 const REMINDERS = 'reminders';
 const SLACK_NAMES = 'slack_names';
-
-function loadEnvFile(path: string): void {
-  let raw: string;
-  try {
-    raw = readFileSync(path, 'utf8');
-  } catch {
-    return;
-  }
-  for (const line of raw.split('\n')) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const eq = t.indexOf('=');
-    if (eq < 0) continue;
-    const key = t.slice(0, eq).trim();
-    if (!key || process.env[key] !== undefined) continue;
-    let val = t.slice(eq + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
-      val = val.slice(1, -1);
-    process.env[key] = val;
-  }
-}
 
 export interface ServerConfig {
   projectId: string;
@@ -55,7 +35,7 @@ export function serverConfig(): ServerConfig {
     process.env.KS_FLOW_DATA ||
     process.env.CLAUDE_PLUGIN_DATA ||
     join(homedir(), '.claude', 'plugins', 'data', 'ks-flow-karmasuite');
-  loadEnvFile(join(dataDir, '.env'));
+  loadDataEnv(join(dataDir, '.env'));
   let projectId = '';
   try {
     projectId = JSON.parse(readFileSync(join(dataDir, 'project.conf'), 'utf8')).projectId ?? '';

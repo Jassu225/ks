@@ -1,5 +1,7 @@
 # ks-agent-limit
 
+> **Disabled — not maintained.** `defaultEnabled: false`, left out of the `ks-suite` bundle and of `ks-setup`; `ks-setup doctor` warns when it is enabled. The code is kept unchanged.
+
 Caps how many Claude sessions and agents run at once on this machine. Every open session holds a slot, idle or not, and so does every live agent: subagents, teammates, forks and workflow agents. The default limit is 8. When a spawn would go past it, the plugin refuses the spawn and tells you, and the model waits and tries again.
 
 ## How it counts

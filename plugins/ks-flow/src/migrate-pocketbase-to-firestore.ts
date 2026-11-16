@@ -23,7 +23,7 @@
 import PocketBase from 'pocketbase';
 import { join } from 'node:path';
 import { dataDir, loadConfig, readProjectConf, type Config } from './lib/config.js';
-import { loadEnvFile } from './lib/envfile.js';
+import { loadDataEnv } from './lib/envfile.js';
 import { createPocketbaseProvider } from './lib/db/providers/pocketbase.js';
 import { createFirestoreProvider, directFirestoreStore } from './lib/db/providers/firestore.js';
 import type { StoreOp } from './lib/db/outbox.js';
@@ -44,7 +44,7 @@ interface Coll {
 }
 
 async function main(): Promise<void> {
-  loadEnvFile(join(dataDir(), '.env'));
+  loadDataEnv(join(dataDir(), '.env'));
   const conf = readProjectConf();
   if (!conf) throw new Error(`no project.conf in ${dataDir()} — run ks-flow start once first`);
   const projectId = conf.projectId;

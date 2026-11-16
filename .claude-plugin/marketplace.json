@@ -8,6 +8,20 @@
   },
   "plugins": [
     {
+      "name": "ks-suite",
+      "source": "./plugins/ks-suite",
+      "description": "Installs the KarmaSuite set in one go: ks (workflows, CLIs) and ks-flow (session board). ks-master and ks-browser are installed on their own and enabled per session by their launchers.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Jaswanth Sai Sattenapalli"
+      },
+      "repository": "https://github.com/karmasuite/ks",
+      "keywords": [
+        "karmasuite",
+        "bundle"
+      ]
+    },
+    {
       "name": "ks",
       "source": "./plugins/ks",
       "description": "KarmaSuite development tools and workflows",
@@ -43,7 +57,7 @@
     {
       "name": "ks-agent-limit",
       "source": "./plugins/ks-agent-limit",
-      "description": "Caps how many Claude sessions and agents run at once on this machine; a spawn past the limit is refused and reported",
+      "description": "(disabled — not maintained) Caps how many Claude sessions and agents run at once on this machine; a spawn past the limit is refused and reported",
       "version": "0.1.0",
       "author": {
         "name": "Jaswanth Sai Sattenapalli"

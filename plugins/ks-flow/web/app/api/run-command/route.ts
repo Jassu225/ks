@@ -26,6 +26,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { NextResponse } from 'next/server';
 
+/** The remove command when Settings has none: the ks plugin's worktree remover. */
+const DEFAULT_REMOVE_COMMAND = 'remove_worktree -D {{path}}';
+
 export const dynamic = 'force-dynamic';
 
 function dataDir(): string {
@@ -96,13 +99,10 @@ export async function POST(req: Request): Promise<Response> {
     removeCommand: '',
     gcsArchive: { enabled: false } as { enabled?: boolean },
   });
-  const removeCommand = typeof settings.removeCommand === 'string' ? settings.removeCommand : '';
-  if (!removeCommand.trim()) {
-    return NextResponse.json(
-      { error: 'No remove command configured. Set one in Settings.', needsConfig: true },
-      { status: 400 },
-    );
-  }
+  // Unset → the ks plugin's remove_worktree (on PATH through the KS shims),
+  // run from the project root below; no personal alias needed.
+  const configured = typeof settings.removeCommand === 'string' ? settings.removeCommand.trim() : '';
+  const removeCommand = configured || DEFAULT_REMOVE_COMMAND;
   const archiveEnabled = settings.gcsArchive?.enabled === true;
 
   const identifier = (body.identifier ?? '').trim();

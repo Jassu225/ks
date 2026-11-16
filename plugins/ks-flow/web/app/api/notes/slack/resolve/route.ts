@@ -11,13 +11,13 @@
 // (?thread_ts=) → conversations.replies on the parent, picking the matching ts.
 // Needs the matching history scope for the channel type (channels|groups|im|mpim:history)
 // — the same read scope the ks slack-cli already uses.
-import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { getProjectId, upsertReminder } from '@/lib/serverdb';
 import type { ReminderDoc } from '@/lib/types';
+import { loadDataEnv } from '@/lib/envfile';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,27 +27,6 @@ function dataDir(): string {
     process.env.CLAUDE_PLUGIN_DATA ||
     join(homedir(), '.claude', 'plugins', 'data', 'ks-flow-karmasuite')
   );
-}
-
-function loadEnvFile(path: string): void {
-  let raw: string;
-  try {
-    raw = readFileSync(path, 'utf8');
-  } catch {
-    return;
-  }
-  for (const line of raw.split('\n')) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const eq = t.indexOf('=');
-    if (eq < 0) continue;
-    const key = t.slice(0, eq).trim();
-    if (!key || process.env[key] !== undefined) continue;
-    let val = t.slice(eq + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
-      val = val.slice(1, -1);
-    process.env[key] = val;
-  }
 }
 
 interface ParsedLink {
@@ -133,7 +112,7 @@ const tsToIso = (ts: string | undefined): string | undefined => {
 };
 
 export async function POST(req: Request): Promise<NextResponse> {
-  loadEnvFile(join(dataDir(), '.env'));
+  loadDataEnv(join(dataDir(), '.env'));
   const token = (process.env.SLACK_TOKEN ?? '').trim();
   if (!token) return NextResponse.json({ error: 'SLACK_TOKEN is not set' }, { status: 400 });
 

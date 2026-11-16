@@ -38,7 +38,10 @@ export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELF="$SCRIPT_DIR/$(basename "$0")"
-KS_FLOW="$SCRIPT_DIR/../../ks-flow/bin/ks-flow"
+. "$SCRIPT_DIR/lib/ks-root.sh"
+# The ks-flow CLI: its plugin folder (clone or installed), else whatever is on PATH.
+KS_FLOW="$(ks_root ks-flow 2>/dev/null)/bin/ks-flow"
+[ -x "$KS_FLOW" ] || KS_FLOW="$(command -v ks-flow || echo ks-flow)"
 LOG="$HOME/Library/Logs/claude-ks-rc.log"
 
 squash() { tr -s ' ' <<<"$1" | sed 's/^ //; s/ $//'; }
@@ -139,9 +142,11 @@ if [ -n "$MASTER" ]; then
   [ -z "$TICKET" ] || { echo "$RC_USAGE" >&2; exit 2; }
   MASTER_DIR="${KS_MASTER_DIR:-}"
   if [ -z "$MASTER_DIR" ]; then
-    PROJECT="$(grep -E '^KS_PROJECT_ROOT_PATH=' "$SCRIPT_DIR/../.config" 2>/dev/null | head -1 | cut -d'=' -f2- || true)"
-    [ -n "$PROJECT" ] && [ -d "$PROJECT" ] || { echo "claude-ks-rc-restart: KS_PROJECT_ROOT_PATH in plugins/ks/.config is not set" >&2; exit 1; }
-    MASTER_DIR="$(node "$SCRIPT_DIR/../../ks-flow/src/lib/datadir.mjs" --cwd "$PROJECT")/master"
+    . "$SCRIPT_DIR/lib/ks-config.sh"
+    PROJECT="$(ksc_project_root || true)"
+    [ -n "$PROJECT" ] && [ -d "$PROJECT" ] || { echo "claude-ks-rc-restart: KS_PROJECT_ROOT_PATH is not set (ks-config set ks.KS_PROJECT_ROOT_PATH <path>)" >&2; exit 1; }
+    FLOW_ROOT="$(ks_root ks-flow)" || { echo "claude-ks-rc-restart: the ks-flow plugin was not found (ks-root ks-flow)" >&2; exit 1; }
+    MASTER_DIR="$(node "$FLOW_ROOT/src/lib/datadir.mjs" --cwd "$PROJECT")/master"
   fi
   # The new master uses the same dir (claude-ks-master honours KS_MASTER_DIR).
   export KS_MASTER_DIR="$MASTER_DIR"

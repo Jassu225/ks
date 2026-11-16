@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { NextResponse } from 'next/server';
+import { flowPluginRoot } from '@/lib/ksroot';
 
 export const dynamic = 'force-dynamic';
 const LABEL = 'com.ksflow.ingester';
@@ -29,7 +30,7 @@ const confPath = (): string => join(dataDir(), 'project.conf');
 // own derived dir — not the board's inherited CLAUDE_PLUGIN_DATA (the current
 // project's dir). Falls back to the current dataDir() if the shim is absent.
 function dataDirForProject(projectPath: string): string {
-  const root = process.env.KS_FLOW_PLUGIN_ROOT;
+  const root = flowPluginRoot();
   if (root) {
     try {
       const shim = join(root, 'src', 'lib', 'datadir.mjs');
@@ -139,13 +140,12 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   // Install/refresh + (re)start the daemon. Prefer the full bootstrap (builds
   // the daemon, downloads PocketBase, loads the launchd agent) when we can
-  // locate it via KS_FLOW_PLUGIN_ROOT (exported by `ks-flow open`); this is
+  // locate it via flowPluginRoot() (KS_FLOW_PLUGIN_ROOT, else the KS registry); this is
   // what makes setting a project from a fresh install actually start things.
   // Fall back to kickstart, which only works if the agent is already loaded.
   let daemon = 'not restarted';
-  const bootstrap = process.env.KS_FLOW_PLUGIN_ROOT
-    ? join(process.env.KS_FLOW_PLUGIN_ROOT, 'scripts', 'bootstrap.sh')
-    : '';
+  const pluginRoot = flowPluginRoot();
+  const bootstrap = pluginRoot ? join(pluginRoot, 'scripts', 'bootstrap.sh') : '';
   if (bootstrap && existsSync(bootstrap)) {
     try {
       execFileSync(bootstrap, [], {

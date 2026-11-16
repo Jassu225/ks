@@ -1,0 +1,24 @@
+# Every config key the KS plugins know, one per line:
+#   <namespace> <KEY> <secret|plain> <description>
+# Secrets live in the macOS Keychain (service ks.<namespace>, account <KEY>);
+# plain values in ~/.config/ks/<namespace>.env (KS_CONFIG_DIR overrides the
+# folder). Read by lib/ks-config.sh (shell), lib/env.ts (TS CLIs) and the
+# ks-config CLI. Namespaces are per tool so a CLI can later move into its own
+# plugin without its config moving.
+ks KS_PROJECT_ROOT_PATH plain Absolute path of the KarmaSuite repo checkout (quality hooks, launchers, ks-flow)
+ks KS_EXTRA_PLUGINS plain Local plugins claude-ks loads with --plugin-dir (legacy clone loading)
+linear LINEAR_API_KEY secret Linear API key (linear CLI, ks-start-ticket, ks-flow Linear sync)
+slack SLACK_TOKEN secret Slack user token, xoxp- (slack CLI, ks-flow Notes and Briefing)
+grain GRAIN_API_TOKEN secret Grain personal or workspace access token
+grain GRAIN_OAUTH_CLIENT_ID plain Grain OAuth client id (only for a distributable integration)
+grain GRAIN_OAUTH_CLIENT_SECRET secret Grain OAuth client secret
+grain GRAIN_OAUTH_REFRESH_TOKEN secret Grain OAuth refresh token
+grain GRAIN_STORAGE_DIR plain Where grain recording export writes (default ~/Documents/Grain)
+grain GRAIN_CRV_BIN plain claude-real-video binary for grain recording watch
+grain GRAIN_API_VERSION plain Grain API version header override
+grain GRAIN_API_BASE_URL plain Grain API base URL override
+gcs GCS_BUCKET plain ks-flow transcript backup bucket
+gcs GCS_PROJECT_ID plain GCP project of the backup bucket
+gcs GCS_CREDENTIALS plain Path to the backup service-account key JSON
+gcs GCS_CLIENT_EMAIL plain Backup service-account email (with GCS_PRIVATE_KEY, instead of a key file)
+gcs GCS_PRIVATE_KEY secret Backup service-account private key (with GCS_CLIENT_EMAIL)

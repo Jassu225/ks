@@ -29,7 +29,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { dataDir, loadConfig, readProjectConf } from './lib/config.js';
-import { loadEnvFile } from './lib/envfile.js';
+import { loadDataEnv } from './lib/envfile.js';
 import { listObjects, readArchiveSettings, resolveBinary, resolveGcsConfig } from './lib/archive-core.js';
 import {
   discoverCompletedTargets,
@@ -69,7 +69,7 @@ async function main(): Promise<void> {
   if (!unit || unit.startsWith('--')) fail('usage: transcript-restore --unit <identifier>', 2);
   if (workflowDirAt >= 0 && (!workflowDir || workflowDir.startsWith('--'))) fail('--workflow-dir needs a path', 2);
 
-  loadEnvFile(join(dataDir(), '.env'));
+  loadDataEnv(join(dataDir(), '.env'));
   const settings = readArchiveSettings();
   if (!settings.enabled) fail('GCS archive is disabled in settings — nothing to restore from.');
 

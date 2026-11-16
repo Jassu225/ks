@@ -1,7 +1,7 @@
 {
   "name": "ks-agent-limit",
   "version": "0.1.0",
-  "description": "Caps how many Claude sessions and agents run at once on this machine: every open session and every live agent holds a slot, and a spawn past the limit is refused and reported",
+  "description": "(disabled — not maintained) Caps how many Claude sessions and agents run at once on this machine: every open session and every live agent holds a slot, and a spawn past the limit is refused and reported",
   "author": {
     "name": "Jaswanth Sai Sattenapalli"
   },
@@ -18,5 +18,6 @@
       "description": "How long a refused spawn tells the model to wait before it checks for a free slot again.",
       "default": 3
     }
-  }
+  },
+  "defaultEnabled": false
 }

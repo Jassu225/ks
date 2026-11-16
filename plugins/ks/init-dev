@@ -1,4 +1,5 @@
 #!/bin/bash
-# Development setup — runs init with the claude-ks alias enabled
+# Development setup: init plus loading the clone as the karmasuite directory
+# marketplace (plugins read in place; edits apply on /reload-plugins).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 exec "$SCRIPT_DIR/init" --dev

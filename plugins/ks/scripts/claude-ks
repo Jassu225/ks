@@ -1,80 +1,14 @@
 #!/bin/bash
-# Launch Claude Code with ks plugin
+# claude-ks — DEPRECATED. Once the plugins are installed (ks-setup apply --dev for
+# a clone, or `claude plugin install ks-suite@karmasuite`), a plain `claude` gets
+# the same plugins, rules, task list and tokens, and so do the desktop app and
+# IDEs. Kept for one release: it still works, through scripts/ks-claude (old
+# clone setup included). Same arguments as before (--plugin / --local-plugin
+# <name>, then any claude arguments).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPO_ROOT="$(cd "$PLUGIN_DIR/../.." && pwd)"
-
-# Load env vars (LINEAR_API_KEY, SLACK_TOKEN, DEV, KS_PLUGIN_DIR, etc.)
-if [ -f "$SCRIPT_DIR/.env" ]; then
-  set -a
-  source "$SCRIPT_DIR/.env"
-  set +a
+if [ "$(jq -r '.enabledPlugins["ks@karmasuite"] // false' "$HOME/.claude/settings.json" 2>/dev/null)" = true ]; then
+  echo "claude-ks is deprecated: plain \`claude\` does the same now (claude -n <name> to name a session)." >&2
+else
+  echo "claude-ks is deprecated: run plugins/ks/init-dev (or /ks:setup) once, then use plain \`claude\`." >&2
 fi
-
-# Set CLAUDE_CODE_TASK_LIST_ID to current git branch if inside a git repo
-BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-if [ -n "$BRANCH_NAME" ]; then
-  # Replace characters valid in git branches but not in folder names
-  export CLAUDE_CODE_TASK_LIST_ID="${BRANCH_NAME//\//-}"
-fi
-
-# Default: load ks plugin
-PLUGIN_DIRS=("--plugin-dir" "$PLUGIN_DIR")
-
-# The statusline is split: scripts/statusline draws the static half (session,
-# context, branch) and the ks plugin (hooks/register.tsx) the interactive half
-# (ticket and phase pills, rate limits) under the prompt; this tells the script
-# to stop after its half.
-export KS_MOD_STATUSLINE=1
-
-# Extra local plugins to load alongside ks, enabled via .env (sourced above):
-#   KS_EXTRA_PLUGINS="ks-flow"      # space-separated plugins/<name> dirs
-# Modular — list any plugin here and it's added to the same `claude` launch.
-for extra in ${KS_EXTRA_PLUGINS:-}; do
-  if [ -d "$REPO_ROOT/plugins/$extra" ]; then
-    PLUGIN_DIRS+=("--plugin-dir" "$REPO_ROOT/plugins/$extra")
-  else
-    echo "claude-ks: KS_EXTRA_PLUGINS entry not found: plugins/$extra" >&2
-  fi
-done
-
-# Parse flags
-PASSTHROUGH_ARGS=()
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --plugin)
-      shift
-      RESOLVED=$("$SCRIPT_DIR/resolve-plugin-dir" "$1") || exit 1
-      PLUGIN_DIRS+=("--plugin-dir" "$RESOLVED")
-      shift
-      ;;
-    --local-plugin)
-      shift
-      PLUGIN_DIRS+=("--plugin-dir" "$REPO_ROOT/plugins/$1")
-      shift
-      ;;
-    *)
-      PASSTHROUGH_ARGS+=("$1")
-      shift
-      ;;
-  esac
-done
-
-# Name the session after the checkout's workflow unit (KAR-123, or a project's
-# folder name). The SessionStart hook's sessionTitle only reaches the
-# transcript; the peer name ListAgents prints and SendMessage takes is fixed at
-# startup, so only --name sets it for a new session. Skipped when the caller
-# names the session, or resumes one (it keeps its saved name).
-NAME_ARGS=()
-NAMED=
-for arg in "${PASSTHROUGH_ARGS[@]}"; do
-  case "$arg" in
-    -n|--name|--name=*|-r|--resume|--resume=*|-c|--continue) NAMED=1 ;;
-  esac
-done
-if [ -z "$NAMED" ]; then
-  SESSION_NAME=$("$SCRIPT_DIR/session-title.sh" --print 2>/dev/null)
-  [ -n "$SESSION_NAME" ] && NAME_ARGS=("--name" "$SESSION_NAME")
-fi
-
-exec claude "${PLUGIN_DIRS[@]}" --append-system-prompt-file "$PLUGIN_DIR/rules/ks-rules.md" "${NAME_ARGS[@]}" "${PASSTHROUGH_ARGS[@]}"
+exec "$SCRIPT_DIR/ks-claude" "$@"

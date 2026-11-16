@@ -1,69 +1,17 @@
 #!/bin/bash
-# ks-flow init — puts the `ks-flow` CLI on your PATH. Idempotent: re-running is
-# a no-op once the line is present. The daemon, PocketBase, and the board all
-# install/build themselves on first use (SessionStart bootstrap + `ks-flow
-# open`), so this script only handles the PATH wiring.
+# ks-flow init — ks-flow is set up together with the ks plugin it depends on:
+# this hands over to the ks plugin's setup (scripts/ks-setup). The daemon,
+# PocketBase or Firestore and the board then install themselves on first use
+# (SessionStart bootstrap + `ks-flow open`).
 set -e
-
 PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
-BIN_DIR="$PLUGIN_DIR/bin"
-
-# Make sure the CLI is runnable.
-chmod +x "$BIN_DIR/ks-flow" 2>/dev/null || true
-
-# Default to zsh (the documented shell); fall back to bash if that's the login shell.
-case "${SHELL:-}" in
-  *bash) RC="$HOME/.bashrc" ;;
-  *) RC="$HOME/.zshrc" ;;
-esac
-
-echo "=== Configuring PATH ==="
-if grep -qF "$BIN_DIR" "$RC" 2>/dev/null; then
-  echo "ks-flow bin already on PATH in $RC — skipping"
-else
-  # Ensure a trailing newline before appending.
-  [ -s "$RC" ] && [ -n "$(tail -c 1 "$RC" 2>/dev/null)" ] && echo "" >>"$RC"
-  echo "export PATH=\"$BIN_DIR:\$PATH\"" >>"$RC"
-  echo "Added ks-flow bin to PATH in $RC"
+chmod +x "$PLUGIN_DIR/bin/ks-flow" 2>/dev/null || true
+KS_SETUP=""
+for c in "$PLUGIN_DIR/../ks/scripts/ks-setup" "$(command -v ks-setup 2>/dev/null)"; do
+  [ -n "$c" ] && [ -x "$c" ] && { KS_SETUP="$c"; break; }
+done
+if [ -z "$KS_SETUP" ]; then
+  echo "ks not set up: ks-flow needs the ks plugin. Run plugins/ks/init (clone) or /ks:setup (installed)." >&2
+  exit 1
 fi
-
-# Register ks-flow with the ks plugin's launcher (claude-ks / claude-ks-serena),
-# which loads extra local plugins listed in KS_EXTRA_PLUGINS in its own .env.
-# Idempotent. Skipped silently if the ks plugin isn't a sibling (ks-flow can be
-# used standalone via /plugin — this only helps the `claude-ks` wrappers).
-KS_SCRIPTS="$(cd "$PLUGIN_DIR/../ks/scripts" 2>/dev/null && pwd || true)"
-if [ -n "$KS_SCRIPTS" ] && [ -f "$KS_SCRIPTS/claude-ks" ]; then
-  KS_ENV="$KS_SCRIPTS/.env"
-  echo ""
-  echo "=== Registering with claude-ks (KS_EXTRA_PLUGINS) ==="
-  if [ -f "$KS_ENV" ] && grep -q '^KS_EXTRA_PLUGINS=' "$KS_ENV"; then
-    if grep -Eq '^KS_EXTRA_PLUGINS=.*(^|[ "'\''])ks-flow([ "'\'']|$)' "$KS_ENV"; then
-      echo "ks-flow already in KS_EXTRA_PLUGINS — skipping"
-    else
-      # Append ks-flow to the existing value (strip surrounding quotes, rebuild).
-      cur="$(grep -E '^KS_EXTRA_PLUGINS=' "$KS_ENV" | head -1 | cut -d= -f2-)"
-      cur="${cur%\"}"; cur="${cur#\"}"; cur="${cur%\'}"; cur="${cur#\'}"
-      new="$(printf '%s ks-flow' "$cur" | sed -E 's/^ +//;s/ +/ /g')"
-      tmp="$KS_ENV.tmp.$$"
-      grep -v -E '^KS_EXTRA_PLUGINS=' "$KS_ENV" >"$tmp"
-      printf 'KS_EXTRA_PLUGINS="%s"\n' "$new" >>"$tmp"
-      mv "$tmp" "$KS_ENV"
-      echo "Added ks-flow to KS_EXTRA_PLUGINS in $KS_ENV"
-    fi
-  else
-    [ -f "$KS_ENV" ] && [ -s "$KS_ENV" ] && [ -n "$(tail -c 1 "$KS_ENV" 2>/dev/null)" ] && echo "" >>"$KS_ENV"
-    printf 'KS_EXTRA_PLUGINS="ks-flow"\n' >>"$KS_ENV"
-    echo "Set KS_EXTRA_PLUGINS=\"ks-flow\" in $KS_ENV"
-  fi
-fi
-
-echo ""
-echo "=== Done ==="
-echo "Run 'source $RC' (or open a new terminal) to use the 'ks-flow' command."
-echo ""
-echo "Next:"
-echo "  1. Enable the plugin and set project_path (via /plugin). db_provider"
-echo "     can stay blank → it auto-selects PocketBase (zero-config, local)."
-echo "  2. Start a Claude session in that project — SessionStart bootstrap builds"
-echo "     the daemon, downloads PocketBase, and begins ingesting."
-echo "  3. ks-flow open   # build + launch the board, then open it in the browser"
+exec "$KS_SETUP" apply "$@"

@@ -5,6 +5,16 @@
   "hooks": {
     "SessionStart": [
       {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/ensure-setup.sh\"",
+            "timeout": 300
+          }
+        ]
+      },
+      {
         "matcher": "startup|resume|clear",
         "hooks": [
           {
@@ -43,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/protect-neon-branch.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/protect-neon-branch.sh\"",
             "timeout": 5
           }
         ]
@@ -91,12 +101,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/quality-format.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/quality-format.sh\"",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/quality-lint.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/quality-lint.sh\"",
             "timeout": 60
           }
         ]
@@ -118,12 +128,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/quality-format.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/quality-format.sh\"",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/quality-lint.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/quality-lint.sh\"",
             "timeout": 60
           }
         ]
@@ -147,6 +157,17 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/time-log.sh\"",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-create.sh\"",
+            "timeout": 900
           }
         ]
       }

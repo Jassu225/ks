@@ -1,5 +1,17 @@
 # Releases
 
+## 2026-11-15
+
+- **One setup for a clone and for an install.** In the KarmaSuite checkout, `claude plugin install --scope local ks-suite@karmasuite` (per project: the switch is in that checkout's gitignored `.claude/settings.local.json`; `ks-setup apply` copies it into existing worktrees, `create-worktree` into new ones) + `/ks:setup`, or `plugins/ks/init-dev` (loads the clone as the `karmasuite` directory marketplace, read in place). Both end in the state `ks-setup doctor` checks. A plain `claude` — and the desktop app, IDEs — then gets the plugins, the KS rules (SessionStart context), a task list per worktree (`create-worktree` writes it into `.claude/settings.local.json`) and the tokens. `claude-ks` is deprecated (one release); the launchers run `scripts/ks-claude`.
+  - **`ks-setup apply` only lists what is still missing** (the fixes of the doctor checks that fail). `ks-config` stores a secret with a read-back check, and `ks-config list` / `doctor` count an empty Keychain value as unset.
+  - **Config per tool, tokens in the Keychain:** `ks-config list|get|set|secret|unset|import-legacy` (and `/ks:config`). Secrets: Keychain service `ks.<namespace>`; plain values: `~/.config/ks/<namespace>.env`. Lookup: env → store → the old `scripts/.env` / `.config`, which keep working until `ks-config import-legacy`. ks-flow reads tokens from the same store under its data `.env`, so they're set once.
+  - **`ks-setup doctor|apply|claude-settings|store`** (and `/ks:setup`): tool checks, `~/.local/bin` shims with a PATH line in the right shell file, sandbox excludes, deny rules on the agent running `security` (the sandbox doesn't block the Keychain; `doctor` check `secrets:deny`), ks-flow's store. `init`, `init-dev` and ks-flow's `init` are thin wrappers.
+  - **Plugins find each other by name:** `ks-root <plugin>` (`~/.config/ks/plugins.json`, recorded by each plugin's SessionStart, then `claude plugin list` `readFromFolder`). No more `../ks-flow` paths in the launchers or the daemon.
+  - **Dependencies:** ks-flow → ks; ks-master → ks, ks-flow; ks-browser → ks. New `ks-suite` bundle (ks + ks-flow). ks-master and ks-browser are `defaultEnabled: false` and turned on per session by their launchers. **ks-agent-limit is disabled** (kept, not maintained).
+  - **Installed copies work:** the ks SessionStart hook installs the CLI dependencies into `${CLAUDE_PLUGIN_DATA}/deps`; ks-flow's bootstrap falls back to `KS_PROJECT_ROOT_PATH`, checks `node`/`jq` and the Firestore key, never moves Claude's data dir, and copies sources without `node_modules`.
+  - **`WorktreeCreate` hook:** `claude -w KAR-123` in the KarmaSuite checkout reuses the ticket's worktree or makes one with `create-worktree`; other names keep Claude's default layout. **`/ks:start-ticket`** and `ks-start-ticket --no-launch` prepare a ticket from inside a session.
+  - The board's Remove defaults to `remove_worktree -D {{path}}` (no personal alias); the schema line in `state.yaml` points at the plugin's own schema.
+
 ## 2026-11-14
 
 - **ks-flow's store moves to Firestore (GCP project `ks-flow`)**: the board, Briefing, Notes, Activity Log and backup index can now live in the `ks-flow` project's `(default)` database, the one ks-works uses for Slack tokens, instead of the local PocketBase. Its collections sit flat at the database root (`meta/project`, `workUnits`, `sessions`, `reminders`, …), with no per-project level: the GCP project holds one board.

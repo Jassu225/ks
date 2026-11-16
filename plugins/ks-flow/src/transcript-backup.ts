@@ -46,7 +46,7 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { dataDir, loadConfig, readProjectConf } from './lib/config.js';
-import { loadEnvFile } from './lib/envfile.js';
+import { loadDataEnv } from './lib/envfile.js';
 import {
   readArchiveSettings,
   resolveBinary,
@@ -219,7 +219,7 @@ async function fail(args: Args, msg: string): Promise<never> {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
-  loadEnvFile(join(dataDir(), '.env'));
+  loadDataEnv(join(dataDir(), '.env'));
   const conf = readProjectConf();
   const projectId = conf?.projectId ?? '';
   const store = createProvider(loadConfig()).backups();

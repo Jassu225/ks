@@ -9,12 +9,13 @@ if ! git rev-parse --is-inside-work-tree &>/dev/null; then
   exit 0
 fi
 
-# Only in the project the plugin is configured for (KS_PROJECT_ROOT_PATH in the
-# plugin's .config, set by ./init): its checkout or any of its worktrees, which
-# all share its git common dir. Other repos (the ks plugin repo itself) have no
-# eslint/prettier/typecheck setup for these hooks to run. No .config = no gate.
-_QF_CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.config"
-_QF_ROOT=$(grep -E '^(KS_)?PROJECT_ROOT_PATH=' "$_QF_CONFIG" 2>/dev/null | head -1 | cut -d'=' -f2-)
+# Only in the project the plugin is configured for (KS_PROJECT_ROOT_PATH, read by
+# lib/ks-config.sh: env, ~/.config/ks/ks.env, then the legacy .config): its
+# checkout or any of its worktrees, which all share its git common dir. Other
+# repos (the ks plugin repo itself) have no eslint/prettier/typecheck setup for
+# these hooks to run. Not set = no gate.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/ks-config.sh"
+_QF_ROOT="$(ksc_project_root 2>/dev/null || true)"
 if [ -n "$_QF_ROOT" ]; then
   _QF_HERE=$(cd "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)
   _QF_PROJECT=$(cd "$(git -C "$_QF_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)

@@ -4,5 +4,9 @@
   "description": "Browser testing for KarmaSuite sessions: the agent-browser MCP server, and a skill that records a test run as a short review video with title cards and chapter markers",
   "author": {
     "name": "Jaswanth Sai Sattenapalli"
-  }
+  },
+  "defaultEnabled": false,
+  "dependencies": [
+    "ks"
+  ]
 }

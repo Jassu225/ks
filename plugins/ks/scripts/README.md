@@ -4,72 +4,48 @@ CLI scripts for Linear integration and KarmaSuite workflow management.
 
 ## Setup
 
-1. Install dependencies:
-   ```bash
-   cd plugins/ks/scripts
-   npm install
-   ```
-
-2. Add your Linear API key to `.env`:
-   ```bash
-   # Edit .env file
-   LINEAR_API_KEY=lin_api_your_key_here
-   ```
-
-   Get your API key from: https://linear.app/settings/api
-
-### Loading extra plugins with `claude-ks`
-
-The `claude-ks` launcher always loads the `ks` plugin (`claude-ks-serena` does
-too, but it is retired — Serena is a normally registered MCP server now; see
-CLAUDE.md). To
-also load other local plugins (under `plugins/<name>`) on every launch, set a
-space-separated list in `.env`:
+`plugins/ks/init` (clone) or the `/ks:setup` skill (installed) — both run
+`ks-setup`. Tokens go in the Keychain, plain settings in `~/.config/ks`:
 
 ```bash
-# .env — load ks-flow alongside ks on every claude-ks invocation
-KS_EXTRA_PLUGINS="ks-flow"
+ks-config secret linear.LINEAR_API_KEY   # hidden input; also slack.SLACK_TOKEN, grain.GRAIN_API_TOKEN
+ks-config set ks.KS_PROJECT_ROOT_PATH ~/karmasuite/karmasuite
+ks-config list
 ```
 
-Each entry is added as `--plugin-dir plugins/<name>`; missing dirs are warned
-and skipped. Modular — list any plugin here, no launcher edits needed. Running
-`plugins/ks-flow/init` adds `ks-flow` to this list automatically (idempotent,
-non-destructive). One-off alternative: `claude-ks --local-plugin <name>`.
+### Setup and config tools
 
-`ks-start-ticket` / `ks-start-project` launch the new worktree session **through
-`claude-ks`** (not plain `claude`), so the worktree inherits the same plugin set
-— ks + every `KS_EXTRA_PLUGINS` entry (e.g. ks-flow, wiring its session-tracking
-and notification hooks) + `ks-rules`. A single source of truth for what loads.
-
-Both also **reuse a worktree that is already there** (`../karmasuite-worktree/{name}`)
-rather than calling `create-worktree`, which errors on an existing worktree or
-branch. The session is announced and launches after 10s, or on ENTER. For
-`ks-start-ticket` this is the reopened-ticket path: the existing `state.yaml`
-(the worktree's copy when there is one — that is where phases advance) is kept
-and only the `ticket:` block is refreshed from Linear.
-
-When the worktree was **removed** (`remove_worktree -D` deletes the local
-branch), `create-worktree` recreates the branch from `origin/<branch>` when it
-is still on GitHub — so pushed work comes back — and otherwise branches off the
-current branch as before. Unpushed commits are not recoverable this way.
-
-**ks-flow cloud backup.** When ks-flow's cloud (GCS) backup is switched on
-(`ks-flow backup-enabled` exits 0 — the board's Settings toggle):
-
-- `ks-start-ticket` checks the bucket **before it reads or writes
-  `state.yaml`** and, if it holds sessions or workflow files missing on this
-  machine, asks `Restore? [Y/n]` once. The workflow folder comes back first
-  (`ks-flow restore --unit <id> --workflow-only --workflow-dir <dir>`), so the
-  backed-up `state.yaml` (phases, PRs, `time_spent`) is the one refreshed from
-  Linear. Restore only fills in missing files, so writing first would have
-  shadowed it. The sessions and the time log come back once the worktree
-  exists (`ks-flow restore --unit <id>`, no second question), so the sessions
-  land in its transcript folder and `--resume` there lists them.
-- `remove_worktree` backs the worktree up (`ks-flow archive`) before removing
-  it, and aborts the removal if the backup fails. The board's Remove has already
-  backed up and sets `KS_FLOW_BACKED_UP=1`, which skips the second upload.
-
-With ks-flow absent or the backup off, both skip this silently.
+- **`ks-setup doctor [--json]`** — read-only check of tools, plugin folders,
+  shims and PATH, config and secrets, sandbox excludes, ks-flow store and
+  daemon. **`ks-setup apply [--dev] [--yes]`** — config folder, registry,
+  `~/.local/bin` shims, a PATH line in the shell's startup file (zsh
+  `~/.zshrc`, bash `~/.bash_profile` on macOS / `~/.bashrc`; printed when it
+  can't tell or write), deps, project path, legacy import; `--dev` loads the
+  clone as the karmasuite directory marketplace. **`ks-setup claude-settings`**
+  (alias `sandbox`) — adds the KS commands to `sandbox.excludedCommands`, the
+  deny rules `Bash(security *)` / `Bash(/usr/bin/security *)` (the sandbox does
+  not block the Keychain, so without them the agent could print a token with
+  `security find-generic-password -w`; the KS CLIs call `security` themselves
+  and are unaffected) and `env.KS_MOD_STATUSLINE` in `~/.claude/settings.json`
+  after a yes (backup
+  `settings.json.bak-ks`). **`ks-setup store …`** — ks-flow's store.
+- **`ks-config list|get|set|secret|unset|import-legacy`** — the config, per
+  tool namespace (`lib/ks-config-keys.txt`). Secrets: Keychain service
+  `ks.<namespace>`; plain values: `~/.config/ks/<namespace>.env`. Lookup:
+  real env → store → legacy `scripts/.env` / `../.config`. Readers:
+  `lib/ks-config.sh` (shell), `lib/env.ts` (TS CLIs).
+- **`ks-root <plugin>`** — a KS plugin's folder (`KS_ROOT_<NAME>` →
+  `~/.config/ks/plugins.json` → sibling folder → `claude plugin list --json`
+  `readFromFolder`/`installPath`). Never use `../<plugin>` paths.
+- **`ks-claude`** — the launcher behind `claude-ks-rc`, `claude-ks-master`,
+  `claude-ks-test` and `ks-start-ticket`: plain `claude` once the plugins are
+  installed (an on-demand plugin enabled for that session with `--settings`),
+  the old `--plugin-dir` launch before. **`claude-ks`** is a deprecated alias.
+- **Hooks:** `ensure-setup.sh` (SessionStart: registry, deps into
+  `${CLAUDE_PLUGIN_DATA}/deps` for an installed copy, the KS rules as context,
+  a setup notice) and `worktree-create.sh` (WorktreeCreate: ticket names in the
+  KarmaSuite checkout go through `create-worktree`, others get Claude's default
+  `.claude/worktrees/<name>`).
 
 ## Scripts
 

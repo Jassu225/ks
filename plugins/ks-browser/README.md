@@ -13,7 +13,7 @@ claude-ks-test            # same as: claude-ks --local-plugin ks-browser
   to `0.41.2` and run with `npx`. It drives Chrome over CDP with compact
   accessibility snapshots and `@eN` refs, which take far fewer tokens than full
   page dumps. Tools are `mcp__plugin_ks-browser_agent-browser__agent_browser_*`.
-  - **One browser per checkout:** the launcher sets `AGENT_BROWSER_SESSION`
+  - **One browser per checkout:** the MCP server script (`scripts/agent-browser-mcp`) sets `AGENT_BROWSER_SESSION`
     to `ks-<checkout folder>` (a long folder name is cut to 15 characters
     plus a hash, because agent-browser's socket path is capped at 103
     bytes), so ticket sessions testing in parallel never share a browser or

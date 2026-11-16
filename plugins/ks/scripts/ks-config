@@ -1,0 +1,182 @@
+#!/bin/bash
+# ks-config — read and change the KS plugins' config.
+#
+#   ks-config list [<ns>] [--json]     every key: namespace, secret?, where it comes from
+#                                      (env | keychain | config | legacy | unset); plain
+#                                      values are shown, secrets only as set/unset
+#   ks-config get <ns>.<KEY>           a plain value (secrets are never printed)
+#   ks-config set <ns>.<KEY> <value>   a plain value, into ~/.config/ks/<ns>.env
+#   ks-config secret <ns>.<KEY>        a secret, typed with hidden input (or piped on
+#                                      stdin), into the Keychain (service ks.<ns>)
+#   ks-config unset <ns>.<KEY>         remove from the store (not from legacy files)
+#   ks-config import-legacy [--dry-run] [--force] [--from <file> | --ks-flow-env <file>]
+#                                      copy known keys from scripts/.env, the plugin's
+#                                      .config (and ks-flow's data .env) into the store;
+#                                      prints key names only, keeps the old files
+#
+# Keys: lib/ks-config-keys.txt. Lookup order: env > store > legacy (lib/ks-config.sh).
+# Secrets go through `security` only; their values never reach stdout.
+set -euo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/ks-config.sh"
+
+die() { echo "ks-config: $*" >&2; exit 1; }
+
+# "<ns>.<KEY>" → checks it against the key list, sets NS and KEY.
+parse_ref() {
+  [[ "${1:-}" == *.* ]] || die "expected <namespace>.<KEY>, e.g. linear.LINEAR_API_KEY"
+  NS="${1%%.*}"; KEY="${1#*.}"
+  local meta; meta="$(ksc_meta "$KEY")"
+  [ -n "$meta" ] || die "unknown key $KEY (see: ks-config list)"
+  [ "${meta%% *}" = "$NS" ] || die "$KEY belongs to namespace ${meta%% *}, not $NS"
+}
+
+conf_file() { printf '%s/%s.env' "$(ksc_dir)" "$1"; }
+
+write_plain() { # ns key value
+  local f; f="$(conf_file "$1")"
+  mkdir -p "$(ksc_dir)"; chmod 700 "$(ksc_dir)"
+  touch "$f"; chmod 600 "$f"
+  local tmp="$f.tmp.$$"
+  grep -v -E "^[[:space:]]*$2[[:space:]]*=" "$f" >"$tmp" || true
+  printf '%s=%s\n' "$2" "$3" >>"$tmp"
+  mv "$tmp" "$f"
+  chmod 600 "$f"
+}
+
+remove_plain() { # ns key
+  local f; f="$(conf_file "$1")"
+  [ -f "$f" ] || return 0
+  local tmp="$f.tmp.$$"
+  grep -v -E "^[[:space:]]*$2[[:space:]]*=" "$f" >"$tmp" || true
+  mv "$tmp" "$f"
+}
+
+write_secret() { # ns key value
+  # The value goes on security's command line (briefly visible in the process
+  # list, as in ks-browser's agent-browser-mcp). `security -i` with the value on
+  # stdin silently failed to store some items, so it is not used. Read back to
+  # be sure: a store that didn't happen must fail loudly.
+  "$(ksc_security)" add-generic-password -U -s "ks.$1" -a "$2" -l "ks.$1 $2" -w "$3" >/dev/null \
+    || die "could not write $2 to the Keychain (service ks.$1)"
+  [ "$(ksc_keychain_value "$1" "$2")" = "$3" ] \
+    || die "$2 did not read back from the Keychain (service ks.$1)"
+}
+
+cmd_list() {
+  local want="" json=0 a
+  for a in "$@"; do case "$a" in --json) json=1 ;; *) want="$a" ;; esac; done
+  local rows=()
+  while read -r ns key kind desc; do
+    [ -n "$want" ] && [ "$ns" != "$want" ] && continue
+    local src val=""
+    src="$(ksc_source "$key")"
+    if [ "$kind" = plain ] && [ "$src" != unset ]; then val="$(ksc_get "$key" || true)"; fi
+    if [ "$json" = 1 ]; then
+      rows+=("$(jq -nc --arg ns "$ns" --arg key "$key" --arg kind "$kind" --arg src "$src" \
+        --arg val "$val" --arg desc "$desc" \
+        '{namespace:$ns,key:$key,secret:($kind=="secret"),source:$src,set:($src!="unset"),
+          value:(if $kind=="plain" and $src!="unset" then $val else null end),description:$desc}')")
+    else
+      local shown
+      if [ "$src" = unset ]; then shown="-"
+      elif [ "$kind" = secret ]; then shown="(set)"
+      else shown="$val"; fi
+      printf '%-8s %-26s %-7s %-9s %s\n' "$ns" "$key" "$kind" "$src" "$shown"
+    fi
+  done < <(awk '!/^#/ && NF >= 3 { ns=$1; k=$2; t=$3; $1=$2=$3=""; sub(/^ +/, ""); print ns, k, t, $0 }' "$KSC_KEYS_FILE")
+  if [ "$json" = 1 ]; then printf '%s\n' "${rows[@]:-}" | jq -s 'map(select(. != null))'; fi
+}
+
+cmd_get() {
+  parse_ref "${1:-}"
+  ksc_is_secret "$KEY" && die "$NS.$KEY is a secret: values are never printed (ks-config list shows whether it is set)"
+  ksc_get "$KEY" || die "$NS.$KEY is not set"
+  echo
+}
+
+cmd_set() {
+  parse_ref "${1:-}"
+  ksc_is_secret "$KEY" && die "$NS.$KEY is a secret: use  ks-config secret $NS.$KEY  (hidden input)"
+  [ $# -ge 2 ] || die "usage: ks-config set $NS.$KEY <value>"
+  write_plain "$NS" "$KEY" "$2"
+  echo "set $NS.$KEY in $(conf_file "$NS")"
+}
+
+cmd_secret() {
+  parse_ref "${1:-}"
+  ksc_is_secret "$KEY" || die "$NS.$KEY is not a secret: use  ks-config set $NS.$KEY <value>"
+  local v=""
+  if [ -t 0 ]; then
+    read -rsp "$NS.$KEY (input hidden): " v; echo >&2
+  else
+    IFS= read -r v || true
+  fi
+  [ -n "$v" ] || die "empty value: nothing saved"
+  write_secret "$NS" "$KEY" "$v"
+  echo "saved $NS.$KEY in the Keychain (service ks.$NS)"
+}
+
+cmd_unset() {
+  parse_ref "${1:-}"
+  if ksc_is_secret "$KEY"; then
+    "$(ksc_security)" delete-generic-password -s "ks.$NS" -a "$KEY" >/dev/null 2>&1 || true
+  else
+    remove_plain "$NS" "$KEY"
+  fi
+  echo "removed $NS.$KEY from the store$([ "$(ksc_source "$KEY")" = legacy ] && echo ' (a legacy file still sets it)')"
+}
+
+cmd_import_legacy() {
+  local dry=0 extra="" force=0 only=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dry-run) dry=1 ;;
+      --force) force=1 ;;
+      --from) shift; only="${1:-}" ;;
+      --ks-flow-env) shift; extra="${1:-}" ;;
+      *) die "unknown option $1" ;;
+    esac
+    shift
+  done
+  local files=() f
+  if [ -n "$only" ]; then
+    [ -f "$only" ] || die "no such file: $only"
+    files=("$only")
+  else
+    while read -r f; do files+=("$f"); done < <(ksc_legacy_files)
+    [ -n "$extra" ] && files+=("$extra")
+  fi
+  local found=0
+  while read -r ns key kind; do
+    local v="" from=""
+    # The first file that has the key wins: ks's own scripts/.env before
+    # ks-flow's data .env, whose copy of a token may be older.
+    for f in "${files[@]}"; do
+      if v="$(ksc_file_value "$key" "$f")"; then from="$f"; break; fi
+    done
+    [ -n "$from" ] || continue
+    found=1
+    # Already in the store → leave it (the store wins over legacy anyway).
+    local cur
+    if [ "$kind" = secret ]; then cur="$(ksc_keychain_value "$ns" "$key" || true)"
+    else cur="$(ksc_file_value "$key" "$(conf_file "$ns")" || true)"; fi
+    if [ -n "$cur" ] && [ "$force" = 0 ]; then echo "skip   $ns.$key (already in the store; --force overwrites)"; continue; fi
+    if [ "$dry" = 1 ]; then echo "would  $ns.$key ← $from"; continue; fi
+    if [ "$kind" = secret ]; then write_secret "$ns" "$key" "$v"; echo "import $ns.$key → Keychain (from $from)"
+    else write_plain "$ns" "$key" "$v"; echo "import $ns.$key → $(conf_file "$ns") (from $from)"; fi
+  done < <(awk '!/^#/ && NF >= 3 { print $1, $2, $3 }' "$KSC_KEYS_FILE")
+  [ "$found" = 1 ] || echo "nothing to import (no known keys in: ${files[*]})"
+  [ "$dry" = 1 ] || echo "The old files are untouched; delete them once everything works."
+}
+
+sub="${1:-list}"; [ $# -gt 0 ] && shift
+case "$sub" in
+  list) cmd_list "$@" ;;
+  get) cmd_get "$@" ;;
+  set) cmd_set "$@" ;;
+  secret) cmd_secret "$@" ;;
+  unset) cmd_unset "$@" ;;
+  import-legacy) cmd_import_legacy "$@" ;;
+  -h|--help|help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command $sub (try: ks-config help)" ;;
+esac

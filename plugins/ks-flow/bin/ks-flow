@@ -92,7 +92,7 @@ case "$cmd" in
       # so clear the source dirs first: a route or component deleted upstream
       # would otherwise stay in the build (as /api/linear-refresh did).
       rm -rf "$WEB/app" "$WEB/components" "$WEB/lib"
-      cp -R "$PLUGIN_ROOT/web/." "$WEB/"
+      rsync -a --exclude node_modules --exclude .next "$PLUGIN_ROOT/web/" "$WEB/"
       ( cd "$WEB" && npm install --no-audit --no-fund --cache "$DATA_DIR/.npm" && npm run build )
     fi
 

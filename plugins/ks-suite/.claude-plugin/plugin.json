@@ -1,0 +1,9 @@
+{
+  "name": "ks-suite",
+  "version": "1.0.0",
+  "description": "Installs the KarmaSuite set in one go: ks (workflows, CLIs) and ks-flow (session board). ks-master and ks-browser are installed on their own and enabled per session by their launchers.",
+  "author": {
+    "name": "Jaswanth Sai Sattenapalli"
+  },
+  "dependencies": ["ks", "ks-flow"]
+}

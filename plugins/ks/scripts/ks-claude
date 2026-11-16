@@ -1,0 +1,107 @@
+#!/bin/bash
+# ks-claude — start `claude` for the KS launchers (claude-ks-rc, claude-ks-master,
+# claude-ks-test, ks-start-ticket). Not something to type: a plain `claude` is
+# the normal way once the plugins are installed.
+#
+#   ks-claude [--local-plugin <name>]… [--plugin <name>]… [claude args…]
+#
+# Installed plugins (ks@karmasuite enabled in ~/.claude/settings.json): runs
+# plain `claude`. The plugins, the KS rules (SessionStart context), the task
+# list (the worktree's settings.local.json) and the tokens (Keychain) come
+# from the plugin system; an on-demand plugin (ks-master, ks-browser) is turned
+# on for this session only with --settings enabledPlugins.
+#
+# Not installed yet (the old clone setup): the legacy launch — --plugin-dir for
+# ks, KS_EXTRA_PLUGINS and each --local-plugin, the rules as
+# --append-system-prompt-file, and the legacy scripts/.env exported.
+#
+# Both: CLAUDE_CODE_TASK_LIST_ID from the branch when unset, KS_MOD_STATUSLINE=1,
+# and --name from the checkout's workflow unit unless the caller names or
+# resumes the session.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+. "$SCRIPT_DIR/lib/ks-config.sh"
+. "$SCRIPT_DIR/lib/ks-root.sh"
+MARKETPLACE=karmasuite
+SETTINGS="$HOME/.claude/settings.json"
+
+enabled() { [ "$(jq -r --arg id "$1@$MARKETPLACE" '.enabledPlugins[$id] // false' "$SETTINGS" 2>/dev/null)" = true ]; }
+installed() {
+  claude plugin list --json 2>/dev/null | jq -e --arg id "$1@$MARKETPLACE" 'any(.[]?; .id == $id)' >/dev/null 2>&1
+}
+
+ON_DEMAND=()
+PASSTHROUGH=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --local-plugin|--plugin) shift; ON_DEMAND+=("$1"); shift ;;
+    *) PASSTHROUGH+=("$1"); shift ;;
+  esac
+done
+
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+[ -n "${CLAUDE_CODE_TASK_LIST_ID:-}" ] || { [ -n "$BRANCH_NAME" ] && export CLAUDE_CODE_TASK_LIST_ID="${BRANCH_NAME//\//-}"; }
+# The statusline is split: scripts/statusline draws the static half and the ks
+# mod (hooks/register.tsx) the interactive half; this tells the script to stop
+# after its half. (ks-setup claude-settings also sets it in settings env.)
+export KS_MOD_STATUSLINE=1
+
+ARGS=()
+if enabled ks; then
+  # Installed: only the on-demand plugins need anything.
+  SESSION_PLUGINS="{}"
+  for p in "${ON_DEMAND[@]}"; do
+    if installed "$p"; then
+      SESSION_PLUGINS="$(jq -c --arg id "$p@$MARKETPLACE" '.[$id] = true' <<<"$SESSION_PLUGINS")"
+    elif root="$(ks_root "$p")"; then
+      ARGS+=(--plugin-dir "$root")
+    else
+      echo "ks-claude: plugin $p not found (claude plugin install $p@$MARKETPLACE)" >&2
+    fi
+  done
+  [ "$SESSION_PLUGINS" = "{}" ] || ARGS+=(--settings "{\"enabledPlugins\":$SESSION_PLUGINS}")
+  # The ks SessionStart hook adds the KS rules as context for any client; a
+  # launched session also gets them as system prompt, as before (the hook then
+  # skips them).
+  ARGS+=(--append-system-prompt-file "$PLUGIN_DIR/rules/ks-rules.md")
+  export KS_RULES_APPENDED=1
+else
+  # Legacy clone launch. The old scripts/.env (tokens included) is exported as
+  # before, so nothing breaks before `ks-config import-legacy`.
+  if [ -f "$SCRIPT_DIR/.env" ]; then set -a; . "$SCRIPT_DIR/.env"; set +a; fi
+  ksc_export_plain
+  ARGS+=(--plugin-dir "$PLUGIN_DIR")
+  # An on-demand plugin's own dependencies load first (ks-master needs ks-flow),
+  # else Claude disables it.
+  DEPS=()
+  for p in "${ON_DEMAND[@]}"; do
+    root="$(ks_root "$p")" || continue
+    while read -r d; do [ -n "$d" ] && DEPS+=("$d"); done \
+      < <(jq -r '(.dependencies // [])[] | if type == "string" then sub("@.*$"; "") else .name end' "$root/.claude-plugin/plugin.json" 2>/dev/null)
+  done
+  SEEN=" ks "
+  for extra in ${KS_EXTRA_PLUGINS:-} "${DEPS[@]}" "${ON_DEMAND[@]}"; do
+    case "$SEEN" in *" $extra "*) continue ;; esac
+    SEEN="$SEEN$extra "
+    if enabled "$extra"; then continue; fi # installed too: don't load it twice
+    if root="$(ks_root "$extra")"; then ARGS+=(--plugin-dir "$root")
+    else echo "ks-claude: plugin not found: $extra" >&2; fi
+  done
+  ARGS+=(--append-system-prompt-file "$PLUGIN_DIR/rules/ks-rules.md")
+  # The ks SessionStart hook would add the same rules as context: skip it.
+  export KS_RULES_APPENDED=1
+fi
+
+# Name the session after the checkout's workflow unit (KAR-123, or a project's
+# folder name). Only --name sets the peer name ListAgents prints and SendMessage
+# takes. Skipped when the caller names the session, or resumes one.
+NAMED=
+for arg in "${PASSTHROUGH[@]}"; do
+  case "$arg" in -n|--name|--name=*|-r|--resume|--resume=*|-c|--continue) NAMED=1 ;; esac
+done
+if [ -z "$NAMED" ]; then
+  SESSION_NAME=$("$SCRIPT_DIR/session-title.sh" --print 2>/dev/null)
+  [ -n "$SESSION_NAME" ] && ARGS+=(--name "$SESSION_NAME")
+fi
+
+exec claude "${ARGS[@]}" "${PASSTHROUGH[@]}"

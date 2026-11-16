@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { NextResponse } from 'next/server';
+import { loadDataEnv } from '@/lib/envfile';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,27 +25,6 @@ const settingsPath = (): string => join(dataDir(), 'board-settings.json');
 
 // Pull $dataDir/.env into process.env (real env wins) so we can tell whether
 // GCS_BUCKET is configured via env — the bucket is env-aware in the UI.
-function loadEnvFile(path: string): void {
-  let raw: string;
-  try {
-    raw = readFileSync(path, 'utf8');
-  } catch {
-    return;
-  }
-  for (const line of raw.split('\n')) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const eq = t.indexOf('=');
-    if (eq < 0) continue;
-    const key = t.slice(0, eq).trim();
-    if (!key || process.env[key] !== undefined) continue;
-    let val = t.slice(eq + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
-      val = val.slice(1, -1);
-    process.env[key] = val;
-  }
-}
-
 interface GcsArchive {
   enabled: boolean;
   bucket: string;
@@ -172,7 +152,7 @@ function read(): Settings {
 }
 
 export async function GET(): Promise<NextResponse> {
-  loadEnvFile(join(dataDir(), '.env'));
+  loadDataEnv(join(dataDir(), '.env'));
   // When GCS_BUCKET is set in .env it WINS over the stored value (see
   // archive-core.ts resolveGcsConfig); the UI shows it read-only in that case.
   const gcsBucketEnv = (process.env.GCS_BUCKET ?? '').trim();

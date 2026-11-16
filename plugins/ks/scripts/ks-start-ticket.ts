@@ -24,7 +24,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 
-import { loadEnv } from './lib/env.js';
+import { loadEnv, SCRIPTS_DIR } from './lib/env.js';
 import { getLinearClient, getPriorityName } from './lib/linear-client.js';
 import type { SlackThread, Phase, PrEntry, TimeSpent } from './lib/workflow-types.js';
 import { parseSlackMessageUrl } from './lib/slack.js';
@@ -158,8 +158,12 @@ async function getProjectThread(issue: Issue): Promise<SlackThread | null> {
     return thread;
   }
 
-  // Not found -- ask the user
+  // Not found -- ask the user (no terminal, e.g. the /ks:start-ticket skill: skip)
   console.log(chalk.gray('  No Slack thread found in ticket attachments.'));
+  if (!process.stdin.isTTY) {
+    console.log(chalk.gray('  No terminal to ask in: skipped (add it to state.yaml later).'));
+    return null;
+  }
   const { slackUrl } = await inquirer.prompt([{
     type: 'input',
     name: 'slackUrl',
@@ -313,8 +317,7 @@ function formatYaml(state: TicketWorkflowState): string {
   const formattedLines: string[] = [];
 
   // Add schema reference for editor validation
-  const homeDir = process.env.HOME || '~';
-  formattedLines.push(`# yaml-language-server: $schema=${homeDir}/.claude/plugins/ks/scripts/ticket-state.schema.json`);
+  formattedLines.push(`# yaml-language-server: $schema=${path.join(SCRIPTS_DIR, 'ticket-state.schema.json')}`);
   formattedLines.push('');
   formattedLines.push('# Linear Ticket Information');
 
@@ -388,14 +391,20 @@ function formatYaml(state: TicketWorkflowState): string {
 // ============================================================================
 
 async function main() {
-  const args = process.argv.slice(2);
+  // --no-launch: prepare the ticket and its worktree, then print KS_WORKTREE= and
+  // KS_PROMPT= instead of starting Claude (the /ks:start-ticket skill starts it).
+  const args = process.argv.slice(2).filter((a) => {
+    if (a !== '--no-launch') return true;
+    process.env.KS_NO_LAUNCH = '1';
+    return false;
+  });
 
   if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
     console.log(`
 ${chalk.bold('KS Start Ticket')} - Initialize a KarmaSuite workflow from a single Linear ticket
 
 ${chalk.cyan('Usage:')}
-  npx tsx ks-start-ticket.ts <issue-url> [output-path]
+  ks-start-ticket <issue-url> [output-path] [--no-launch]
 
 ${chalk.cyan('Arguments:')}
   issue-url      Linear issue URL (e.g., https://linear.app/karmasuite/issue/KAR-123/fix-bug)
@@ -408,7 +417,8 @@ ${chalk.cyan('What it does:')}
   1. Fetches issue info from Linear
   2. Generates a workflow state YAML file
   3. Creates a git worktree for the ticket
-  4. Launches Claude-KS in the worktree
+  4. Starts Claude in the worktree, named after the ticket
+     (--no-launch: prints KS_WORKTREE= and KS_PROMPT= instead)
 
 ${chalk.cyan('Reopened tickets:')}
   If a state.yaml already exists at the output path, the ticket block is

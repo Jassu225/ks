@@ -6,6 +6,7 @@
 // present in the real environment win (so userConfig / launchd plist override
 // the file). Supports KEY=VALUE, optional quotes, and # comments.
 import { readFileSync } from 'node:fs';
+import { loadKsLayer } from './ksconfig.js';
 
 export function loadEnvFile(path: string): void {
   let raw: string;
@@ -30,4 +31,14 @@ export function loadEnvFile(path: string): void {
     }
     process.env[key] = val;
   }
+}
+
+/**
+ * The daemon's and CLIs' config: <dataDir>/.env first (real env still wins),
+ * then the shared KS store (Keychain + ~/.config/ks, see lib/ksconfig.ts) for
+ * whatever is still missing — tokens are set once for every KS plugin.
+ */
+export function loadDataEnv(path: string): void {
+  loadEnvFile(path);
+  loadKsLayer();
 }

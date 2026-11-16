@@ -304,6 +304,20 @@ else
     info ".claude/settings.local.json not found in main repo, skipping"
 fi
 
+# A task list per worktree, set where every client reads it: the worktree's own
+# settings env (plain `claude`, the desktop app and IDEs; claude-ks used to
+# export it at launch). Named after the branch, as before.
+mkdir -p "${WORKTREE_PATH}/.claude"
+_SL="${WORKTREE_PATH}/.claude/settings.local.json"
+[[ -s "$_SL" ]] || echo '{}' >"$_SL"
+if jq --arg id "${NEW_BRANCH_NAME//\//-}" '.env.CLAUDE_CODE_TASK_LIST_ID = $id' "$_SL" >"$_SL.tmp"; then
+    mv "$_SL.tmp" "$_SL"
+    success "Task list for this worktree: ${NEW_BRANCH_NAME//\//-}"
+else
+    rm -f "$_SL.tmp"
+    warn "Couldn't set CLAUDE_CODE_TASK_LIST_ID in ${_SL}"
+fi
+
 # Install dependencies
 info "Installing dependencies with pnpm..."
 if ! (cd "$WORKTREE_PATH" && pnpm install); then

@@ -34,6 +34,7 @@ import {
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchOutcome, type EventOutcome } from './master-events.js';
+import { ksPluginRoot } from './ksroot.js';
 
 // ── the commands the daemon runs (plugins/ks/scripts) ──────────────────────
 // Kept here, in one place: part D owns these scripts and their flags.
@@ -401,17 +402,20 @@ export function pidIsClaude(pid: number): boolean {
 let scriptsDirCache: string | null = null;
 
 /**
- * plugins/ks/scripts, where claude-ks-master and claude-ks-rc-restart live.
- * KS_SCRIPTS_DIR overrides; else walk up from this file (dist/lib/master.js or
- * lib/master.ts in plugins/ks-flow/src) to a dir holding ks/scripts; else ask
- * the login shell (ks init puts the scripts on PATH; launchd's PATH lacks it).
- * A miss is not cached: the next action looks again.
+ * The ks plugin's scripts/, where claude-ks-master and claude-ks-rc-restart live.
+ * KS_SCRIPTS_DIR overrides; else the ks plugin's folder (lib/ksroot.ts: the
+ * registry, then `claude plugin list`; clone or installed); else walk up from
+ * this file to a dir holding ks/scripts (running from the repo); else ask the
+ * login shell (the commands on PATH). A miss is not cached: the next action
+ * looks again.
  */
 export function ksScriptsDir(): string | null {
   if (scriptsDirCache) return scriptsDirCache;
   const has = (d: string) => existsSync(join(d, MASTER_START_CMD[0]));
   const env = process.env.KS_SCRIPTS_DIR;
   if (env && has(env)) return (scriptsDirCache = env);
+  const ksRoot = ksPluginRoot('ks');
+  if (ksRoot && has(join(ksRoot, 'scripts'))) return (scriptsDirCache = join(ksRoot, 'scripts'));
   let dir = dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 8; i++) {
     const cand = join(dir, 'ks', 'scripts');

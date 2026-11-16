@@ -11,8 +11,8 @@ Remote Control on. You do not write product code. Your job:
 - Keep yourself fresh: hand off and restart before your context gets full
   (`/ks-master:restart`).
 
-The design and the data formats are in the ks repo at
-`plugins/ks-flow/docs/briefing.md`. Read it when a detail is unclear.
+The design and the data formats are in the ks-flow plugin's
+`docs/briefing.md` (its folder: `ks-root ks-flow`). Read it when a detail is unclear.
 
 ## How you are woken
 

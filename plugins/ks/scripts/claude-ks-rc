@@ -44,7 +44,7 @@ fi
 
 # `--remote-control [name]` takes the next word as its name, so the name is
 # always given and the prompt comes after it.
-ARGS=("$SCRIPT_DIR/claude-ks" --remote-control "$NAME")
+ARGS=("$SCRIPT_DIR/ks-claude" --remote-control "$NAME")
 [ -z "$PROMPT" ] || ARGS+=("$PROMPT")
 [ ${#EXTRA[@]} -eq 0 ] || ARGS+=("${EXTRA[@]}")
 

@@ -1,0 +1,408 @@
+#!/bin/bash
+# ks-setup — set up and check the KS plugins on this machine. One tool behind
+# both entry points: plugins/ks/init (a clone) and the /ks:setup skill (an
+# install). Idempotent; nothing that needs a secret or your consent happens
+# without asking.
+#
+#   ks-setup doctor [--json]       read-only check of everything; exit 1 on errors
+#   ks-setup apply [--dev] [--yes] folders, registry, shims, PATH line, deps, project
+#                                  path, legacy import; --dev also loads the clone
+#                                  as a directory marketplace (claude plugin ...)
+#   ks-setup claude-settings [--yes]   (alias: sandbox) add the sandbox excludedCommands,
+#                                  the deny rules on the agent running `security`, and
+#                                  env KS_MOD_STATUSLINE to ~/.claude/settings.json
+#                                  (backup: settings.json.bak-ks)
+#   ks-setup store pocketbase | firestore --project <gcp id> --credentials <key.json>
+#                                  ks-flow's store, written to its per-project .env
+#
+# Without a terminal (from Claude's Bash tool) every question becomes a printed
+# `!` command to run instead.
+set -uo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib/ks-config.sh"
+. "$SCRIPT_DIR/lib/ks-root.sh"
+KS_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SETTINGS="$HOME/.claude/settings.json"
+LOCAL_BIN="$HOME/.local/bin"
+MARKETPLACE=karmasuite
+# Commands the sandbox must not run (they need the Keychain, tmux, git worktrees,
+# the network or files outside the project); each also as "<cmd> *".
+EXCLUDED=(linear slack grain gh ks-flow ks-config ks-setup ks-time ks-start-ticket create-worktree
+  tmux claude-ks-master claude-ks-rc claude-ks-rc-restart quit-chrome mem-info)
+# Deny rules so the agent can't read the KS tokens out of the Keychain itself
+# (`security find-generic-password -w`): the sandbox doesn't block the Keychain.
+# They match only the command line the agent writes, so the KS CLIs, which call
+# `security` themselves, keep working. A guard against accidents and casual
+# prompt injection, not a wall: a wrapped call (sh -c, a script) gets past it.
+DENY=('Bash(security *)' 'Bash(/usr/bin/security *)')
+# Commands that get a ~/.local/bin shim (plugin:command).
+SHIMS=(ks:linear ks:slack ks:grain ks:ks-time ks:ks-config ks:ks-setup ks:ks-root ks:claude-ks ks:ks-claude
+  ks:claude-ks-master ks:claude-ks-rc ks:claude-ks-rc-restart ks:claude-ks-test ks:ks-master-view
+  ks:remove_worktree ks:create-worktree ks:ks-start-ticket ks:ks-start-project ks:quality-typecheck.sh
+  ks:spec_metadata.sh ks:deploy.sh ks:pre-deploy.sh ks:quit-chrome ks:mem-info ks:resolve-plugin-dir
+  ks-flow:ks-flow)
+YES=0
+interactive() { [ "$YES" = 0 ] && [ -t 0 ] && [ -t 1 ]; }
+ask() { # question → 0 for yes
+  [ "$YES" = 1 ] && return 0
+  interactive || return 1
+  local a; read -rp "$1 [y/N]: " a; [[ "$a" =~ ^[Yy] ]]
+}
+say() { printf '%s\n' "$*"; }
+
+# ── shell rc file (approval note: zsh → ~/.zshrc; bash → ~/.bash_profile on macOS, else ~/.bashrc)
+rc_file() {
+  case "$(basename "${SHELL:-}")" in
+    zsh) echo "$HOME/.zshrc" ;;
+    bash) if [ "$(uname -s)" = Darwin ]; then echo "$HOME/.bash_profile"; else echo "$HOME/.bashrc"; fi ;;
+    *) return 1 ;;
+  esac
+}
+
+# ── doctor ──────────────────────────────────────────────────────────────────
+CHECKS=()
+check() { # id level(error|warn|info) ok(0|1) message [fix]
+  CHECKS+=("$(jq -nc --arg id "$1" --arg level "$2" --argjson ok "$3" --arg msg "$4" --arg fix "${5:-}" \
+    '{id:$id,level:$level,ok:($ok==1),message:$msg,fix:(if $fix=="" then null else $fix end)}')")
+}
+have() { command -v "$1" >/dev/null 2>&1; }
+
+load_mode() {
+  local en="" src="" f proj
+  # Enabled at user scope, or (a per-project install) in the KS project's own
+  # .claude/settings.local.json / settings.json — the later file wins, as in Claude.
+  proj="$(ksc_project_root 2>/dev/null || true)"
+  for f in "$SETTINGS" ${proj:+"$proj/.claude/settings.json" "$proj/.claude/settings.local.json"}; do
+    local v; v="$(jq -r --arg m "$MARKETPLACE" '.enabledPlugins["ks@"+$m] // empty' "$f" 2>/dev/null)"
+    [ -n "$v" ] && en="$v"
+  done
+  src="$(jq -r --arg m "$MARKETPLACE" '.[$m].source | (.path // .url // .repo // empty)' \
+    "$HOME/.claude/plugins/known_marketplaces.json" 2>/dev/null)"
+  if [ "$en" = true ] && [ -n "$src" ] && [ -d "$src" ]; then echo dev-marketplace
+  elif [ "$en" = true ]; then echo marketplace
+  else echo launcher; fi
+}
+
+doctor() {
+  local json=0; [ "${1:-}" = --json ] && json=1
+  CHECKS=()
+  if have node; then
+    local v; v="$(node -p 'process.versions.node' 2>/dev/null)"
+    if node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>18||(a===18&&b>=17)?0:1)'
+    then check tool:node error 1 "node $v"; else check tool:node error 0 "node $v is older than 18.17" "brew install node"; fi
+  else check tool:node error 0 "node is missing" "brew install node"; fi
+  local t lvl
+  for t in npm:error git:error jq:error tmux:warn terminal-notifier:warn zstd:warn ffmpeg:info gh:info; do
+    lvl="${t#*:}"; t="${t%%:*}"
+    if have "$t"; then check "tool:$t" "$lvl" 1 "$t found"
+    else check "tool:$t" "$lvl" 0 "$t is missing" "brew install $([ "$t" = node ] && echo node || echo "$t")"; fi
+  done
+
+  local mode; mode="$(load_mode)"
+  case "$mode" in
+    dev-marketplace) check load info 1 "plugins load from the clone (directory marketplace $MARKETPLACE)" ;;
+    marketplace) check load info 1 "plugins installed from the $MARKETPLACE marketplace" ;;
+    *) check load warn 0 "plugins load only through claude-ks (--plugin-dir); plain claude, the desktop app and IDEs get none" \
+         "ks-setup apply --dev   (clone)  or, in your KarmaSuite checkout:  claude plugin install --scope local ks-suite@$MARKETPLACE" ;;
+  esac
+  local p root
+  for p in ks:error ks-flow:warn ks-master:info ks-browser:info; do
+    lvl="${p#*:}"; p="${p%%:*}"
+    if root="$(ks_root "$p")"; then check "plugin:$p" "$lvl" 1 "$p at $root"
+    else check "plugin:$p" "$lvl" 0 "$p not found" "in your KarmaSuite checkout: claude plugin install --scope local $p@$MARKETPLACE"; fi
+  done
+  if [ "$(jq -r --arg m "$MARKETPLACE" '.enabledPlugins["ks-agent-limit@"+$m] // false' "$SETTINGS" 2>/dev/null)" = true ] \
+    || [[ " ${KS_EXTRA_PLUGINS:-$(ksc_get KS_EXTRA_PLUGINS 2>/dev/null)} " == *" ks-agent-limit "* ]]; then
+    check plugin:ks-agent-limit warn 0 "ks-agent-limit is enabled, but it is disabled and unmaintained" \
+      "claude plugin disable ks-agent-limit@$MARKETPLACE  (and drop it from KS_EXTRA_PLUGINS)"
+  fi
+
+  if [ -d "$KS_ROOT_DIR/scripts/node_modules/tsx" ]; then check deps error 1 "ks CLI dependencies installed"
+  else check deps error 0 "ks CLI dependencies missing ($KS_ROOT_DIR/scripts/node_modules)" "cd $KS_ROOT_DIR/scripts && npm ci   (installed plugins: start a new session)"; fi
+
+  local proj; proj="$(ksc_project_root 2>/dev/null || true)"
+  if [ -n "$proj" ] && [ -d "$proj" ]; then check config:KS_PROJECT_ROOT_PATH error 1 "project: $proj ($(ksc_source KS_PROJECT_ROOT_PATH))"
+  else check config:KS_PROJECT_ROOT_PATH error 0 "KS_PROJECT_ROOT_PATH is not set" "ks-config set ks.KS_PROJECT_ROOT_PATH <karmasuite checkout>"; fi
+  local k ns src
+  for k in LINEAR_API_KEY:error SLACK_TOKEN:warn GRAIN_API_TOKEN:info; do
+    lvl="${k#*:}"; k="${k%%:*}"; ns="$(ksc_ns "$k")"; src="$(ksc_source "$k")"
+    case "$src" in
+      unset) check "config:$k" "$lvl" 0 "$k is not set" "! ks-config secret $ns.$k" ;;
+      legacy) check "config:$k" info 1 "$k set in a legacy file" "ks-config import-legacy   (moves it to the Keychain)" ;;
+      *) check "config:$k" "$lvl" 1 "$k set ($src)" ;;
+    esac
+  done
+
+  if [ -s "$(ksr_registry)" ]; then check registry info 1 "registry $(ksr_registry)"
+  else check registry info 0 "no plugin registry yet" "ks-setup apply"; fi
+
+  # Token files must not sit in a plugin folder: a marketplace install copies the
+  # whole folder (gitignored files included) into ~/.claude/plugins/cache.
+  local leaks=() lf
+  for p in ks ks-flow ks-master ks-browser; do
+    root="$(ks_root "$p" 2>/dev/null)" || continue
+    while IFS= read -r lf; do leaks+=("$lf"); done < <(find "$root" -maxdepth 3 -name '.env*' ! -name '*.example' -not -path '*/node_modules/*' 2>/dev/null)
+  done
+  while IFS= read -r lf; do leaks+=("$lf"); done < <(find "$HOME/.claude/plugins/cache/$MARKETPLACE" -name '.env*' ! -name '*.example' -not -path '*/node_modules/*' 2>/dev/null)
+  if [ ${#leaks[@]} = 0 ]; then check secrets:files error 1 "no token files in plugin folders or the plugin cache"
+  else check secrets:files error 0 "token files in plugin folders or cache: ${leaks[*]}" "move the tokens to the Keychain (ks-config import-legacy --from <file>), then delete these files"; fi
+  local missing=() s cmd
+  for s in "${SHIMS[@]}"; do cmd="${s#*:}"; [ -x "$LOCAL_BIN/$cmd" ] || have "$cmd" || missing+=("$cmd"); done
+  if [ ${#missing[@]} = 0 ]; then check path warn 1 "every KS command is on PATH"
+  else check path warn 0 "not on PATH: ${missing[*]}" "ks-setup apply"; fi
+  case ":$PATH:" in *":$LOCAL_BIN:"*) ;; *)
+    [ -d "$LOCAL_BIN" ] && check path:local-bin info 0 "$LOCAL_BIN is not on this shell's PATH" "ks-setup apply   (adds it to $(rc_file 2>/dev/null || echo 'your shell rc'))" ;;
+  esac
+
+  local ex miss=()
+  for ex in "${EXCLUDED[@]}"; do
+    jq -e --arg c "$ex" '(.sandbox.excludedCommands // []) | (index($c) != null) and (index($c + " *") != null)' "$SETTINGS" >/dev/null 2>&1 || miss+=("$ex")
+  done
+  if [ ${#miss[@]} = 0 ]; then check sandbox warn 1 "sandbox excludes every KS command"
+  else check sandbox warn 0 "sandbox does not exclude: ${miss[*]}" "! ks-setup claude-settings"; fi
+  local dn dmiss=()
+  for dn in "${DENY[@]}"; do
+    jq -e --arg r "$dn" '(.permissions.deny // []) | index($r) != null' "$SETTINGS" >/dev/null 2>&1 || dmiss+=("$dn")
+  done
+  if [ ${#dmiss[@]} = 0 ]; then check secrets:deny warn 1 "the agent may not run security (Keychain reads)"
+  else check secrets:deny warn 0 "the agent may run security and read the KS tokens (missing deny: ${dmiss[*]})" "! ks-setup claude-settings"; fi
+
+  local flow; flow="$(ks_root ks-flow 2>/dev/null)"
+  if [ -n "$flow" ] && [ -n "$proj" ]; then
+    local dd; dd="$(node "$flow/src/lib/datadir.mjs" --project "$proj" 2>/dev/null)"
+    if [ -n "$dd" ] && [ -f "$dd/project.conf" ]; then check ks-flow:data info 1 "ks-flow data $dd"
+    else check ks-flow:data warn 0 "ks-flow has not set up $proj yet" "start a Claude session in it, or: ks-flow set-project $proj"; fi
+    local dbp="" cred="" fmode="" gproj=""
+    if [ -n "$dd" ]; then
+      dbp="$(ksc_file_value DB_PROVIDER "$dd/.env" 2>/dev/null || true)"
+      cred="$(ksc_file_value FIRESTORE_CREDENTIALS "$dd/.env" 2>/dev/null || true)"
+      fmode="$(ksc_file_value FIRESTORE_MODE "$dd/.env" 2>/dev/null || true)"
+      gproj="$(ksc_file_value FIREBASE_PROJECT_ID "$dd/.env" 2>/dev/null || true)"
+    fi
+    # The same choice the daemon makes (ks-flow src/lib/config.ts resolveDbProvider):
+    # an explicit DB_PROVIDER wins; else Firestore when a cloud project is set.
+    local how="DB_PROVIDER"
+    if [ -z "$dbp" ]; then
+      how="auto"
+      if [ "$fmode" = cloud ] && [ -n "$gproj" ]; then dbp=firestore; else dbp=pocketbase; fi
+    fi
+    if [ "$dbp" = firestore ]; then check ks-flow:store info 1 "ks-flow store: firestore${gproj:+ (project $gproj)} [$how]"
+    else check ks-flow:store info 1 "ks-flow store: $dbp [$how]"; fi
+    if [ "$dbp" = firestore ] && [ -n "$cred" ] && [ ! -r "$cred" ]; then
+      check ks-flow:firestore-key error 0 "Firestore key $cred is not readable" "ks-setup store firestore --project <id> --credentials <key.json>"
+    fi
+    if launchctl print "gui/$(id -u)/com.ksflow.ingester" >/dev/null 2>&1; then check ks-flow:daemon warn 1 "ks-flow daemon loaded"
+    else check ks-flow:daemon warn 0 "ks-flow daemon not loaded" "ks-flow start"; fi
+  fi
+  if have tmux && { [ -d /Applications/Ghostty.app ] || [ -d /System/Applications/Utilities/Terminal.app ]; }; then
+    check master info 1 "master can run (tmux + a viewer app)"
+  else check master info 0 "the master needs tmux and Ghostty or Terminal.app" "brew install tmux"; fi
+  if [ "$(jq -r '.env.KS_MOD_STATUSLINE // empty' "$SETTINGS" 2>/dev/null)" = 1 ]; then check settings:statusline info 1 "statusline split for the ks mod"
+  else check settings:statusline info 0 "env KS_MOD_STATUSLINE not set (only claude-ks set it)" "! ks-setup claude-settings"; fi
+
+  local all; all="$(printf '%s\n' "${CHECKS[@]}" | jq -s --arg mode "$mode" \
+    '{mode:$mode, errors:(map(select(.level=="error" and (.ok|not)))|length), checks:.}')"
+  if [ "$json" = 1 ]; then printf '%s\n' "$all"
+  else
+    printf '%s\n' "$all" | jq -r '"load mode: \(.mode)", (.checks[] |
+      (if .ok then "  ok   " elif .level=="error" then "  ERR  " elif .level=="warn" then "  warn " else "  info " end)
+      + .message + (if (.ok|not) and .fix then "\n         → " + .fix else "" end))'
+  fi
+  [ "$(printf '%s' "$all" | jq '.errors')" = 0 ]
+}
+
+# ── apply ───────────────────────────────────────────────────────────────────
+write_shim() { # plugin cmd fallback-root
+  local f="$LOCAL_BIN/$2" sub=bin
+  cat >"$f" <<EOF
+#!/bin/bash
+# ks shim (ks-setup apply): runs the $1 plugin's $2 from wherever the plugin is
+# now (the registry follows installs and updates), else from $3.
+r="\$(jq -r '.["$1"].root // empty' "\${KS_CONFIG_DIR:-\$HOME/.config/ks}/plugins.json" 2>/dev/null)"
+[ -x "\$r/$sub/$2" ] || r="$3"
+exec "\$r/$sub/$2" "\$@"
+EOF
+  chmod +x "$f"
+}
+
+add_path_line() {
+  local rc line="export PATH=\"\$HOME/.local/bin:\$PATH\"  # KS plugins (ks-setup)"
+  case ":$PATH:" in *":$LOCAL_BIN:"*) say "  PATH already has $LOCAL_BIN"; return ;; esac
+  if ! rc="$(rc_file)"; then
+    say "  Couldn't tell your shell (SHELL=${SHELL:-unset}). Add this to its startup file:"; say "    $line"; return
+  fi
+  if grep -qF '.local/bin' "$rc" 2>/dev/null; then say "  $rc already adds ~/.local/bin"; return; fi
+  if { [ -e "$rc" ] && [ -w "$rc" ]; } || { [ ! -e "$rc" ] && [ -w "$(dirname "$rc")" ]; }; then
+    if printf '\n%s\n' "$line" >>"$rc" 2>/dev/null; then say "  added ~/.local/bin to PATH in $rc (open a new terminal)"; return; fi
+  fi
+  say "  Couldn't write $rc. Run:"; say "    ! echo '$line' >> $rc"
+}
+
+# ── per-project plugins in worktrees ────────────────────────────────────────
+# A --scope local install lives in the checkout's own .claude/settings.local.json,
+# and a session in a worktree reads the worktree's copy. New worktrees get it from
+# create-worktree; this copies the main checkout's `…@<marketplace>` enabledPlugins
+# entries into every existing worktree of the project (other keys untouched).
+sync_worktree_plugins() {
+  local proj src ep wt f n=0
+  proj="$(ksc_project_root 2>/dev/null)" || return 0
+  src="$proj/.claude/settings.local.json"
+  [ -f "$src" ] || return 0
+  ep="$(jq -c --arg m "@$MARKETPLACE" '(.enabledPlugins // {}) | with_entries(select(.key|endswith($m)))' "$src" 2>/dev/null)"
+  [ -n "$ep" ] && [ "$ep" != "{}" ] || return 0
+  say "== plugins in the project's worktrees"
+  while read -r wt; do
+    [ -n "$wt" ] && [ "$wt" != "$proj" ] && [ -d "$wt" ] || continue
+    f="$wt/.claude/settings.local.json"
+    if [ ! -f "$f" ]; then mkdir -p "$wt/.claude" && echo '{}' >"$f"; fi
+    if jq -e --argjson ep "$ep" '(.enabledPlugins // {}) | contains($ep)' "$f" >/dev/null 2>&1; then continue; fi
+    jq --argjson ep "$ep" '.enabledPlugins = ((.enabledPlugins // {}) + $ep)' "$f" >"$f.tmp" && mv "$f.tmp" "$f" \
+      && n=$((n + 1)) && say "  enabled in $wt"
+  done < <(git -C "$proj" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+  [ "$n" = 0 ] && say "  every worktree already has them"
+  return 0
+}
+
+apply() {
+  local dev=0 a
+  for a in "$@"; do case "$a" in --dev) dev=1 ;; --yes) YES=1 ;; esac; done
+  local cfg; cfg="$(ksc_dir)"
+  say "== KS config folder: $cfg"
+  mkdir -p "$cfg" && chmod 700 "$cfg"
+  [ -f "$cfg/ks.env" ] || { cp "$SCRIPT_DIR/ks.env.example" "$cfg/ks.env" 2>/dev/null && chmod 600 "$cfg/ks.env" && say "  created $cfg/ks.env"; }
+
+  say "== plugin registry"
+  local p root
+  for p in ks ks-flow ks-master ks-browser; do
+    if root="$(ks_root "$p")"; then ks_register_root "$p" "$root"; say "  $p → $root"; fi
+  done
+
+  say "== commands on PATH ($LOCAL_BIN)"
+  mkdir -p "$LOCAL_BIN"
+  local s plug cmd
+  for s in "${SHIMS[@]}"; do
+    plug="${s%%:*}"; cmd="${s#*:}"
+    root="$(ks_root "$plug")" || continue
+    [ -x "$root/bin/$cmd" ] && write_shim "$plug" "$cmd" "$root"
+  done
+  say "  shims written"
+  add_path_line
+
+  if [ ! -d "$KS_ROOT_DIR/scripts/node_modules/tsx" ]; then
+    say "== ks CLI dependencies"
+    if [ -w "$KS_ROOT_DIR/scripts" ]; then ( cd "$KS_ROOT_DIR/scripts" && npm ci --no-audit --no-fund ) || say "  npm ci failed"
+    else say "  installed plugin: a new Claude session installs them (SessionStart)"; fi
+  fi
+
+  say "== project"
+  if ! ksc_project_root >/dev/null 2>&1; then
+    local pr=""
+    if interactive; then read -rp "  Absolute path of your KarmaSuite checkout: " pr; fi
+    if [ -n "$pr" ] && [ -d "$pr" ]; then "$SCRIPT_DIR/ks-config" set ks.KS_PROJECT_ROOT_PATH "$pr"
+    else say "  not set. Run:  ks-config set ks.KS_PROJECT_ROOT_PATH <path>"; fi
+  else say "  $(ksc_project_root)"; fi
+
+  sync_worktree_plugins
+
+  if "$SCRIPT_DIR/ks-config" import-legacy --dry-run 2>/dev/null | grep -q '^would'; then
+    say "== legacy config (plugins/ks/scripts/.env, plugins/ks/.config)"
+    "$SCRIPT_DIR/ks-config" import-legacy --dry-run
+    if ask "  Move these into the Keychain / ~/.config/ks (old files stay)?"; then "$SCRIPT_DIR/ks-config" import-legacy
+    else say "  Later:  ! ks-config import-legacy"; fi
+  fi
+
+  if [ "$dev" = 1 ]; then
+    say "== load the clone as the $MARKETPLACE directory marketplace"
+    local repo proj; repo="$(cd "$KS_ROOT_DIR/../.." && pwd)"
+    proj="$(ksc_project_root 2>/dev/null || true)"
+    # Per project, never user-wide: the plugins are switched on in the project's
+    # own (gitignored) .claude/settings.local.json; new worktrees get it from
+    # create-worktree, existing ones from sync_worktree_plugins.
+    local cmd="cd ${proj:-<your KarmaSuite checkout>} && claude plugin marketplace add $repo && claude plugin install --scope local ks-suite@$MARKETPLACE"
+    if [ "$(load_mode)" = dev-marketplace ]; then say "  already loaded from the clone"
+    elif [ -n "$proj" ] && ask "  Run: $cmd ?"; then
+      ( cd "$proj" && claude plugin marketplace add "$repo" && claude plugin install --scope local "ks-suite@$MARKETPLACE" ) \
+        && say "  done: claude in $proj now loads ks + ks-flow from $repo (edits apply on /reload-plugins)" \
+        && sync_worktree_plugins
+    else
+      say "  Run:  ! $cmd"
+    fi
+    say "  Then drop KS_EXTRA_PLUGINS:  ! ks-config unset ks.KS_EXTRA_PLUGINS"
+  fi
+
+  # Only what is still missing: the fixes of the doctor checks that fail.
+  say "== next"
+  local todo
+  todo="$(doctor --json 2>/dev/null | jq -r '.checks[] | select((.ok|not) and .fix != null and .level != "info") | "  \(.fix)    (\(.message))"' 2>/dev/null)"
+  if [ -n "$todo" ]; then printf '%s\n' "$todo"
+  else say "  nothing left to do (details: ks-setup doctor)"; fi
+}
+
+# ── claude-settings ─────────────────────────────────────────────────────────
+claude_settings() {
+  [ "${1:-}" = --yes ] && YES=1
+  [ -f "$SETTINGS" ] || { mkdir -p "$(dirname "$SETTINGS")"; echo '{}' >"$SETTINGS"; }
+  local want; want="$(printf '%s\n' "${EXCLUDED[@]}" | jq -R . | jq -s 'map(., . + " *")')"
+  local add; add="$(jq --argjson w "$want" '$w - (.sandbox.excludedCommands // [])' "$SETTINGS")"
+  local dwant; dwant="$(printf '%s\n' "${DENY[@]}" | jq -R . | jq -s .)"
+  local dadd; dadd="$(jq --argjson w "$dwant" '$w - (.permissions.deny // [])' "$SETTINGS")"
+  local envset; envset="$(jq -r '.env.KS_MOD_STATUSLINE // empty' "$SETTINGS")"
+  if [ "$(jq length <<<"$add")" = 0 ] && [ "$(jq length <<<"$dadd")" = 0 ] && [ "$envset" = 1 ]; then
+    say "~/.claude/settings.json already has everything"; return 0
+  fi
+  say "To add to $SETTINGS:"
+  [ "$(jq length <<<"$add")" = 0 ] || say "  sandbox.excludedCommands: $(jq -r 'join(", ")' <<<"$add")"
+  [ "$(jq length <<<"$dadd")" = 0 ] || say "  permissions.deny: $(jq -r 'join(", ")' <<<"$dadd")  (the agent can't read the Keychain)"
+  [ "$envset" = 1 ] || say "  env.KS_MOD_STATUSLINE = \"1\""
+  if ! ask "Apply (a backup goes to settings.json.bak-ks)?"; then
+    interactive || say "Run it yourself:  ! ks-setup claude-settings --yes"
+    return 1
+  fi
+  cp "$SETTINGS" "$SETTINGS.bak-ks"
+  local tmp="$SETTINGS.tmp.$$"
+  jq --argjson a "$add" --argjson d "$dadd" '.sandbox.excludedCommands = ((.sandbox.excludedCommands // []) + $a)
+     | .permissions.deny = ((.permissions.deny // []) + $d)
+     | .env.KS_MOD_STATUSLINE = "1"' "$SETTINGS" >"$tmp" && mv "$tmp" "$SETTINGS" \
+    && say "updated (backup: $SETTINGS.bak-ks)"
+}
+
+# ── store ───────────────────────────────────────────────────────────────────
+set_env_line() { # file key value
+  local tmp="$1.tmp.$$"
+  { grep -v -E "^[[:space:]]*$2[[:space:]]*=" "$1" 2>/dev/null; printf '%s=%s\n' "$2" "$3"; } >"$tmp" && mv "$tmp" "$1"
+  chmod 600 "$1"
+}
+store() {
+  local kind="${1:-}"; shift || true
+  local proj gcp="" cred=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --project) shift; gcp="${1:-}" ;; --credentials) shift; cred="${1:-}" ;; esac
+    shift
+  done
+  proj="$(ksc_project_root)" || { say "KS_PROJECT_ROOT_PATH is not set (ks-config set ks.KS_PROJECT_ROOT_PATH <path>)"; return 1; }
+  local flow dd; flow="$(ks_root ks-flow)" || { say "ks-flow plugin not found"; return 1; }
+  dd="$(node "$flow/src/lib/datadir.mjs" --project "$proj")" || return 1
+  mkdir -p "$dd"; touch "$dd/.env"
+  case "$kind" in
+    pocketbase) set_env_line "$dd/.env" DB_PROVIDER pocketbase ;;
+    firestore)
+      [ -n "$gcp" ] && [ -n "$cred" ] || { say "usage: ks-setup store firestore --project <gcp id> --credentials <key.json>"; return 2; }
+      [ -r "$cred" ] || { say "can't read $cred"; return 1; }
+      set_env_line "$dd/.env" DB_PROVIDER firestore
+      set_env_line "$dd/.env" FIRESTORE_MODE cloud
+      set_env_line "$dd/.env" FIREBASE_PROJECT_ID "$gcp"
+      set_env_line "$dd/.env" FIRESTORE_CREDENTIALS "$cred" ;;
+    *) say "usage: ks-setup store pocketbase | firestore --project <gcp id> --credentials <key.json>"; return 2 ;;
+  esac
+  say "ks-flow store for $proj → $kind ($dd/.env). Restart:  ks-flow stop && ks-flow start && ks-flow open"
+}
+
+sub="${1:-doctor}"; [ $# -gt 0 ] && shift
+case "$sub" in
+  doctor) doctor "$@" ;;
+  apply) apply "$@" ;;
+  claude-settings|sandbox) claude_settings "$@" ;;
+  store) store "$@" ;;
+  -h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "ks-setup: unknown command $sub (try: ks-setup help)" >&2; exit 2 ;;
+esac

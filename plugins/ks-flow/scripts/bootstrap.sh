@@ -12,7 +12,33 @@ PROJECT_PATH="${CLAUDE_PLUGIN_OPTION_project_path:-}"
 LABEL="com.ksflow.ingester"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
+# 0) tools + registry ----------------------------------------------------------
+for t in node jq git; do
+  command -v "$t" >/dev/null 2>&1 || { echo "[ks-flow] $t not found on PATH — ks-flow is not set up (brew install $t, then /ks:setup)" >&2; exit 0; }
+done
+# Record this plugin's folder for the KS registry (ks-root, shims, the board
+# after an update moved the version folder). Best effort.
+KS_REG="${KS_CONFIG_DIR:-$HOME/.config/ks}/plugins.json"
+if mkdir -p "$(dirname "$KS_REG")" 2>/dev/null; then
+  case "$PLUGIN_ROOT" in "$HOME/.claude/plugins/cache/"*) KS_MODE=marketplace ;; *) KS_MODE=local ;; esac
+  { [ -s "$KS_REG" ] && cat "$KS_REG" || echo '{}'; } 2>/dev/null \
+    | jq --arg r "$PLUGIN_ROOT" --arg m "$KS_MODE" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '.["ks-flow"] = {root: $r, mode: $m, seenAt: $t}' >"$KS_REG.tmp.$$" 2>/dev/null \
+    && mv "$KS_REG.tmp.$$" "$KS_REG" 2>/dev/null || rm -f "$KS_REG.tmp.$$" 2>/dev/null
+fi
+
 # 1) project.conf ------------------------------------------------------------
+# project_path (userConfig) → KS_PROJECT_ROOT_PATH (env, ~/.config/ks/ks.env) →
+# the one project already set up here (its project.conf). Without a fallback a
+# session with no userConfig quietly never rebuilt after a plugin update.
+if [ -z "$PROJECT_PATH" ]; then
+  PROJECT_PATH="${KS_PROJECT_ROOT_PATH:-}"
+  [ -n "$PROJECT_PATH" ] || PROJECT_PATH="$(sed -n 's/^[[:space:]]*KS_PROJECT_ROOT_PATH[[:space:]]*=[[:space:]]*["'"'"']\{0,1\}\([^"'"'"']*\)["'"'"']\{0,1\}[[:space:]]*$/\1/p' "${KS_CONFIG_DIR:-$HOME/.config/ks}/ks.env" 2>/dev/null | tail -1)"
+  if [ -z "$PROJECT_PATH" ]; then
+    confs=("$HOME"/.claude/plugins/data/ks-flow/*/project.conf)
+    [ "${#confs[@]}" = 1 ] && [ -f "${confs[0]}" ] && PROJECT_PATH="$(jq -r '.projectPath // empty' "${confs[0]}" 2>/dev/null)"
+  fi
+fi
 if [ -z "$PROJECT_PATH" ]; then
   exit 0   # not configured for this machine/user — nothing to do
 fi
@@ -38,8 +64,9 @@ DATA_DIR="$(node "$PLUGIN_ROOT/src/lib/datadir.mjs" --project "$PROJECT_PATH")"
 # layout: if the derived dir doesn't exist yet, move the richest legacy dir
 # (the one holding the daemon build / PocketBase store) into place.
 if [ ! -d "$DATA_DIR" ]; then
-  for legacy in "${CLAUDE_PLUGIN_DATA:-}" \
-                "$HOME/.claude/plugins/data/ks-flow-karmasuite" \
+  # Only the named old folders: ${CLAUDE_PLUGIN_DATA} is Claude's own data dir
+  # for an installed plugin and must never be moved away.
+  for legacy in "$HOME/.claude/plugins/data/ks-flow-karmasuite" \
                 "$HOME/.claude/plugins/data/ks-flow-inline"; do
     [ -n "$legacy" ] && [ -d "$legacy" ] && [ "$legacy" != "$DATA_DIR" ] || continue
     if [ -e "$legacy/daemon/dist" ] || [ -d "$legacy/pocketbase/pb_data" ]; then
@@ -111,7 +138,8 @@ if [ "$NEED_BUILD" = "1" ]; then
   # expensive part; dist is rebuilt below anyway.
   find "$DAEMON_DIR" -maxdepth 1 -name '*.ts' -delete 2>/dev/null || true
   rm -rf "$DAEMON_DIR/lib" "$DAEMON_DIR/dist"
-  cp -R "$PLUGIN_ROOT/src/." "$DAEMON_DIR/"
+  # Sources only: a clone's own node_modules/dist would ride along with cp -R.
+  rsync -a --exclude node_modules --exclude dist --exclude .claude "$PLUGIN_ROOT/src/" "$DAEMON_DIR/"
   # Use a data-dir-local npm cache to avoid the common ~/.npm root-owned EPERM.
   ( cd "$DAEMON_DIR" && npm install --no-audit --no-fund --cache "$DATA_DIR/.npm" && npm run build ) >&2
 fi
@@ -178,6 +206,14 @@ if [ "$DBP" = "pocketbase" ]; then
     fi
     "$PB_DIR/pocketbase" superuser upsert "$PB_EMAIL" "$PB_PASS" \
       --dir="$PB_DIR/pb_data" --migrationsDir="$PB_DIR/pb_migrations" >/dev/null 2>&1 || true
+  fi
+fi
+
+# 2c) Firestore key check -----------------------------------------------------
+if [ "$DBP" = "firestore" ]; then
+  FS_CRED="${CLAUDE_PLUGIN_OPTION_firestore_credentials:-$(envval FIRESTORE_CREDENTIALS)}"
+  if [ -n "$FS_CRED" ] && [ ! -r "${FS_CRED/#\~/$HOME}" ]; then
+    echo "[ks-flow] Firestore key $FS_CRED is not readable — the daemon can't reach the store (ks-setup store firestore ...)" >&2
   fi
 fi
 

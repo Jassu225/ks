@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { NextResponse } from 'next/server';
+import { loadDataEnv } from '@/lib/envfile';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,29 +25,8 @@ function dataDir(): string {
   );
 }
 
-function loadEnvFile(path: string): void {
-  let raw: string;
-  try {
-    raw = readFileSync(path, 'utf8');
-  } catch {
-    return;
-  }
-  for (const line of raw.split('\n')) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const eq = t.indexOf('=');
-    if (eq < 0) continue;
-    const key = t.slice(0, eq).trim();
-    if (!key || process.env[key] !== undefined) continue;
-    let val = t.slice(eq + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
-      val = val.slice(1, -1);
-    process.env[key] = val;
-  }
-}
-
 export async function GET(): Promise<NextResponse> {
-  loadEnvFile(join(dataDir(), '.env'));
+  loadDataEnv(join(dataDir(), '.env'));
   let notes = { enabled: false, slack: false, linear: false };
   try {
     const s = JSON.parse(readFileSync(join(dataDir(), 'board-settings.json'), 'utf8'));

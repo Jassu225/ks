@@ -226,26 +226,30 @@ function restoreCloudSessions(unitId: string, worktreePath: string): void {
 }
 
 /**
- * Launch Claude in `worktreePath` via `claude-ks`.
+ * Launch Claude in `worktreePath` via `ks-claude` (scripts/ks-claude).
  *
- * Launch via `claude-ks`, NOT plain `claude`. claude-ks loads the ks plugin
- * AND every KS_EXTRA_PLUGINS entry (e.g. ks-flow → session tracking + the
- * stop/waiting notification hooks) plus ks-rules — exactly like a manual
- * launch. The old path spawned plain `claude` with only the ks plugin (and
- * only under DEV), so KST-created worktree sessions never loaded ks-flow:
- * its hooks never fired, the session went untracked, and no notifications
- * were sent. Delegating to claude-ks keeps a single source of truth for
- * which plugins load.
+ * With the plugins installed that is a plain `claude`: the plugins, rules,
+ * task list (the worktree's settings.local.json, written by create-worktree)
+ * and tokens come from the plugin system. Before that (the old clone setup)
+ * ks-claude does the legacy launch: ks + KS_EXTRA_PLUGINS (ks-flow: session
+ * tracking and notifications) + the rules. Either way the session is named
+ * after the ticket (ks-claude's --name from the checkout's workflow unit).
  */
 function launchClaude(worktreePath: string, workflowRelPath: string): void {
-  console.log(chalk.blue('\nLaunching Claude (claude-ks) in worktree...'));
+  const initialPrompt = `/ks:project-manager Let's work on ./${workflowRelPath}/ project`;
+  // --no-launch (the /ks:start-ticket skill): report where to start, don't start.
+  if (process.env.KS_NO_LAUNCH === '1') {
+    console.log(`\nKS_WORKTREE=${worktreePath}`);
+    console.log(`KS_PROMPT=${initialPrompt}`);
+    process.exit(0);
+  }
+  console.log(chalk.blue('\nLaunching Claude in worktree...'));
   console.log(chalk.yellow(`\n💡 Start your conversation with:`));
   console.log(chalk.bold(`   /ks:project-manager Let's work on ./${workflowRelPath}/ project\n`));
   process.chdir(worktreePath);
 
-  const claudeKs = path.join(SCRIPTS_DIR, 'claude-ks');
-  const initialPrompt = `/ks:project-manager Let's work on ./${workflowRelPath}/ project`;
-  const claude = spawn(claudeKs, [initialPrompt], {
+  const launcher = path.join(SCRIPTS_DIR, 'ks-claude');
+  const claude = spawn(launcher, [initialPrompt], {
     stdio: 'inherit',
   });
 

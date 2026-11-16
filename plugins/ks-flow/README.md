@@ -69,24 +69,30 @@ Both gates are in-memory, so a daemon restart does one cold pass, then steady-st
 
 ## Setup
 
-The daemon, PocketBase, and the board are self-bootstrapping — no build step.
+ks-flow depends on the ks plugin (`"dependencies": ["ks"]`) and is set up with
+it: in the KarmaSuite checkout, `claude plugin install --scope local ks-suite@karmasuite` then `/ks:setup` (installed), or
+`plugins/ks/init-dev` (a clone). `./init` here hands over to `ks-setup apply`.
 
-1. Enable it: `claude plugin enable ks-flow` (or via `/plugin`). You'll be prompted for the config below.
-2. On the next session start, `bootstrap.sh` installs `node_modules` into the data dir, builds the daemon, and registers the always-on launchd agent.
+Prerequisites (`ks-setup doctor` checks them): `node` ≥ 18.17, `npm`, `git`,
+`jq`; `terminal-notifier` (notifications), `zstd` (backups), `tmux` and Ghostty
+or Terminal.app (the master); the KarmaSuite checkout as `KS_PROJECT_ROOT_PATH`;
+the Slack and Linear tokens in the Keychain (`ks-config secret …`).
 
-Optional `./init` (PATH + launcher wiring) — run once if you want the `ks-flow`
-CLI on your `PATH` outside a session, and to load ks-flow automatically via the
-`ks` plugin's `claude-ks` launchers. It:
-- adds `bin/` to your shell rc (`PATH`), and
-- registers `ks-flow` in `KS_EXTRA_PLUGINS` in `plugins/ks/scripts/.env`
-  (idempotent, non-destructive) so `claude-ks` / `claude-ks-serena` load it
-  alongside `ks`. See `plugins/ks/scripts/README.md`.
+The daemon, the store and the board are self-bootstrapping — no build step.
+On a session start `bootstrap.sh` builds the daemon into the data dir,
+registers the always-on launchd agent, and records the plugin's folder in
+`~/.config/ks/plugins.json`. It tracks `project_path`, else
+`KS_PROJECT_ROOT_PATH`, else the one project already set up. PocketBase is only
+downloaded and started when it is the store. `ks-setup store` picks the store
+(`pocketbase`, or `firestore --project <id> --credentials <key.json>`).
+The board's Remove runs `remove_worktree -D {{path}}` from the project root
+unless Settings names another command.
 
-### Configuration (prompted at enable)
+### Configuration (`/plugin configure`; all optional)
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `project_path` *(required)* | — | Main worktree / repo root to track. |
+| `project_path` | `KS_PROJECT_ROOT_PATH` | Main worktree / repo root to track. Empty: the ks config's project path. |
 | `workflow_user` | auto | The `workflow/<username>/` segment. |
 | `db_provider` | auto | Blank ⇒ `pocketbase` (local default) unless a cloud Firestore project is set ⇒ `firestore`. Force with `pocketbase`/`firestore`. |
 | `pocketbase_port` | 8090 | Localhost port for the bundled PocketBase server (`pocketbase` provider). |
@@ -729,7 +735,7 @@ An opt-in page for **saved notes & reminders**. **Off by default** — enable it
 
 **Adding** — the **+ Add note** button in the header opens a small menu:
 - **Any note** — free text. A modal takes the text, a **work type**, and an optional reminder.
-- **Slack note** — shown only when `SLACK_TOKEN` is set. The modal takes a **Slack message permalink**; the server parses `channel` + `ts` and fetches the message **text + date** via `conversations.history` (or `conversations.replies` for a thread link) — `/api/notes/slack/resolve`. Needs the channel **history** read scope the link's channel type requires (`channels|groups|im|mpim:history`) — the same read scope the ks slack-cli uses. Slack notes show the official **Slack icon** top-left + an *open in Slack* link. **Mentions are humanized + colored at render time**: `<@U123>` / `<#C123>` / `<#C1|general>` / `<https://x|label>` render as `@Alice` / `#general` / `label`, with **user mentions in indigo, channel mentions in sky, broadcasts (@here/@channel) in amber, and links as indigo anchors** — the **stored text stays raw**, this is display-only. User **and channel** IDs without an inline name resolve **cache-first** from the DB (`slack_names` collection / Firestore `slackNames` — a workspace-global id→name cache covering both); only misses hit Slack (`users.info` for `U…`, `conversations.info` for `C…` — needs `users:read` / `channels:read`) and are written back (`/api/notes/slack/names`). **Why paste, not auto-list?** Slack **retired the saved-for-later / `stars.list` read APIs in 2023** — *"there are no direct APIs for Save it for Later"* ([changelog](https://docs.slack.dev/changelog/2023-07-its-later-already-for-stars-and-reminders/)) — so saved messages can't be enumerated, but a *single* message is still fetchable by its permalink.
+- **Slack note** — shown only when `SLACK_TOKEN` is set. The modal takes a **Slack message permalink**; the server parses `channel` + `ts` and fetches the message **text + date** via `conversations.history` (or `conversations.replies` for a thread link) — `/api/notes/slack/resolve`. Needs the channel **history** read scope the link's channel type requires (`channels|groups|im|mpim:history`) — the same read scope the ks slack-cli uses. Slack notes show the official **Slack icon** top-left + an *open in Slack* link. **Mentions are humanized + colored at render time**: `<@U123>` / `<#C123>` / `<#C1|general>` / `<https://x|label>` render as `@Alice` / `#general` / `label`, with **user mentions in indigo, channel mentions in sky, broadcasts (@here/@channel) in amber, and links as indigo anchors** — the **stored text stays raw**, this is display-only. User **and channel** IDs without an inline name resolve **cache-first** from the DB (`slack_names` collection, PocketBase and Firestore — a workspace-global id→name cache covering both); only misses hit Slack (`users.info` for `U…`, `conversations.info` for `C…` — needs `users:read` / `channels:read`) and are written back (`/api/notes/slack/names`). **Why paste, not auto-list?** Slack **retired the saved-for-later / `stars.list` read APIs in 2023** — *"there are no direct APIs for Save it for Later"* ([changelog](https://docs.slack.dev/changelog/2023-07-its-later-already-for-stars-and-reminders/)) — so saved messages can't be enumerated, but a *single* message is still fetchable by its permalink.
 
 **Layout** — the board splits by **work type**: **Professional** on the left, **Personal** on the right (each note picks one in the add modal; Professional is the default). Each column is **reverse-chronological** — newest-added (`createdAt`) first.
 
