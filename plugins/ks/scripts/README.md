@@ -40,6 +40,12 @@ ks-config list
   `apply` and `/ks:setup`: sets `statusLine` to `~/.local/bin/statusline` in the
   KarmaSuite checkout's `.claude/settings.local.json` (that checkout only) and
   copies it to its worktrees; asks first, `--yes` from Claude's `!`.
+  **`ks-setup remote-control [--yes|--remove]`** — optional; suggested (a doctor
+  `warn`) once 2+ devices share the ks-flow board: a marked `claude` function
+  in the shell's startup file that adds `--rc` when the folder belongs to the
+  `ks.KS_PROJECT_ROOT_PATH` checkout's repository (main checkout or a worktree),
+  so agents on different Macs can message each other. Claude honours
+  `remoteControlAtStartup: true` only in user settings, never a project's.
   **`ks-setup store …`** — ks-flow's store.
 - **`ks-config list|get|set|secret|unset|import-legacy`** — the config, per
   tool namespace (`lib/ks-config-keys.txt`). Secrets: Keychain service

@@ -448,6 +448,10 @@ On the new device:
 5. `ks-flow start`, then `ks-flow open`. Within a minute the device appears in
    Settings → Devices on every board.
 6. **Name it** in Settings → Devices.
+7. **Remote Control in the project**, on every device: `! ks-setup remote-control --yes`
+   (`/ks:setup` suggests it from the second device). Claude sessions in the
+   KarmaSuite checkout then start with Remote Control, so agents on different
+   Macs see each other in `/peers` and can message each other.
 7. **Master:** leave it where it is, or pick this device (it needs `ks-master`
    and the Slack token).
 8. `ks-setup doctor` shows `this device: <name> (<id>); store set up for

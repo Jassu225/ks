@@ -15,6 +15,10 @@
 #   ks-setup statusline [--yes]    optional: the KS status line in the KarmaSuite
 #                                  checkout (its .claude/settings.local.json and
 #                                  its worktrees), runs ~/.local/bin/statusline
+#   ks-setup remote-control [--yes|--remove]  optional, suggested once 2+ devices
+#                                  share the ks-flow board: a `claude` shell function
+#                                  that adds --rc in the KarmaSuite checkout and its
+#                                  worktrees, so agents can message across machines
 #   ks-setup store pocketbase | firestore --project <gcp id> --credentials <key.json>
 #                                  ks-flow's store, written to its per-project .env
 #
@@ -48,6 +52,10 @@ SHIMS=(ks:linear ks:slack ks:grain ks:ks-time ks:ks-config ks:ks-setup ks:ks-roo
 # follows plugin updates and needs no PATH.
 STATUSLINE_CMD='~/.local/bin/statusline'
 YES=0
+DEVICE_COUNT=""   # devices sharing the ks-flow store (device_check); empty when unknown
+# The shell block `ks-setup remote-control` writes into the rc file.
+RC_BEGIN='# >>> ks remote-control (ks-setup remote-control) >>>'
+RC_END='# <<< ks remote-control <<<'
 interactive() { [ "$YES" = 0 ] && [ -t 0 ] && [ -t 1 ]; }
 ask() { # question → 0 for yes
   [ "$YES" = 1 ] && return 0
@@ -117,8 +125,9 @@ device_check() { # flow-root data-dir store
   [ -n "$sc" ] || sc='{}'
   setup="$(jq -r 'if .ok then (.devicesSetUp // false | tostring) else "unknown" end' <<<"$sc" 2>/dev/null)"
   master="$(jq -r '.masterDeviceId // empty' <<<"$sc" 2>/dev/null)"
+  DEVICE_COUNT="$(jq -r '.devices // empty' <<<"$sc" 2>/dev/null)"
   case "$setup" in
-    true) check ks-flow:device info 1 "$me; store set up for devices, master device $master$([ "$master" = "$did" ] && echo ' (this one)')" ;;
+    true) check ks-flow:device info 1 "$me; store set up for devices${DEVICE_COUNT:+ ($DEVICE_COUNT)}, master device $master$([ "$master" = "$did" ] && echo ' (this one)')" ;;
     false) check ks-flow:device info 0 \
       "$me; the store is not set up for devices yet (no meta/settings); the backfill runs once, on the device that has been using the board" \
       "run the device backfill: cd \"$flow/src\" && npm ci && npx tsx ../scripts/one-off/backfill-devices.ts --data-dir \"$dd\" --dry-run   (then without --dry-run; ks-flow README, \"Several devices\")" ;;
@@ -275,6 +284,7 @@ doctor() {
   if [ "$(jq -r '.env.KS_MOD_STATUSLINE // empty' "$SETTINGS" 2>/dev/null)" = 1 ]; then check settings:statusline info 1 "statusline split for the ks mod"
   else check settings:statusline info 0 "env KS_MOD_STATUSLINE not set (only claude-ks set it)" "! ks-setup claude-settings"; fi
   statusline_check
+  remote_control_check
 
   local all; all="$(printf '%s\n' "${CHECKS[@]}" | jq -s --arg mode "$mode" \
     '{mode:$mode, errors:(map(select(.level=="error" and (.ok|not)))|length), checks:.}')"
@@ -333,6 +343,92 @@ statusline_settings() {
   fi
   sync_worktree_plugins
   say "Applies to new Claude sessions in the checkout."
+}
+
+# ── Remote Control in the project (optional; suggested from 2 devices) ─────
+# Claude honours remoteControlAtStartup=true only in user or managed settings,
+# never in a project's own (a repo can't switch it on), so the project-only way
+# is a `claude` shell function that adds --rc when the folder belongs to the
+# configured KarmaSuite checkout's repository (the main checkout or any
+# worktree). Remote Control sessions on your other Macs can then message each
+# other (/peers, SendMessage).
+rc_block() {
+  printf '%s\n' "$RC_BEGIN"
+  cat <<'BLOCK'
+# Claude in the KarmaSuite checkout (ks.KS_PROJECT_ROOT_PATH) and its worktrees
+# starts with Remote Control, so agents on your other Macs can message it.
+# Subcommands (claude plugin ...) are left alone.
+claude() {
+  if [ $# -eq 0 ] || [[ "$1" == -* ]]; then
+    local proj here there
+    proj="$(ks-config get ks.KS_PROJECT_ROOT_PATH 2>/dev/null)"
+    if [ -n "$proj" ]; then
+      here="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+      there="$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+      if [ -n "$here" ] && [ "$here" = "$there" ]; then command claude --rc "$@"; return; fi
+    fi
+  fi
+  command claude "$@"
+}
+BLOCK
+  printf '%s\n' "$RC_END"
+}
+rc_has_block() { [ -f "$1" ] && grep -qF "$RC_BEGIN" "$1"; }
+rc_current_block() { awk -v b="$RC_BEGIN" -v e="$RC_END" '$0==b{p=1} p{print} p&&$0==e{p=0}' "$1"; }
+rc_strip_block() { # file → stdout without the block (and the blank line written before it)
+  awk -v b="$RC_BEGIN" -v e="$RC_END" '
+    $0==b { skip=1; blank=0; next }
+    skip { if ($0==e) skip=0; next }
+    $0=="" { if (blank) print ""; blank=1; next }
+    { if (blank) print ""; blank=0; print }
+    END { if (blank) print "" }' "$1"
+}
+# On: the block in the shell's startup file, or Remote Control for every session.
+remote_control_on() {
+  local rc; rc="$(rc_file 2>/dev/null)" && rc_has_block "$rc" && return 0
+  [ "$(jq -r '.remoteControlAtStartup // empty' "$SETTINGS" 2>/dev/null)" = true ]
+}
+many_devices() { [ -n "$DEVICE_COUNT" ] && [ "$DEVICE_COUNT" -ge 2 ] 2>/dev/null; }
+remote_control_reason() {
+  if many_devices; then echo "$DEVICE_COUNT devices share the ks-flow board"
+  else echo "optional with one Mac"; fi
+}
+remote_control_check() {
+  if remote_control_on; then
+    check remote-control info 1 "Remote Control on for Claude in the project (agents can message across machines)"
+  elif many_devices; then
+    check remote-control warn 0 "$DEVICE_COUNT devices share the ks-flow board, but Claude in the project starts without Remote Control, so agents on different Macs can't message each other" "! ks-setup remote-control --yes"
+  else
+    check remote-control info 0 "Remote Control for the project is off (optional with one Mac; suggested once a second Mac shares the board)" "! ks-setup remote-control --yes"
+  fi
+}
+remote_control_settings() {
+  local remove=0 a rc
+  for a in "$@"; do case "$a" in --yes) YES=1 ;; --remove) remove=1 ;; esac; done
+  if ! rc="$(rc_file)"; then
+    say "Couldn't tell your shell (SHELL=${SHELL:-unset}). Add this to its startup file:"; rc_block; return 1
+  fi
+  if [ "$remove" = 1 ]; then
+    rc_has_block "$rc" || { say "$rc has no ks remote-control block"; return 0; }
+    rc_strip_block "$rc" >"$rc.tmp.$$" && mv "$rc.tmp.$$" "$rc" && say "removed the block from $rc (open a new terminal)"
+    return 0
+  fi
+  ksc_project_root >/dev/null 2>&1 \
+    || say "Note: the KarmaSuite checkout isn't set yet (ks-config set ks.KS_PROJECT_ROOT_PATH <path>); until it is, the function does nothing."
+  if rc_has_block "$rc"; then
+    [ "$(rc_current_block "$rc")" = "$(rc_block)" ] && { say "$rc already has it"; return 0; }
+    say "To update the ks remote-control block in $rc"
+  else
+    say "To add to $rc: a \`claude\` function that starts Claude with --rc (Remote Control)"
+    say "in the KarmaSuite checkout and its worktrees only; every other folder is unchanged."
+    say "Remote Control keeps those sessions' transcripts on Anthropic's servers; commands still run only here."
+  fi
+  if ! ask "Apply?"; then
+    interactive || say "Run it yourself:  ! ks-setup remote-control --yes"
+    return 1
+  fi
+  { if [ -f "$rc" ]; then rc_strip_block "$rc"; fi; printf '\n'; rc_block; } >"$rc.tmp.$$" && mv "$rc.tmp.$$" "$rc" \
+    && say "updated $rc (open a new terminal, or: source $rc)"
 }
 
 # ── apply ───────────────────────────────────────────────────────────────────
@@ -466,10 +562,12 @@ apply() {
   todo="$(doctor --json 2>/dev/null | jq -r '.checks[] | select((.ok|not) and .fix != null and .level != "info") | "  \(.fix)    (\(.message))"' 2>/dev/null)"
   if [ -n "$todo" ]; then printf '%s\n' "$todo"
   else say "  nothing left to do (details: ks-setup doctor)"; fi
-  if ! is_ks_statusline "$(effective_statusline || true)"; then
-    say "== optional"
-    say "  ! ks-setup statusline --yes    (the KS status line: session, context, branch, ticket, rate limits)"
-  fi
+  local opt=()
+  is_ks_statusline "$(effective_statusline || true)" \
+    || opt+=("  ! ks-setup statusline --yes    (the KS status line: session, context, branch, ticket, rate limits)")
+  remote_control_on \
+    || opt+=("  ! ks-setup remote-control --yes    (Remote Control in the project, so agents on your other Macs can message these; $(remote_control_reason))")
+  if [ ${#opt[@]} -gt 0 ]; then say "== optional"; printf '%s\n' "${opt[@]}"; fi
 }
 
 # ── claude-settings ─────────────────────────────────────────────────────────
@@ -538,6 +636,7 @@ case "$sub" in
   claude-settings|sandbox) claude_settings "$@" ;;
   store) store "$@" ;;
   statusline) statusline_settings "$@" ;;
-  -h|--help|help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' ;;
+  remote-control) remote_control_settings "$@" ;;
+  -h|--help|help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "ks-setup: unknown command $sub (try: ks-setup help)" >&2; exit 2 ;;
 esac

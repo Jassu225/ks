@@ -2,8 +2,9 @@
 // store-check.ts — one line per fact about the store, for `ks-flow status`:
 // which provider the daemon resolves, whether it answers (one read of
 // meta/settings, 8 s cap), whether the store is set up for devices (that
-// read's answer, and this device's id), and, with Firestore, how many writes
-// wait in the offline outbox.
+// read's answer, and this device's id), how many devices share it (not
+// forgotten; ks-setup suggests Remote Control from 2), and, with Firestore, how
+// many writes wait in the offline outbox.
 //   node dist/store-check.js [--json]
 import { join } from 'node:path';
 import { dataDir, loadConfig, readProjectConf } from './lib/config.js';
@@ -25,6 +26,7 @@ async function main(): Promise<void> {
   let masterDeviceId: string | null = null;
   let devicesSetUp = false;
   let name: string | null = null;
+  let deviceCount: number | null = null;
   const self = deviceIdentity(dataDir());
   if (conf) {
     try {
@@ -44,6 +46,11 @@ async function main(): Promise<void> {
           new Promise<null>((res) => setTimeout(() => res(null), TIMEOUT_MS).unref()),
         ]).catch(() => null);
         name = dev?.name || null;
+        const all = await Promise.race([
+          devices.getDevices(),
+          new Promise<null>((res) => setTimeout(() => res(null), TIMEOUT_MS).unref()),
+        ]).catch(() => null);
+        deviceCount = all ? all.filter((d) => !d.forgotten).length : null;
       }
     } catch (e) {
       error = (e as Error).message;
@@ -67,6 +74,7 @@ async function main(): Promise<void> {
         name: name ?? undefined,
         devicesSetUp: ok ? devicesSetUp : undefined,
         masterDeviceId: masterDeviceId ?? undefined,
+        devices: deviceCount ?? undefined,
       }),
     );
     return;
@@ -76,7 +84,7 @@ async function main(): Promise<void> {
   if (ok) {
     console.log(
       devicesSetUp
-        ? `  devices: set up (master device ${masterDeviceId}${masterDeviceId === self.deviceId ? ', this one' : ''})`
+        ? `  devices: set up${deviceCount != null ? `, ${deviceCount} device(s)` : ''} (master device ${masterDeviceId}${masterDeviceId === self.deviceId ? ', this one' : ''})`
         : '  devices: NOT set up — run the one-time backfill (plugins/ks-flow/scripts/one-off/backfill-devices.ts)',
     );
   }

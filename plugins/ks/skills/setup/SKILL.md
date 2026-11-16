@@ -63,6 +63,15 @@ Give each as a `!` command, one per line, and wait:
   unless `statusline:project` is ok; on yes `! ks-setup statusline --yes`. It
   sets the checkout's own `.claude/settings.local.json` and its worktrees, never
   `~/.claude/settings.json`;
+- Remote Control in the project, optional: the doctor's `remote-control`
+  check. With 2+ devices on the ks-flow board it is a `warn`: suggest it (ask
+  with AskUserQuestion), since without it agents on different Macs can't
+  message each other. With one Mac it is `info`: mention it once as optional,
+  don't push. On yes `! ks-setup remote-control --yes`: a `claude` shell
+  function in the shell's startup file that adds `--rc` in the KarmaSuite
+  checkout and its worktrees only (Claude has no per-project setting for it);
+  `--remove` takes it out. Say that Remote Control keeps those transcripts on
+  Anthropic's servers;
 - ks-flow's store, when the user wants Firestore:
   `! ks-setup store firestore --project <gcp id> --credentials <key.json>`,
   then `! ks-flow stop && ks-flow start && ks-flow open`.
