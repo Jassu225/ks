@@ -84,6 +84,8 @@ export function DeviceChip({
   deviceId,
   prefix = '',
   always = false,
+  selfLabel,
+  shrink = false,
   className = '',
 }: {
   /** The device; absent = this device (a record from before the device backfill). */
@@ -92,6 +94,12 @@ export function DeviceChip({
   prefix?: string;
   /** Show it even with one device (Settings → Devices lists them all). */
   always?: boolean;
+  /** For this device's own records: this text instead of its name, in yellow
+   * (cards say "This device", so yours stand out among other devices'). */
+  selfLabel?: string;
+  /** Let the chip shrink (truncated with "…") in a tight row instead of
+   * pushing its neighbours onto a second line. */
+  shrink?: boolean;
   className?: string;
 }) {
   const { board, now } = useShared();
@@ -106,16 +114,19 @@ export function DeviceChip({
     : stale
       ? `${name}: last seen ${agoText(d?.lastSeenAt, now)}`
       : `${name}${id === board.self ? ' (this device)' : ''} · seen ${agoText(d?.lastSeenAt, now)}`;
+  const mine = id === board.self && !!selfLabel;
   const look = forgotten
     ? 'border-slate-700 bg-slate-900 text-slate-500 line-through'
-    : `${deviceColorClass(id)} ${stale ? 'opacity-50' : ''}`;
+    : mine
+      ? 'border-yellow-500/70 bg-yellow-400/15 text-yellow-300 font-semibold'
+      : `${deviceColorClass(id)} ${stale ? 'opacity-50' : ''}`;
   return (
     <span
-      className={`inline-block max-w-[10rem] shrink-0 truncate rounded border px-1.5 py-0.5 text-[10px] font-medium ${look} ${className}`}
+      className={`inline-block max-w-[10rem] ${shrink ? 'min-w-0 shrink' : 'shrink-0'} truncate whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-medium ${look} ${className}`}
       title={title}
     >
       {prefix}
-      {name}
+      {mine ? selfLabel : name}
     </span>
   );
 }

@@ -5,7 +5,8 @@
 #
 #   ks-claude [--local-plugin <name>]… [--plugin <name>]… [claude args…]
 #
-# Installed plugins (ks@karmasuite enabled in ~/.claude/settings.json): runs
+# Installed plugins (ks@karmasuite enabled in ~/.claude/settings.json or, the
+# usual per-project install, the checkout's .claude/settings*.json): runs
 # plain `claude`. The plugins, the KS rules (SessionStart context), the task
 # list (the worktree's settings.local.json) and the tokens (Keychain) come
 # from the plugin system; an on-demand plugin (ks-master, ks-browser) is turned
@@ -25,7 +26,19 @@ PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 MARKETPLACE=karmasuite
 SETTINGS="$HOME/.claude/settings.json"
 
-enabled() { [ "$(jq -r --arg id "$1@$MARKETPLACE" '.enabledPlugins[$id] // false' "$SETTINGS" 2>/dev/null)" = true ]; }
+# Enabled for a session started here: the user settings, then this checkout's
+# .claude/settings.json and .claude/settings.local.json (the later file wins, as
+# in Claude). Plugins are installed per project, so the checkout's own files are
+# where the switch usually is.
+enabled() {
+  local id="$1@$MARKETPLACE" f v en="" top
+  top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  for f in "$SETTINGS" ${top:+"$top/.claude/settings.json" "$top/.claude/settings.local.json"}; do
+    v="$(jq -r --arg id "$id" '.enabledPlugins[$id] // empty' "$f" 2>/dev/null)"
+    [ -n "$v" ] && en="$v"
+  done
+  [ "$en" = true ]
+}
 installed() {
   claude plugin list --json 2>/dev/null | jq -e --arg id "$1@$MARKETPLACE" 'any(.[]?; .id == $id)' >/dev/null 2>&1
 }

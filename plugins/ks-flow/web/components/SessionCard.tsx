@@ -592,18 +592,20 @@ export function WorkUnitCard({
 
       <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
         <span className="flex min-w-0 items-center gap-1.5">
-          <DeviceChip deviceId={ownerId} />
+          <DeviceChip deviceId={ownerId} selfLabel="This device" shrink />
           {ownerAsleep ? (
-            <span title={`${ownerName}: last seen ${agoText(ownerDoc?.lastSeenAt, now)}`}>sessions unknown</span>
+            <span className="shrink-0 whitespace-nowrap" title={`${ownerName}: last seen ${agoText(ownerDoc?.lastSeenAt, now)}`}>
+              sessions unknown
+            </span>
           ) : (
-            <span>
+            <span className="shrink-0 whitespace-nowrap">
               {live.length > 0
                 ? `${live.length} session${live.length > 1 ? 's' : ''}${active ? ` · ${active} active` : ''}`
                 : 'no live session'}
             </span>
           )}
         </span>
-        <span title={`Session last active: ${absTime(unit.lastActivity)}`}>
+        <span className="shrink-0 whitespace-nowrap" title={`Session last active: ${absTime(unit.lastActivity)}`}>
           ⟳ active {relTime(unit.lastActivity)}
         </span>
       </div>
