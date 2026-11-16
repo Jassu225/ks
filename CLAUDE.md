@@ -228,3 +228,5 @@ mkdir plugins/<name>/commands plugins/<name>/agents
 # Find a sibling plugin's files with `ks-root <name>`, never ../<name>
 # Dev: /reload-plugins (the clone is a directory marketplace); others: claude plugin install <name>@karmasuite
 ```
+
+**Raise the version with every change other machines should get.** An installed plugin lives in `~/.claude/plugins/cache/karmasuite/<plugin>/<version>/`, and `claude plugin update` (and marketplace auto-update) copies new files only when `plugin.json`'s `version` goes up: a change pushed under the same version never reaches an installed machine, even after the marketplace itself is updated. So a commit that changes a plugin also raises its version, in its `.claude-plugin/plugin.json` and its `.claude-plugin/marketplace.json` entry (patch for fixes, minor for features). ks-flow's version also drives the store's `meta/settings.version` and every device's self-update.
