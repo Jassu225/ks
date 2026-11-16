@@ -115,8 +115,13 @@ For a new person on a new Mac, from nothing. Each step is safe to re-run.
    ! ks-config secret linear.LINEAR_API_KEY
    ! ks-config secret slack.SLACK_TOKEN          # Briefing, Notes
    ! ks-config secret grain.GRAIN_API_TOKEN      # optional
-   ! ks-setup claude-settings                    # sandbox excludes, Keychain deny rules, statusline
    ```
+
+   With the sandbox on, `/ks:setup` first asks you to run
+   `! ks-setup claude-settings --self` (only `ks-setup` leaves the sandbox), then,
+   once you agree, runs `ks-setup claude-settings --yes` itself: the other KS
+   commands' sandbox entries (`ks-flow`'s too, as it is enabled), the Keychain
+   deny rules and the statusline env.
 5. **Store.** PocketBase (local, this Mac only) needs nothing. For the shared
    Firestore board, get the `ks-flow-store@ks-flow` service-account key file
    from whoever runs the GCP project and copy it onto the Mac yourself (AirDrop,

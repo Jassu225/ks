@@ -8,10 +8,14 @@
 #   ks-setup apply [--dev] [--yes] folders, registry, shims, PATH line, deps, project
 #                                  path, legacy import; --dev also loads the clone
 #                                  as a directory marketplace (claude plugin ...)
-#   ks-setup claude-settings [--yes]   (alias: sandbox) add the sandbox excludedCommands,
-#                                  the deny rules on the agent running `security`, and
-#                                  env KS_MOD_STATUSLINE to ~/.claude/settings.json
-#                                  (backup: settings.json.bak-ks)
+#   ks-setup claude-settings --self    first step, with the sandbox on: exclude only
+#                                  ks-setup itself, so Claude can run the rest of setup
+#   ks-setup claude-settings [--yes] [--ks-flow]   (alias: sandbox) the deny rules on
+#                                  the agent running `security`, env KS_MOD_STATUSLINE and,
+#                                  with the sandbox on, the KS commands in
+#                                  sandbox.excludedCommands (ks-flow's only when ks-flow
+#                                  is enabled in the project, or with --ks-flow), in
+#                                  ~/.claude/settings.json (backup: settings.json.bak-ks)
 #   ks-setup statusline [--yes]    optional: the KS status line in the KarmaSuite
 #                                  checkout (its .claude/settings.local.json and
 #                                  its worktrees), runs ~/.local/bin/statusline
@@ -34,8 +38,15 @@ LOCAL_BIN="$HOME/.local/bin"
 MARKETPLACE=karmasuite
 # Commands the sandbox must not run (they need the Keychain, tmux, git worktrees,
 # the network or files outside the project); each also as "<cmd> *".
-EXCLUDED=(linear slack grain gh ks-flow ks-config ks-setup ks-time ks-start-ticket create-worktree
+# ks-setup comes first and alone (`claude-settings --self`, which you run): once
+# it is excluded, Claude can run the rest of setup, including the other entries
+# (after you agree). ks-flow's entry is added only when ks-flow is in use.
+EXCLUDED=(linear slack grain gh ks-config ks-time ks-start-ticket create-worktree
   tmux claude-ks-master claude-ks-rc claude-ks-rc-restart quit-chrome mem-info)
+SELF_EXCLUDED=ks-setup
+FLOW_EXCLUDED=ks-flow
+# Where Claude may turn the sandbox on (managed settings win; any of them on = on).
+MANAGED_SETTINGS="/Library/Application Support/ClaudeCode/managed-settings.json"
 # Deny rules so the agent can't read the KS tokens out of the Keychain itself
 # (`security find-generic-password -w`): the sandbox doesn't block the Keychain.
 # They match only the command line the agent writes, so the KS CLIs, which call
@@ -165,9 +176,42 @@ version_check() { # data-dir
   check ks-flow:version "$level" "$ok" "$msg" "$fix"
 }
 
+# The sandbox is on in any of Claude's settings files (user, the KS project's,
+# managed). Off, nothing needs excluding.
+sandbox_enabled() {
+  local proj f
+  proj="$(ksc_project_root 2>/dev/null || true)"
+  for f in "$SETTINGS" ${proj:+"$proj/.claude/settings.json" "$proj/.claude/settings.local.json"} "$MANAGED_SETTINGS"; do
+    [ "$(jq -r '.sandbox.enabled // empty' "$f" 2>/dev/null)" = true ] && return 0
+  done
+  return 1
+}
+# ks-flow is enabled in the KS project (or user-wide): its own entry or the bundle.
+flow_enabled() {
+  local proj f v
+  proj="$(ksc_project_root 2>/dev/null || true)"
+  for f in "$SETTINGS" ${proj:+"$proj/.claude/settings.json" "$proj/.claude/settings.local.json"}; do
+    v="$(jq -r --arg m "$MARKETPLACE" '(.enabledPlugins["ks-flow@"+$m] // .enabledPlugins["ks-suite@"+$m]) // empty' "$f" 2>/dev/null)"
+    [ "$v" = true ] && return 0
+  done
+  return 1
+}
+is_excluded() { # cmd → both "cmd" and "cmd *" in the user settings
+  jq -e --arg c "$1" '(.sandbox.excludedCommands // []) | (index($c) != null) and (index($c + " *") != null)' "$SETTINGS" >/dev/null 2>&1
+}
+want_excluded() { # the entries this machine needs (ks-setup's own excluded)
+  printf '%s\n' "${EXCLUDED[@]}"
+  { flow_enabled || [ "${WITH_FLOW:-0}" = 1 ]; } && printf '%s\n' "$FLOW_EXCLUDED"
+  return 0
+}
+
 doctor() {
   local json=0; [ "${1:-}" = --json ] && json=1
   CHECKS=()
+  # First, because nothing else in setup works from Claude without it.
+  if sandbox_enabled && ! is_excluded "$SELF_EXCLUDED"; then
+    check sandbox:ks-setup error 0 "the sandbox is on and runs ks-setup inside it, so setup can't write ~/.local/bin, your shell's startup file or Claude's settings; exclude ks-setup first" "! ks-setup claude-settings --self"
+  fi
   if have node; then
     local v; v="$(node -p 'process.versions.node' 2>/dev/null)"
     if node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>18||(a===18&&b>=17)?0:1)'
@@ -237,11 +281,15 @@ doctor() {
   esac
 
   local ex miss=()
-  for ex in "${EXCLUDED[@]}"; do
-    jq -e --arg c "$ex" '(.sandbox.excludedCommands // []) | (index($c) != null) and (index($c + " *") != null)' "$SETTINGS" >/dev/null 2>&1 || miss+=("$ex")
-  done
-  if [ ${#miss[@]} = 0 ]; then check sandbox warn 1 "sandbox excludes every KS command"
-  else check sandbox warn 0 "sandbox does not exclude: ${miss[*]}" "! ks-setup claude-settings"; fi
+  if sandbox_enabled; then
+    while read -r ex; do [ -n "$ex" ] && ! is_excluded "$ex" && miss+=("$ex"); done < <(want_excluded)
+    if [ ${#miss[@]} = 0 ]; then check sandbox warn 1 "sandbox excludes every KS command$(flow_enabled || echo ' (ks-flow is not enabled, so its entry is not needed)')"
+    elif is_excluded "$SELF_EXCLUDED"; then
+      check sandbox warn 0 "sandbox does not exclude: ${miss[*]}" "ks-setup claude-settings --yes   (Claude runs it once you agree)"
+    else check sandbox warn 0 "sandbox does not exclude: ${miss[*]}" "! ks-setup claude-settings --self, then ks-setup claude-settings --yes"; fi
+  else
+    check sandbox info 1 "sandbox off: no commands need excluding"
+  fi
   local dn dmiss=()
   for dn in "${DENY[@]}"; do
     jq -e --arg r "$dn" '(.permissions.deny // []) | index($r) != null' "$SETTINGS" >/dev/null 2>&1 || dmiss+=("$dn")
@@ -572,9 +620,23 @@ apply() {
 
 # ── claude-settings ─────────────────────────────────────────────────────────
 claude_settings() {
-  [ "${1:-}" = --yes ] && YES=1
+  local self=0 a
+  for a in "$@"; do case "$a" in --yes) YES=1 ;; --self) self=1 ;; --ks-flow) WITH_FLOW=1 ;; esac; done
   [ -f "$SETTINGS" ] || { mkdir -p "$(dirname "$SETTINGS")"; echo '{}' >"$SETTINGS"; }
-  local want; want="$(printf '%s\n' "${EXCLUDED[@]}" | jq -R . | jq -s 'map(., . + " *")')"
+  if [ "$self" = 1 ]; then
+    # The first step, which you run (`!`): only ks-setup, so Claude can run the rest.
+    if is_excluded "$SELF_EXCLUDED"; then say "ks-setup is already excluded from the sandbox"; return 0; fi
+    sandbox_enabled || say "Note: the sandbox is off, so this changes nothing until it is turned on."
+    cp "$SETTINGS" "$SETTINGS.bak-ks"
+    jq --arg c "$SELF_EXCLUDED" '.sandbox.excludedCommands = (((.sandbox.excludedCommands // []) + [$c, $c + " *"]) | unique)' \
+      "$SETTINGS" >"$SETTINGS.tmp.$$" && mv "$SETTINGS.tmp.$$" "$SETTINGS" \
+      && say "ks-setup excluded from the sandbox (backup: $SETTINGS.bak-ks). Claude can now run the rest of setup."
+    return
+  fi
+  local want='[]'
+  if sandbox_enabled; then
+    want="$(want_excluded | jq -R . | jq -s 'map(select(. != "")) | map(., . + " *")')"
+  fi
   local add; add="$(jq --argjson w "$want" '$w - (.sandbox.excludedCommands // [])' "$SETTINGS")"
   local dwant; dwant="$(printf '%s\n' "${DENY[@]}" | jq -R . | jq -s .)"
   local dadd; dadd="$(jq --argjson w "$dwant" '$w - (.permissions.deny // [])' "$SETTINGS")"
@@ -586,13 +648,14 @@ claude_settings() {
   [ "$(jq length <<<"$add")" = 0 ] || say "  sandbox.excludedCommands: $(jq -r 'join(", ")' <<<"$add")"
   [ "$(jq length <<<"$dadd")" = 0 ] || say "  permissions.deny: $(jq -r 'join(", ")' <<<"$dadd")  (the agent can't read the Keychain)"
   [ "$envset" = 1 ] || say "  env.KS_MOD_STATUSLINE = \"1\""
+  sandbox_enabled || say "  (sandbox off: no commands to exclude)"
   if ! ask "Apply (a backup goes to settings.json.bak-ks)?"; then
-    interactive || say "Run it yourself:  ! ks-setup claude-settings --yes"
+    interactive || say "Once you agree:  ks-setup claude-settings --yes$([ "${WITH_FLOW:-0}" = 1 ] && echo ' --ks-flow')"
     return 1
   fi
   cp "$SETTINGS" "$SETTINGS.bak-ks"
   local tmp="$SETTINGS.tmp.$$"
-  jq --argjson a "$add" --argjson d "$dadd" '.sandbox.excludedCommands = ((.sandbox.excludedCommands // []) + $a)
+  jq --argjson a "$add" --argjson d "$dadd" '(if ($a | length) > 0 then .sandbox.excludedCommands = ((.sandbox.excludedCommands // []) + $a) else . end)
      | .permissions.deny = ((.permissions.deny // []) + $d)
      | .env.KS_MOD_STATUSLINE = "1"' "$SETTINGS" >"$tmp" && mv "$tmp" "$SETTINGS" \
     && say "updated (backup: $SETTINGS.bak-ks)"
@@ -637,6 +700,6 @@ case "$sub" in
   store) store "$@" ;;
   statusline) statusline_settings "$@" ;;
   remote-control) remote_control_settings "$@" ;;
-  -h|--help|help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "ks-setup: unknown command $sub (try: ks-setup help)" >&2; exit 2 ;;
 esac

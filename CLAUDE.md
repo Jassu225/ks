@@ -208,7 +208,7 @@ ks-config list                                  # what is set, and from where
 ks-config set ks.KS_PROJECT_ROOT_PATH <path>    # a plain value
 ! ks-config secret linear.LINEAR_API_KEY        # a token: hidden input, never in chat
 ```
-`ks-config`, `ks-setup`, `ks-flow`, `linear`, `slack`, `grain` and the other KS commands must be sandbox-excluded (`ks-setup claude-settings` adds them): the sandbox hides `.env` files. It does **not** block the Keychain, so `ks-setup claude-settings` also adds the deny rules `Bash(security *)` and `Bash(/usr/bin/security *)`: the agent never runs `security` itself (the KS CLIs do, unaffected). A guard against accidents, not a wall.
+`ks-config`, `ks-setup`, `ks-flow`, `linear`, `slack`, `grain` and the other KS commands must be sandbox-excluded when the sandbox is on: the sandbox hides `.env` files. Setup does it in two steps: you run `! ks-setup claude-settings --self` first (only `ks-setup`), then Claude, once you agree, runs `ks-setup claude-settings --yes` for the rest (`ks-flow`'s entry only when ks-flow is enabled in the project). It does **not** block the Keychain, so `ks-setup claude-settings` also adds the deny rules `Bash(security *)` and `Bash(/usr/bin/security *)`: the agent never runs `security` itself (the KS CLIs do, unaffected). A guard against accidents, not a wall.
 
 ## Adding New Components
 

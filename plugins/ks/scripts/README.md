@@ -29,8 +29,13 @@ ks-config list
   `~/.local/bin` shims, a PATH line in the shell's startup file (zsh
   `~/.zshrc`, bash `~/.bash_profile` on macOS / `~/.bashrc`; printed when it
   can't tell or write), deps, project path, legacy import; `--dev` loads the
-  clone as the karmasuite directory marketplace. **`ks-setup claude-settings`**
-  (alias `sandbox`) — adds the KS commands to `sandbox.excludedCommands`, the
+  clone as the karmasuite directory marketplace. **`ks-setup claude-settings
+  --self`** — the first step with the sandbox on, which you run: excludes only
+  `ks-setup`, so Claude can run the rest of setup (the doctor's
+  `sandbox:ks-setup`, an error, listed first). **`ks-setup claude-settings
+  [--yes] [--ks-flow]`** (alias `sandbox`) — Claude runs it once you agree. With
+  the sandbox on, it adds the KS commands to `sandbox.excludedCommands`
+  (`ks-flow`'s only when ks-flow is enabled in the project, or `--ks-flow`), the
   deny rules `Bash(security *)` / `Bash(/usr/bin/security *)` (the sandbox does
   not block the Keychain, so without them the agent could print a token with
   `security find-generic-password -w`; the KS CLIs call `security` themselves

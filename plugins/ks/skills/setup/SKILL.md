@@ -21,6 +21,11 @@ ks-setup doctor --json
 marketplace) or `launcher` (only claude-ks loads the plugins). Report the
 failing checks grouped by level (errors first), each with its fix.
 
+**`sandbox:ks-setup` failing comes first, before anything else.** The sandbox
+is on and runs `ks-setup` inside it, so nothing below can write what it needs.
+Give `! ks-setup claude-settings --self` (it excludes only `ks-setup`), say
+why in one line, and wait for it before step 2.
+
 ## 2. Apply what needs no secret and no consent
 
 ```bash
@@ -48,6 +53,17 @@ fails, give `! cd <checkout> && claude plugin install --scope local <plugin>@kar
 `ks-setup apply` copies the switches into the project's existing worktrees;
 `create-worktree` does it for new ones.
 
+### Claude's settings: ask, then run it yourself
+
+When the `sandbox` or `secrets:deny` check fails (and `ks-setup` itself is
+excluded), ask with AskUserQuestion, listing what `ks-setup claude-settings`
+would add to `~/.claude/settings.json`: the KS commands in
+`sandbox.excludedCommands` (only with the sandbox on; `ks-flow`'s entry only
+when ks-flow is enabled in the project), the deny rules that keep you from
+reading the Keychain, and the statusline env. On yes, run
+`ks-setup claude-settings --yes` yourself (add `--ks-flow` if they want
+ks-flow but it isn't enabled yet). On no, leave it.
+
 ## 3. Steps the user runs (never run these yourself)
 
 Give each as a `!` command, one per line, and wait:
@@ -55,9 +71,7 @@ Give each as a `!` command, one per line, and wait:
   `! ks-config secret linear.LINEAR_API_KEY` (also `slack.SLACK_TOKEN`,
   `grain.GRAIN_API_TOKEN` when those checks failed);
 - old tokens in `plugins/ks/scripts/.env`: `! ks-config import-legacy`;
-- sandbox excludes, the deny rules that keep the agent from reading the
-  Keychain, and the statusline env (edits `~/.claude/settings.json`):
-  `! ks-setup claude-settings`;
+- (`sandbox:ks-setup`, if it still fails: `! ks-setup claude-settings --self`.)
 - the KS status line, optional: ask first (AskUserQuestion) whether they want
   it (session, context, branch, ticket, rate limits) in the KarmaSuite checkout,
   unless `statusline:project` is ok; on yes `! ks-setup statusline --yes`. It
