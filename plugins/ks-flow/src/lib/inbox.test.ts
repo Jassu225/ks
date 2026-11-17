@@ -343,3 +343,20 @@ test('readInboxRegistry takes the address and never the token', () => {
     rmSync(data, { recursive: true, force: true });
   }
 });
+
+test('readInboxLinks: this Inbox id and the linked ids, never more (no file: none)', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { readInboxLinks } = await import('./inbox.js');
+  const dir = mkdtempSync(join(tmpdir(), 'ksf-links-'));
+  assert.deepEqual(readInboxLinks(dir), { self: null, links: [] });
+  mkdirSync(join(dir, 'inbox'));
+  writeFileSync(
+    join(dir, 'inbox', 'machines.json'),
+    JSON.stringify({ v: 1, self: { id: 'ibx_A' }, links: [{ id: 'ibx_C', token: 'secret' }, { id: 'ibx_B', token: 'secret' }, { name: 'no id' }] }),
+  );
+  const got = readInboxLinks(dir);
+  assert.deepEqual(got, { self: 'ibx_A', links: ['ibx_B', 'ibx_C'] });
+  assert.ok(!JSON.stringify(got).includes('secret'), 'never a token');
+});

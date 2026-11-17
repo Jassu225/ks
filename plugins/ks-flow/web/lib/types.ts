@@ -92,6 +92,9 @@ export interface DeviceDoc {
   worktreePaths: string[];
   inboxUrl: string | null;
   inboxRunning: boolean;
+  /** Its Plannotator Inbox's id and the Inboxes linked with it (src/lib/db/types.ts DeviceDoc). */
+  inboxId?: string | null;
+  inboxLinks?: string[];
   linearCheckedAt: string | null;
   master?: DeviceMasterStatus | null;
   forgotten?: boolean;

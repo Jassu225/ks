@@ -2,6 +2,9 @@
 
 ## 2026-11-17
 
+- **Another Mac's Inbox questions open on this Mac (ks-flow 0.8.0):** once the two Macs' Plannotator Inboxes are linked (Tailscale, `plannotator inbox link`, see ks 1.3.9), the NEEDS YOU sash and the Inbox rows on another Mac's card open **this** Mac's Inbox at that thread. It shows the other Mac's threads, and an answer reaches the agent there. The row reads "Inbox ↗ · B". Each daemon publishes its Inbox's id and the ids linked with it (`devices/{id}.inboxId`, `inboxLinks`, ids only from Plannotator's `machines.json`). Unlinked, the rows stay plain and say to link the Inboxes.
+  - **An Inbox chip on the card:** "Inbox ↗" sits beside Slack and PR whenever the card has Inbox threads. It opens the first thread that waits on you, else the newest. "⏳ waiting: Inbox" now opens that thread too.
+
 - **Setup suggests Plannotator (ks 1.3.9):** a new `ks-setup doctor` check, `plannotator`, looks for the `plannotator` binary and its Claude Code plugin (`plannotator@plannotator`, user scope). When either is missing, `/ks:setup` suggests it once, as an optional extra: plan and code review in the browser, and the Inbox, which ks-flow shows on the cards. The user installs it, since its installer downloads from plannotator.ai: `curl -fsSL https://plannotator.ai/install.sh | bash`, then `/plugin marketplace add backnotprop/plannotator` and `/plugin install plannotator@plannotator` in Claude, then a restart.
   - **Several Macs, one Inbox:** with 2+ Macs on the ks-flow board, three more checks guide the one-time steps that give every Mac one Inbox showing both Macs' threads (Plannotator's own linking). The user does all three.
     - `tailscale`: installed, running and logged in with one account on every Mac.

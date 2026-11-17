@@ -1251,6 +1251,10 @@ Agents can ask in the [Plannotator Inbox](https://docs.plannotator.ai/open-sourc
 - **Waiting.** A card with something waiting gets `waiting: { tool: 'Inbox', since }` (the oldest waiting question), unless it already waits on something older.
 - **Notice.** When a question or action item newly waits, one notice per card: title the ticket, subtitle *Claude asked you in the Inbox* (*Stopped on you — …* when the agent stopped), body the question (`+N more`). What was already open when the daemon starts is not announced. Same switches as the rest: the reminders master switch and the card's Pause.
 - **Links.** `<url>#thread=<root id>&msg=<message id>` (the first waiting message), where `url` comes from `inbox.json` read every tick, since the Inbox's port changes when it restarts. The daemon reads `url`, `port` and `serverSession` only, never the token. `GET /api/inbox/health` decides `inboxRunning`; when the Inbox is closed the links say so (`plannotator inbox` starts it).
+- **Another Mac's card.** Each Inbox listens only on its own Mac, so another device's card had no Inbox link. With Plannotator's linked machines, two Inboxes are linked once over Tailscale (`plannotator inbox link`; `ks-setup doctor` guides it), and each window shows both Macs' threads; a `#thread=<id>` link to the other Mac's thread opens there too.
+  - **What each daemon publishes:** its Inbox's id and the ids linked with it, as `devices/{id}.inboxId` and `inboxLinks`. It reads them from `inbox/machines.json`: the ids only, never a link's token.
+  - **The chips:** an "Inbox ↗" chip, beside Slack and PR whenever the card has Inbox threads, opens the first thread that waits on you, else the newest. "⏳ waiting: Inbox" opens that thread too. Both follow the same rule as the sash, below.
+  - **The card:** when the viewing device's `inboxLinks` holds the owner's `inboxId`, the sash and the thread rows open the viewing device's own Inbox at that thread ("Inbox ↗ · B"). Otherwise they stay plain rows that say to open the Inbox on the owner, or to link the two Inboxes.
 
 ## Notifications
 

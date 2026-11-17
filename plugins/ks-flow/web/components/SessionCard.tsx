@@ -315,18 +315,30 @@ function threadLink(inbox: InboxAddress | undefined, t: InboxThreadRef): string 
  * question, action item or unsent answer waits on you. Red when the agent has
  * stopped until you answer. Clicking it opens the first such thread.
  */
-function NeedsYouRibbon({ unit, inbox, elsewhere }: { unit: WorkUnitDoc; inbox?: InboxAddress; elsewhere?: string }) {
+function NeedsYouRibbon({
+  unit,
+  inbox,
+  elsewhere,
+  linked = false,
+}: {
+  unit: WorkUnitDoc;
+  inbox?: InboxAddress;
+  elsewhere?: string;
+  /** Another device's card whose Inbox is linked with this device's: this Inbox shows its threads. */
+  linked?: boolean;
+}) {
   const state = unit.inbox;
   if (!state?.needsYou) return null;
   const first = state.threads.find((t) => t.questions.length > 0) ?? state.threads[0];
-  // Another device's Inbox answers on its own localhost: no link from here.
-  const href = first && !elsewhere ? threadLink(inbox, first) : null;
+  // Another device's Inbox answers on its own localhost: no link from here,
+  // unless the two Inboxes are linked (then this one shows its threads).
+  const href = first && (!elsewhere || linked) ? threadLink(inbox, first) : null;
   const waiting = state.threads.reduce((n, t) => n + t.open + t.picked, 0);
   const title =
     `${state.stopped ? 'Stopped on you: ' : ''}${waiting} Inbox item${waiting === 1 ? '' : 's'} waiting on you` +
     (state.since ? ` since ${relTime(state.since)}` : '') +
-    (elsewhere
-      ? ` — open the Inbox on ${elsewhere}`
+    (elsewhere && !linked
+      ? ` — open the Inbox on ${elsewhere}, or link the two Inboxes (ks-setup doctor: plannotator:linked)`
       : href
         ? inbox?.running
           ? ' — open the thread'
@@ -355,20 +367,24 @@ function InboxThreads({
   inbox,
   elsewhere,
   elsewhereTag,
+  linked = false,
 }: {
   unit: WorkUnitDoc;
   inbox?: InboxAddress;
   /** The owning device's name (tooltips) and its short label for the row (`A`, else the name). */
   elsewhere?: string;
   elsewhereTag?: string;
+  /** Another device's card whose Inbox is linked with this device's: its threads open here. */
+  linked?: boolean;
 }) {
   const threads = unit.inbox?.threads ?? [];
   if (threads.length === 0) return null;
-  const closed = !elsewhere && !!inbox?.url && !inbox.running;
+  const local = !elsewhere || linked;
+  const closed = local && !!inbox?.url && !inbox.running;
   return (
     <div className="mt-2 space-y-1 border-t border-slate-800 pt-2 text-[11px]">
       {threads.map((t) => {
-        const href = elsewhere ? null : threadLink(inbox, t);
+        const href = local ? threadLink(inbox, t) : null;
         const questions = t.open - Math.min(t.actions, t.open);
         const parts = [
           questions > 0 && `${questions} open question${questions === 1 ? '' : 's'}`,
@@ -381,7 +397,8 @@ function InboxThreads({
           t.subject,
           ...t.questions.map((q) => `${q.kind === 'action' ? 'Action' : 'Q'}: ${q.prompt}`),
           closed ? 'The Inbox is closed: run `plannotator inbox`' : null,
-          elsewhere ? `Open the Inbox on ${elsewhere}` : null,
+          elsewhere && linked ? `On ${elsewhere}: opens in this Mac's Inbox, linked with it` : null,
+          elsewhere && !linked ? `Open the Inbox on ${elsewhere}, or link the two Inboxes (ks-setup doctor: plannotator:linked)` : null,
         ]
           .filter(Boolean)
           .join('\n');
@@ -397,9 +414,14 @@ function InboxThreads({
               )}
               {t.subject && <span className="block truncate text-slate-500">{t.subject}</span>}
             </span>
-            {href && <span className="ml-auto shrink-0 text-slate-500">{closed ? 'Inbox (closed)' : 'Inbox ↗'}</span>}
+            {href && (
+              <span className="ml-auto shrink-0 text-slate-500">
+                {closed ? 'Inbox (closed)' : 'Inbox ↗'}
+                {elsewhere && ` · ${elsewhereTag ?? elsewhere}`}
+              </span>
+            )}
             {/* Short (the device's label) and allowed to shrink: a long device name never widens the card. */}
-            {elsewhere && (
+            {elsewhere && !href && (
               <span className="ml-auto min-w-0 max-w-[40%] truncate text-right text-slate-600" title={`Inbox on ${elsewhere}`}>
                 Inbox on {elsewhereTag ?? elsewhere}
               </span>
@@ -462,6 +484,20 @@ export function WorkUnitCard({
   const ownerDoc = board.devices.find((d) => d.deviceId === ownerId) ?? null;
   const ownerName = deviceLabel(ownerDoc, ownerId);
   const elsewhere = isMine ? undefined : ownerName;
+  // Plannotator's linked machines: this device's Inbox linked with the owner's
+  // shows the owner's threads too, so the card's Inbox links open here.
+  const selfDoc = board.devices.find((d) => d.deviceId === board.self) ?? null;
+  const inboxLinked = !isMine && !!ownerDoc?.inboxId && !!selfDoc?.inboxLinks?.includes(ownerDoc.inboxId);
+  // The card's Inbox thread to open: the first that waits on you, else the newest
+  // (the chips below). This device's own Inbox, or a linked one's thread through it.
+  const inboxThreads = unit.inbox?.threads ?? [];
+  const inboxThread = inboxThreads.find((t) => t.questions.length > 0) ?? inboxThreads[0];
+  const inboxHref = inboxThread && (isMine || inboxLinked) ? threadLink(inbox, inboxThread) : null;
+  const inboxTip = inboxThread
+    ? `${inboxThread.subject || 'Inbox thread'}${elsewhere ? ` (on ${elsewhere})` : ''}${
+        inboxHref && inbox && !inbox.running ? ' — the Inbox is closed: run `plannotator inbox`' : ''
+      }`
+    : '';
   // Another device asleep or offline: the card keeps its place, but what its
   // daemon last wrote about live sessions is no longer news.
   const ownerAsleep = !isMine && !!board.settings && isDeviceStale(ownerDoc, now);
@@ -513,7 +549,7 @@ export function WorkUnitCard({
         dimmed ? 'opacity-50' : ''
       }`}
     >
-      <NeedsYouRibbon unit={unit} inbox={inbox} elsewhere={elsewhere} />
+      <NeedsYouRibbon unit={unit} inbox={inbox} elsewhere={elsewhere} linked={inboxLinked} />
       <StatusRibbon unit={unit} ribbonSpace={needsYou} elsewhere={elsewhere} />
       <div className={`flex items-start justify-between gap-2 ${needsYou ? 'pr-8' : ''}`}>
         <span className="font-mono text-xs font-semibold text-slate-400">
@@ -574,11 +610,35 @@ export function WorkUnitCard({
             PR{unit.pr.number ? ` #${unit.pr.number}` : ''}
           </a>
         )}
-        {waiting && (
-          <span className="rounded bg-amber-400 px-1.5 py-0.5 font-semibold text-amber-950">
-            ⏳ waiting: {unit.waiting?.tool}
-          </span>
+        {inboxHref && (
+          <a
+            href={inboxHref}
+            target="_blank"
+            rel="noreferrer"
+            title={inboxTip}
+            onClick={(e) => e.stopPropagation()}
+            className="rounded bg-orange-950 px-1.5 py-0.5 font-medium text-orange-200 hover:bg-orange-900"
+          >
+            Inbox ↗
+          </a>
         )}
+        {waiting &&
+          (unit.waiting?.tool === 'Inbox' && inboxHref ? (
+            <a
+              href={inboxHref}
+              target="_blank"
+              rel="noreferrer"
+              title={`Open the thread: ${inboxTip}`}
+              onClick={(e) => e.stopPropagation()}
+              className="rounded bg-amber-400 px-1.5 py-0.5 font-semibold text-amber-950 hover:bg-amber-300"
+            >
+              ⏳ waiting: Inbox ↗
+            </a>
+          ) : (
+            <span className="rounded bg-amber-400 px-1.5 py-0.5 font-semibold text-amber-950">
+              ⏳ waiting: {unit.waiting?.tool}
+            </span>
+          ))}
         {unit.worktreeDir && <CopyPath path={unit.worktreeDir} on={elsewhere} />}
         {live.length > 0 && (
           <button
@@ -605,7 +665,7 @@ export function WorkUnitCard({
         {isMine && <RemoveWorktree unit={unit} completed={done} onRemoved={onRemoved} />}
       </div>
 
-      <InboxThreads unit={unit} inbox={inbox} elsewhere={elsewhere} elsewhereTag={isMine ? undefined : ownerDoc?.label || ownerName} />
+      <InboxThreads unit={unit} inbox={inbox} elsewhere={elsewhere} elsewhereTag={isMine ? undefined : ownerDoc?.label || ownerName} linked={inboxLinked} />
 
       <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
         <span className="flex min-w-0 items-center gap-1.5">

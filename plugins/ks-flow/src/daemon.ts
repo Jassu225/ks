@@ -152,6 +152,7 @@ import {
   attachInbox,
   InboxReader,
   inboxRunning,
+  readInboxLinks,
   plannotatorDataDir,
   readInboxRegistry,
   type ThreadSummary,
@@ -1026,6 +1027,9 @@ const inboxReader = new InboxReader(
 );
 let inboxThreads: ThreadSummary[] = []; // threads with something for the person
 let inboxUrl: string | null = null; // from inbox.json: the port changes on every restart
+/** This Inbox's id and the Inboxes linked with it (inbox/machines.json), for devices/{self}. */
+let inboxId: string | null = null;
+let inboxLinks: string[] = [];
 let inboxIsRunning = false;
 let inboxHealthAt = 0; // ms epoch of the last health check
 let inboxHealthKey = ''; // the url + serverSession it checked
@@ -1258,6 +1262,10 @@ async function pollInbox(): Promise<void> {
   if (url !== inboxUrl || running !== inboxIsRunning) changed = true;
   inboxUrl = url;
   inboxIsRunning = running;
+  const linked = readInboxLinks(PLANNOTATOR_DIR);
+  if (linked.self !== inboxId || linked.links.join(',') !== inboxLinks.join(',')) changed = true;
+  inboxId = linked.self;
+  inboxLinks = linked.links;
   if (changed) scheduleProjectRecompute();
 }
 
@@ -1338,6 +1346,8 @@ async function recomputeDevice(joined: WorkUnitDoc[], deduped: WorkUnitDoc[]): P
       worktreePaths: knownWorktrees,
       inboxUrl,
       inboxRunning: inboxIsRunning,
+      inboxId,
+      inboxLinks,
       linearCheckedAt,
     };
     const sig = docSig(facts);

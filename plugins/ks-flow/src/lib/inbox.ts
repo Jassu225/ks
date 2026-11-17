@@ -455,6 +455,29 @@ export function readInboxRegistry(dataDir: string): InboxRegistry | null {
   }
 }
 
+/**
+ * This Inbox's id and the Inboxes linked with it (Plannotator's linked
+ * machines: `inbox/machines.json`, `{ self: { id }, links: [{ id, ... }] }`).
+ * Only the ids are read, never a link's token. A machine whose Inbox is linked
+ * with another shows that machine's threads in its own window, so the board
+ * links another device's card to this Inbox. No file: never linked.
+ */
+export function readInboxLinks(dataDir: string): { self: string | null; links: string[] } {
+  try {
+    const o = JSON.parse(readFileSync(join(dataDir, 'inbox', 'machines.json'), 'utf8')) as {
+      self?: { id?: unknown };
+      links?: Array<{ id?: unknown }>;
+    };
+    const self = typeof o.self?.id === 'string' && o.self.id ? o.self.id : null;
+    const links = Array.isArray(o.links)
+      ? o.links.map((l) => (typeof l?.id === 'string' ? l.id : '')).filter(Boolean).sort()
+      : [];
+    return { self, links };
+  } catch {
+    return { self: null, links: [] };
+  }
+}
+
 /** Whether the Inbox named by `reg` answers (its health carries the same serverSession). */
 export async function inboxRunning(reg: InboxRegistry, timeoutMs = 1500): Promise<boolean> {
   try {

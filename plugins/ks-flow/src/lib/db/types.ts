@@ -121,6 +121,13 @@ export interface DeviceDoc {
   /** This device's Plannotator Inbox (a localhost address) and whether it answers. */
   inboxUrl: string | null;
   inboxRunning: boolean;
+  /**
+   * Its Inbox's id (`ibx_…`) and the Inboxes linked with it (Plannotator's
+   * linked machines). Two devices whose Inboxes are linked each show the
+   * other's threads, so a card of one opens the viewing device's own Inbox.
+   */
+  inboxId?: string | null;
+  inboxLinks?: string[];
   /** When this device's daemon last read its tickets from Linear (successfully). */
   linearCheckedAt: string | null;
   /** Published only by the master device (phase 5). */
