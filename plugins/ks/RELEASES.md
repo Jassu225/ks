@@ -2,6 +2,8 @@
 
 ## 2026-11-17
 
+- **`ks-flow start` starts the board too (ks-flow 0.8.3):** it brought up only the daemon, so after `ks-flow stop && ks-flow start` the board stayed down until `ks-flow open`. `start` now also starts the board, building it first when its sources changed, without opening a browser tab. A board already running is kept. `ks-flow open` still opens it in the browser.
+
 - **A restart no longer clears the NEEDS YOU sash (ks-flow 0.8.2):** on every daemon start (so every update), the cards were rebuilt and written before the daemon's first read of the Plannotator Inbox, which came on the first 15 s tick. Every card was written with no Inbox threads, and the sash and the Inbox wait went off on every board until the next write. The daemon now reads the Inbox once at start, before the first card write, as it already did for the last Linear status.
   - **The device chip gets its own row:** at the bottom of each card, as wide as the card, truncated only beyond that. In the footer beside the sessions it was cut off at about 10 characters.
 

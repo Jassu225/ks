@@ -272,7 +272,7 @@ never copied into the launchd plist.
 
    It refuses to write if Firestore already holds ks-flow data, unless you pass
    `--force`.
-2. Add the four `.env` lines, then `ks-flow stop && ks-flow start && ks-flow open`.
+2. Add the four `.env` lines, then `ks-flow stop && ks-flow start` (it starts the board too; `ks-flow open` opens it in the browser).
    The daemon's startup backfill writes the cards and sessions.
 3. Keep `pocketbase/pb_data` as a backup for a couple of weeks.
 
@@ -500,7 +500,7 @@ has been using the board, before ks-flow starts on any other device**.
      `masterEvents` doc that has no `deviceId` with this device (merges, 500 or
      fewer per batch, through the offline outbox);
    - copies `meta/project` into `devices/<this id>`, then deletes it.
-5. `ks-flow start && ks-flow open`: the daemon and the board **together**, so a
+5. `ks-flow start`: the daemon and the board **together** (`start` starts the board too), so a
    new board never talks to an old daemon or the other way round.
 6. `ks-setup doctor`: `ks-flow:device` says the store is set up for devices.
 

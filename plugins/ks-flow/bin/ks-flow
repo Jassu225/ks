@@ -1,7 +1,7 @@
 #!/bin/bash
 # ks-flow — CLI on PATH while the plugin is enabled.
 #
-#   ks-flow start             start the daemon (+ PocketBase when it is the store); builds/installs on first run
+#   ks-flow start             start the daemon (+ PocketBase when it is the store) and the board (no browser tab); builds/installs on first run
 #   ks-flow open              build and open the board UI in the browser
 #   ks-flow close             stop the board UI server
 #   ks-flow stop              stop everything — board UI, daemon, and PocketBase (if running)
@@ -151,7 +151,8 @@ case "$cmd" in
 
   start)
     # Start (or refresh) the daemon — bootstrap installs/builds on first run,
-    # downloads PocketBase, and loads the always-on launchd agent that spawns it.
+    # downloads PocketBase, and loads the always-on launchd agent that spawns it —
+    # then the board (no browser tab).
     #
     # bootstrap needs project_path; inside a Claude session it's in the env, but
     # from a plain shell it isn't — fall back to the persisted project.conf so
@@ -184,7 +185,10 @@ case "$cmd" in
       echo "recent daemon log ($DATA_DIR/daemon.log):"
       tail -n 12 "$DATA_DIR/daemon.log" | sed 's/^/  /'
     fi
-    echo "board: 'ks-flow open'   ·   status: 'ks-flow status'"
+    # The board too (built or rebuilt when its sources changed), without a
+    # browser tab: `ks-flow open` opens one. A board already running is kept.
+    KS_FLOW_NO_BROWSER=1 "$0" open || echo "board did not start — see $DATA_DIR/board.log" >&2
+    echo "board: http://localhost:$BOARD_PORT ('ks-flow open' opens it)   ·   status: 'ks-flow status'"
     ;;
 
   close)
