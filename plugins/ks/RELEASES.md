@@ -2,6 +2,10 @@
 
 ## 2026-11-17
 
+- **The "run /reload-plugins" pill no longer sticks after the automatic reload (ks 1.3.10):** after a release, the ks module runs `/reload-plugins ks` by itself at an idle moment, then re-reads which versions are loaded. It did that re-read in its `command.run` hook, which catches a `/reload-plugins` you type. But a command a module runs itself skips that module's own hooks (`$.command.run` "runs through every hook but the calling one"). So after its own reload it still had the old versions on record, decided the reload hadn't taken, and showed "ks-flow 0.8.0 — run /reload-plugins" in every session until you typed it. It now re-reads the versions from its own run's answer too.
+
+- **Open board tabs reload after an update (ks-flow 0.8.1):** an update rebuilds and restarts the board, but a tab left open kept the old page and showed stale information. Every tab now notices the new build (`/api/version` returns the build id; checked every 30 s and when the tab comes back into view) and reloads itself, waiting while you type in a field.
+
 - **Another Mac's Inbox questions open on this Mac (ks-flow 0.8.0):** once the two Macs' Plannotator Inboxes are linked (Tailscale, `plannotator inbox link`, see ks 1.3.9), the NEEDS YOU sash and the Inbox rows on another Mac's card open **this** Mac's Inbox at that thread. It shows the other Mac's threads, and an answer reaches the agent there. The row reads "Inbox ↗ · B". Each daemon publishes its Inbox's id and the ids linked with it (`devices/{id}.inboxId`, `inboxLinks`, ids only from Plannotator's `machines.json`). Unlinked, the rows stay plain and say to link the Inboxes.
   - **An Inbox chip on the card:** "Inbox ↗" sits beside Slack and PR whenever the card has Inbox threads. It opens the first thread that waits on you, else the newest. "⏳ waiting: Inbox" now opens that thread too.
 

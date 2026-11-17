@@ -657,7 +657,14 @@ async function startAutoReload($: EngineInterface, cwd: string): Promise<void> {
       return box && typeof box.text === 'string' ? box.text : ''
     },
     // From the mod's clock only, never from a hook a turn waits on; never --force.
-    run: () => $.command.run({ command: AUTO_RELOAD_COMMAND, args: AUTO_RELOAD_ARGS }),
+    // A command this module runs skips this module's own hooks (`$.command.run`
+    // "runs through every hook but the calling one"), so the command.run hook
+    // below never sees it: re-read the loaded versions here, from its answer.
+    run: async () => {
+      const out = await $.command.run({ command: AUTO_RELOAD_COMMAND, args: AUTO_RELOAD_ARGS })
+      if (reloadRan(out?.text)) await refreshLoaded($).catch(() => undefined)
+      return out
+    },
     busyReason: () => (!sessionStarted ? 'the session is starting' : mainTurns.size > 0 ? 'a turn runs' : null),
     after: (ms, fn) => {
       $.clock.after(ms, fn)

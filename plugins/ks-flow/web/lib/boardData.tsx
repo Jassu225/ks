@@ -6,7 +6,7 @@
 // data, and a move between pages keeps the subscription (and the shared
 // clock) instead of re-loading. Two subscriptions to one PocketBase collection
 // would also fight: unsubscribe() drops every listener on that collection.
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { stageOf } from './briefing-escalation';
 import { useActivity, type ActivityData } from './useActivity';
 import { useBoard, type BoardData } from './useBoard';
@@ -55,6 +55,13 @@ export function inboxWaiting(units: WorkUnitDoc[]): number {
   return n;
 }
 
+/** A text field has the focus: reloading now would lose what is being typed. */
+function typing(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  return el.isContentEditable || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['button', 'checkbox', 'radio', 'submit'].includes((el as HTMLInputElement).type));
+}
+
 export function BoardDataProvider({ config, children }: { config: BoardConfig; children: React.ReactNode }) {
   const board = useBoard(config);
   const briefing = useBriefing(config);
@@ -83,6 +90,9 @@ export function BoardDataProvider({ config, children }: { config: BoardConfig; c
   const [ksVersion, setKsVersion] = useState<string | null>(null);
   // This device's open problems (the daemon's errors.json: a local file, no store read).
   const [errorCount, setErrorCount] = useState(0);
+  // The board's build id when this tab loaded: a new one (an update rebuilt and
+  // restarted the board) reloads the tab, unless you are typing (then the next poll).
+  const loadedBuild = useRef<string | null>(null);
   useEffect(() => {
     const read = (): void => {
       fetch('/api/errors', { cache: 'no-store' })
@@ -91,7 +101,14 @@ export function BoardDataProvider({ config, children }: { config: BoardConfig; c
         .catch(() => {});
       fetch('/api/version', { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
-        .then((d: { status?: VersionStatus | null; board?: string | null; ks?: string | null } | null) => {
+        .then((d: { status?: VersionStatus | null; board?: string | null; ks?: string | null; build?: string | null } | null) => {
+          if (d?.build) {
+            if (!loadedBuild.current) loadedBuild.current = d.build;
+            else if (d.build !== loadedBuild.current && !typing()) {
+              window.location.reload();
+              return;
+            }
+          }
           if (d) {
             setVersion(d.status ?? null);
             setBoardVersion(d.board ?? null);
@@ -102,7 +119,15 @@ export function BoardDataProvider({ config, children }: { config: BoardConfig; c
     };
     read();
     const id = setInterval(read, 30_000);
-    return () => clearInterval(id);
+    // Back to the tab (after an update, say): look at once, not at the next poll.
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') read();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   // The Notes tab is opt-in (Settings → Notes).

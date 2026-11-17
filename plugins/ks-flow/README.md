@@ -857,6 +857,15 @@ The master uses commands to start tickets on another Mac
 (`plugins/ks-master/instructions.md`). The KS rules tell every agent to use them
 instead of asking a peer session to do such errands.
 
+### An update reloads open tabs
+
+`/api/version` returns the board's build id (`.next/BUILD_ID`) with the
+versions. Every tab already polls it every 30 s, and also when the tab comes
+back into view. A tab that sees a different build id than the one it loaded
+with (an update rebuilt and restarted the board) reloads itself, so no tab is
+left showing the old board. While a text field has the focus it waits for the
+next poll, so nothing being typed is lost.
+
 ### Errors (`/errors`)
 
 This device's ks-flow problems, from the daemon's `errors.json` (see [No timed

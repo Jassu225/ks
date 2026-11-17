@@ -28,8 +28,6 @@ Ideas agreed on but not scheduled. Newest first. Remove an entry when it ships
   is idle, as the master gets its requests. That gives delivery receipts and
   history, which Remote Control messages lack, and needs no Remote Control. Wait
   and see whether Remote Control's gaps hurt first.
-- **The board reloads itself when its server's build changes**, so a tab left
-  open across a release can't show the old board.
 
 ## ks
 

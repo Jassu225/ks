@@ -478,10 +478,15 @@ test('in a clone, a plugin.json version change reloads the plugins once, never w
   await clock.advance(120_000)
   expect(runs).toHaveLength(1)
 
-  // The reload did not replace the module (the test host keeps it): the manual notice.
+  // The reload kept the module (the test host keeps it, as the engine does when
+  // the module's own files didn't change), and its own run skips its own
+  // command.run hook: it reads the loaded versions from the run's answer, so
+  // the reload counts and no pill shows.
+  await clock.advance(120_000)
+  expect(runs).toHaveLength(1)
   const hint = await $.ui.mount({ plugin: 'ks', surface: 'terminal', ...HINT })
-  expect(JSON.stringify(await hint.find({ key: 'reload-pill' }))).toContain('ks-flow 0.3.0')
-  expect(JSON.stringify(await hint.drawn())).toContain('run /reload-plugins')
+  expect(await hint.find({ key: 'reload-pill' })).toBeFalsy()
+  expect(JSON.stringify(await hint.drawn())).not.toContain('run /reload-plugins')
   await hint.unmount()
 })
 

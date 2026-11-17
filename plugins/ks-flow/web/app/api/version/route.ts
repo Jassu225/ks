@@ -5,6 +5,9 @@
 // `board`: the ks-flow version this board was built from, as `ks-flow open`
 // recorded it (.ks-flow-version in the board's folder), else the plugin it was
 // started from. `ks`: the ks plugin's version on this Mac (its live folder).
+// `build`: this board's Next.js build id (.next/BUILD_ID): an open tab that
+// sees it change reloads itself (lib/boardData.tsx), so an update never leaves
+// a tab showing the old board.
 // Polled by the shared header (lib/boardData.tsx) for the version
 // banner and the version next to the ks-flow name.
 import { readFileSync } from 'node:fs';
@@ -31,6 +34,15 @@ function boardVersion(): string | null {
   }
 }
 
+/** This board's build id: a new one on every build (an update rebuilds the board). */
+function buildId(): string | null {
+  try {
+    return readFileSync(join(process.cwd(), '.next', 'BUILD_ID'), 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /** The ks plugin's version on this Mac (its live folder: what the KS commands and new sessions run). */
 function ksVersion(): string | null {
   const root = liveRoot('ks', rootContext());
@@ -43,5 +55,5 @@ function ksVersion(): string | null {
 }
 
 export async function GET(): Promise<NextResponse> {
-  return NextResponse.json({ status: readVersionStatus(), board: boardVersion(), ks: ksVersion() });
+  return NextResponse.json({ status: readVersionStatus(), board: boardVersion(), ks: ksVersion(), build: buildId() });
 }
