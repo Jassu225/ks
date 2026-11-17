@@ -2,6 +2,9 @@
 
 ## 2026-11-17
 
+- **The ks version on the board (ks-flow 0.5.2):** the header shows `· ks <version>` beside ks-flow's, and the Processes page a "plugins on this Mac" line (ks, and ks-flow with the board's version when it differs from the daemon's). `/api/version` returns `ks`, read from the ks plugin's live folder.
+- **No reload pill after a scripts-only ks release (ks 1.3.4):** the engine re-runs the ks mod only when the mod's own files change, not on a version change, so after 1.3.2 and 1.3.3 (scripts only) the mod kept its note of ks 1.3.1, and every `/reload-plugins` fell short of the target and left the pill. After a successful `/reload-plugins` the mod now re-reads every plugin's version, ks included (from its own folder), not only ks-flow and ks-master.
+
 - **Another Mac's card with Inbox questions keeps its layout (ks-flow 0.5.1):** on a card owned by another device, each Inbox row ended with "Inbox on <the device's full name>", which never shrank, so a long name squeezed the row's text into a one-word column. The row now says "Inbox on A" (the device's label; the full name is in the tooltip), the label can shrink and truncate, and the text takes the row's width.
 
 - **A status change keeps the ticket's place in the manual order (ks 1.3.3):** through the API, Linear moved an issue whose state changed without a `sortOrder`, while its own UI keeps the place. `linear issue update --state` now sends the issue's current `sortOrder` with the new state, unless `--position`, `--after` or `--before` asks for a new place. `linear issue batch-update --state` (one input for every issue) puts back the place of any issue the new state moved.

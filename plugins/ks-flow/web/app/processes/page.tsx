@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AppHeader } from '@/components/AppHeader';
 import { RefreshIcon } from '@/components/icons';
+import { useShared } from '@/lib/boardData';
 
 interface ProcInfo {
   name: string;
@@ -24,6 +25,8 @@ function fmtStarted(p: ProcInfo): string {
 }
 
 export default function ProcessesPage() {
+  const { ksVersion, boardVersion, version } = useShared();
+  const daemonVersion = version?.version ?? null;
   const [procs, setProcs] = useState<ProcInfo[]>([]);
   const [daemonCount, setDaemonCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -111,6 +114,22 @@ export default function ProcessesPage() {
           running (notifications fire twice) — use the <span className="text-slate-300">Kill</span>{' '}
           button on the older one.
         </p>
+
+        {(ksVersion || boardVersion || daemonVersion) && (
+          <p className="mt-3 font-mono text-xs text-slate-400" title="The KS plugins on this Mac: ks (commands, launchers, rules, status line) and ks-flow (this board and its daemon)">
+            <span className="text-slate-500">plugins on this Mac:</span>{' '}
+            {ksVersion && <span className="text-slate-300">ks {ksVersion}</span>}
+            {ksVersion && (boardVersion || daemonVersion) && <span className="text-slate-600"> · </span>}
+            {(boardVersion || daemonVersion) && (
+              <span className="text-slate-300">
+                ks-flow {daemonVersion ?? boardVersion}
+                {boardVersion && daemonVersion && boardVersion !== daemonVersion && (
+                  <span className="text-amber-400"> (board {boardVersion})</span>
+                )}
+              </span>
+            )}
+          </p>
+        )}
 
         {daemonCount > 1 && (
           <div className="mt-3 rounded border border-amber-900 bg-amber-950/50 px-3 py-2 text-sm text-amber-200">

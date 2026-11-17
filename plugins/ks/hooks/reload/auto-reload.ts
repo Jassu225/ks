@@ -446,10 +446,11 @@ export class AutoReload {
 
   /**
    * Still here after the check-in window: the reload did not replace this
-   * module. That is right when only plugins without a module changed (ks-flow,
-   * ks-master): the engine re-runs changed modules only, and the mod re-reads
-   * those plugins after every `/reload-plugins` (register.tsx's `command.run`
-   * hook), so `loaded()` already names the target. Then the reload took.
+   * module. That is right when this module's own files did not change (a
+   * release of ks's scripts only, or of ks-flow / ks-master): the engine
+   * re-runs changed modules only, and the mod re-reads every plugin's version
+   * after each `/reload-plugins` (register.tsx's `command.run` hook), so
+   * `loaded()` already names the target. Then the reload took.
    */
   private async notReplaced(record: AutoReloadRecord): Promise<void> {
     if (this.disposed) return

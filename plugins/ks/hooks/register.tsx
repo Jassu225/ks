@@ -588,17 +588,21 @@ function loadedSnapshot($: EngineInterface): Promise<{ set: PluginSet; info: Loa
 }
 
 /**
- * After a `/reload-plugins` that left this module in place (the engine re-runs
- * changed modules only, so a release of ks-flow or ks-master alone keeps it):
- * the plugins without a module were reloaded all the same, so read their
- * versions again into what this module counts as loaded. ks itself stays as
- * read: had it changed, a new module would have replaced this one.
+ * After a `/reload-plugins` that left this module in place: the engine re-runs
+ * a module only when its own files changed, so a release that changed ks's
+ * scripts but not this module (or only ks-flow / ks-master, which have none)
+ * keeps it. Every plugin was reloaded all the same, so read every version
+ * again into what this module counts as loaded: ks from this module's own
+ * folder (a new install folder would have brought a new module), the others
+ * from their live folders.
  */
-async function refreshLoadedOthers($: EngineInterface): Promise<void> {
+async function refreshLoaded($: EngineInterface): Promise<void> {
   const ctx = rootCtx
   if (!ctx || !loadedPlugins) return
   const prev = await loadedPlugins
   const set: PluginSet = { ...prev.set }
+  const ksRoot = prev.set.ks?.root ?? prev.info.root
+  if (ksRoot) set.ks = { root: ksRoot, version: await versionAt(ctx.fs, ksRoot) }
   for (const name of reloadNames.filter(n => n !== 'ks')) {
     const found = await liveRoot(name, ctx)
     set[name] = { root: found, version: await versionAt(ctx.fs, found) }
@@ -776,11 +780,11 @@ export const register: Register = on => {
     return entered
   })
 
-  // Any `/reload-plugins` (typed, or the auto reload's): once it ran, re-read the
-  // plugins without a module (refreshLoadedOthers). Never fails the command.
+  // Any `/reload-plugins` (typed, or the auto reload's): once it ran, re-read
+  // every plugin's version (refreshLoaded). Never fails the command.
   on('command.run', { command: AUTO_RELOAD_COMMAND }, async ($, e, next) => {
     const out = await next(e)
-    if (reloadRan(out?.text)) await refreshLoadedOthers($).catch(() => undefined)
+    if (reloadRan(out?.text)) await refreshLoaded($).catch(() => undefined)
     return out
   })
 

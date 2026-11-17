@@ -187,7 +187,7 @@ function DevBuildChip() {
 
 export function AppHeader({ toolbar }: { toolbar?: ReactNode }) {
   const pathname = usePathname() ?? '/';
-  const { config, board, notesEnabled, bellCount, inboxCount, version, boardVersion } = useShared();
+  const { config, board, notesEnabled, bellCount, inboxCount, version, boardVersion, ksVersion } = useShared();
   // The board's own version; amber when its daemon runs another one (the board
   // wasn't rebuilt: `ks-flow open` does it).
   const daemonVersion = version?.version ?? null;
@@ -242,6 +242,14 @@ export function AppHeader({ toolbar }: { toolbar?: ReactNode }) {
               }
             >
               v{boardVersion}
+            </span>
+          )}
+          {ksVersion && (
+            <span
+              className="font-mono text-[11px] text-slate-500"
+              title={`The ks plugin on this Mac (commands, launchers, rules, status line): ${ksVersion}`}
+            >
+              · ks {ksVersion}
             </span>
           )}
           {projectPath && (
