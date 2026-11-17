@@ -2796,6 +2796,11 @@ async function main(): Promise<void> {
   ]);
   if (deviceMode) await deviceHeartbeat().catch((e) => log('devices: heartbeat failed', (e as Error)?.message));
   await seedWriteGate();
+  // The Inbox before the first cards are written: until its first read the
+  // cards carry no threads, and writing them would clear every card's NEEDS
+  // YOU sash and Inbox wait on every board until the next tick (each restart,
+  // so each update).
+  await pollInbox().catch((e) => log('inbox: first read failed', (e as Error)?.message));
   await backfill();
   // Backfill-only mode: ingest once, flush, exit (deterministic verification /
   // one-shot debug). No watchers, no live tailing.

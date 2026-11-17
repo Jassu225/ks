@@ -2,6 +2,9 @@
 
 ## 2026-11-17
 
+- **A restart no longer clears the NEEDS YOU sash (ks-flow 0.8.2):** on every daemon start (so every update), the cards were rebuilt and written before the daemon's first read of the Plannotator Inbox, which came on the first 15 s tick. Every card was written with no Inbox threads, and the sash and the Inbox wait went off on every board until the next write. The daemon now reads the Inbox once at start, before the first card write, as it already did for the last Linear status.
+  - **The device chip gets its own row:** at the bottom of each card, as wide as the card, truncated only beyond that. In the footer beside the sessions it was cut off at about 10 characters.
+
 - **The "run /reload-plugins" pill no longer sticks after the automatic reload (ks 1.3.10):** after a release, the ks module runs `/reload-plugins ks` by itself at an idle moment, then re-reads which versions are loaded. It did that re-read in its `command.run` hook, which catches a `/reload-plugins` you type. But a command a module runs itself skips that module's own hooks (`$.command.run` "runs through every hook but the calling one"). So after its own reload it still had the old versions on record, decided the reload hadn't taken, and showed "ks-flow 0.8.0 — run /reload-plugins" in every session until you typed it. It now re-reads the versions from its own run's answer too.
 
 - **Open board tabs reload after an update (ks-flow 0.8.1):** an update rebuilds and restarts the board, but a tab left open kept the old page and showed stale information. Every tab now notices the new build (`/api/version` returns the build id; checked every 30 s and when the tab comes back into view) and reloads itself, waiting while you type in a field.

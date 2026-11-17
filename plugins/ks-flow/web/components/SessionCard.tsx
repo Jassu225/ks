@@ -5,7 +5,7 @@ import { RemoveWorktree } from '@/components/RemoveWorktree';
 import { TranscriptBackup } from '@/components/TranscriptBackup';
 import { useBackupStatus } from '@/lib/backupStatus';
 import { useShared } from '@/lib/boardData';
-import { DeviceChip, agoText, deviceLabel, isDeviceStale } from '@/components/DeviceChip';
+import { DeviceChip, agoText, deviceLabel, isDeviceStale, showDeviceChips } from '@/components/DeviceChip';
 
 // A session counts as "active" (glowing border) if it wrote within this window.
 // Derived client-side off a ticking clock (passed down from the board) so the
@@ -669,7 +669,6 @@ export function WorkUnitCard({
 
       <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
         <span className="flex min-w-0 items-center gap-1.5">
-          <DeviceChip deviceId={ownerId} selfLabel="This device" shrink />
           {ownerAsleep ? (
             <span className="shrink-0 whitespace-nowrap" title={`${ownerName}: last seen ${agoText(ownerDoc?.lastSeenAt, now)}`}>
               sessions unknown
@@ -686,6 +685,13 @@ export function WorkUnitCard({
           ⟳ active {relTime(unit.lastActivity)}
         </span>
       </div>
+
+      {/* Which device owns the card: its own last row, as wide as the card, truncated only beyond that. */}
+      {showDeviceChips(board.devices) && (
+        <div className="mt-1.5 flex min-w-0">
+          <DeviceChip deviceId={ownerId} selfLabel="This device" shrink className="!max-w-full" />
+        </div>
+      )}
     </div>
   );
 }
