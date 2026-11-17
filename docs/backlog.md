@@ -29,6 +29,11 @@ Ideas agreed on but not scheduled. Newest first. Remove an entry when it ships
   history, which Remote Control messages lack, and needs no Remote Control. Wait
   and see whether Remote Control's gaps hurt first.
 
+- **Remove `ks-flow inbox-check` once Plannotator reclaims its own Tailscale
+  mappings after a reboot.** It is a stopgap: the restarted Inbox refuses
+  to publish over its own leftover `tailscale serve` mapping (on its port, and
+  on the 8443 link door).
+
 ## ks
 
 - **Try `linear issue batch-update --state` on real tickets.** The single-ticket

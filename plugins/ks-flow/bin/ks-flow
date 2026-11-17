@@ -19,6 +19,7 @@
 #   ks-flow device-run <device> <command> [<arg>] [--from <who>] [--wait [s]]
 #                             the message board: a device's daemon runs one command (ping, start-ticket, new-session, restart-session, backup)
 #   ks-flow commands          the newest commands on the message board, with their outcome
+#   ks-flow inbox-check       this Mac's Plannotator Inbox: running, on the tailnet, linked; fixes leftover Tailscale mappings and restarts it (--dry-run: only look)
 #   ks-flow card-owner UNIT   which device a card is on; --json
 #   ks-flow card-move UNIT    move a card to this device (only once its owner no longer works it)
 #   ks-flow briefing CMD      the master's Briefing CLI: context, find, add, evidence, run, daily
@@ -279,6 +280,14 @@ case "$cmd" in
     exec node "$DAEMON_DIR/dist/device-cli.js" device-id "$@"
     ;;
 
+  inbox-check)
+    # This Mac's Plannotator Inbox: running, published on the tailnet, linked;
+    # removes leftover Tailscale mappings and restarts it when not (a stopgap
+    # until Plannotator reclaims its own mappings after a reboot).
+    shift
+    exec node "$DAEMON_DIR/dist/inbox-check.js" "$@"
+    ;;
+
   devices|peers|card-owner|card-move|device-run|commands)
     # Every device on the board (label, name, id, last seen, master, stale;
     # from the daemon's devices.json cache, --live the store); every running
@@ -383,7 +392,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|device-id [--json]|devices [--json] [--live]|peers [--md|--json]|device-run <device> <command> [<arg>] [--wait]|commands [--json]|card-owner <unit> [--json]|card-move <unit> [--json]|briefing <command>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]|migrate-store [--write]|update [--dry-run] [--no-fetch]}" >&2
+    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|device-id [--json]|devices [--json] [--live]|peers [--md|--json]|device-run <device> <command> [<arg>] [--wait]|commands [--json]|inbox-check [--dry-run]|card-owner <unit> [--json]|card-move <unit> [--json]|briefing <command>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]|migrate-store [--write]|update [--dry-run] [--no-fetch]}" >&2
     exit 1
     ;;
 esac

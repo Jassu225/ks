@@ -2,6 +2,12 @@
 
 ## 2026-11-17
 
+- **`ks-flow inbox-check`: put the Plannotator Inbox right after a reboot (ks-flow 0.8.4, a stopgap):**
+  - **The problem:** Tailscale keeps its `serve` mappings across a reboot, and the restarted Inbox refuses to publish over its own leftover mapping, or to reuse its link door's ("Another tailscale serve mapping already uses port …").
+  - **What it checks:** Plannotator, Tailscale, the Inbox running, leftover mappings, the tailnet address and the linked Macs.
+  - **What it fixes:** it removes the leftovers (only on the Inbox's or a link-door port, pointing at a loopback port nothing listens on), then starts or restarts the Inbox published, up to two rounds. `--dry-run` only reports.
+  - **Until Plannotator fixes it:** remove the command once Plannotator reclaims its own mappings (in the backlog).
+
 - **`ks-flow start` starts the board too (ks-flow 0.8.3):** it brought up only the daemon, so after `ks-flow stop && ks-flow start` the board stayed down until `ks-flow open`. `start` now also starts the board, building it first when its sources changed, without opening a browser tab. A board already running is kept. `ks-flow open` still opens it in the browser.
 
 - **A restart no longer clears the NEEDS YOU sash (ks-flow 0.8.2):** on every daemon start (so every update), the cards were rebuilt and written before the daemon's first read of the Plannotator Inbox, which came on the first 15 s tick. Every card was written with no Inbox threads, and the sash and the Inbox wait went off on every board until the next write. The daemon now reads the Inbox once at start, before the first card write, as it already did for the last Linear status.

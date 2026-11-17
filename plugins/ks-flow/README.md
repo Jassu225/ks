@@ -1262,7 +1262,16 @@ Agents can ask in the [Plannotator Inbox](https://docs.plannotator.ai/open-sourc
 - **Links.** `<url>#thread=<root id>&msg=<message id>` (the first waiting message), where `url` comes from `inbox.json` read every tick, since the Inbox's port changes when it restarts. The daemon reads `url`, `port` and `serverSession` only, never the token. `GET /api/inbox/health` decides `inboxRunning`; when the Inbox is closed the links say so (`plannotator inbox` starts it).
 - **Another Mac's card.** Each Inbox listens only on its own Mac, so another device's card had no Inbox link. With Plannotator's linked machines, two Inboxes are linked once over Tailscale (`plannotator inbox link`; `ks-setup doctor` guides it), and each window shows both Macs' threads; a `#thread=<id>` link to the other Mac's thread opens there too.
   - **What each daemon publishes:** its Inbox's id and the ids linked with it, as `devices/{id}.inboxId` and `inboxLinks`. It reads them from `inbox/machines.json`: the ids only, never a link's token.
-  - **The chips:** an "Inbox ↗" chip, beside Slack and PR whenever the card has Inbox threads, opens the first thread that waits on you, else the newest. "⏳ waiting: Inbox" opens that thread too. Both follow the same rule as the sash, below.
+  - **After a reboot: `ks-flow inbox-check`.** A stopgap until Plannotator fixes this. Tailscale keeps its `serve` mappings across a reboot, and the restarted Inbox then refuses to publish over its own leftover mapping, or to reuse its link door's: "Another tailscale serve mapping already uses port …". `ks-flow inbox-check` checks, in order:
+  1. Plannotator is installed.
+  2. Tailscale is running.
+  3. The Inbox runs.
+  4. There are no leftover mappings: a mapping on the Inbox's port or a link-door port (8443–8450) that points at a loopback port nothing listens on. Only those are removed.
+  5. The Inbox has a tailnet address.
+  6. The linked Macs are online.
+
+  It removes leftovers and starts or restarts the Inbox (published) as needed, up to two rounds, which is what a reboot can take. `--dry-run` only reports. The person runs it, since restarting the Inbox is theirs to do (Plannotator's own rule for agents).
+- **The chips:** an "Inbox ↗" chip, beside Slack and PR whenever the card has Inbox threads, opens the first thread that waits on you, else the newest. "⏳ waiting: Inbox" opens that thread too. Both follow the same rule as the sash, below.
   - **The card:** when the viewing device's `inboxLinks` holds the owner's `inboxId`, the sash and the thread rows open the viewing device's own Inbox at that thread ("Inbox ↗ · B"). Otherwise they stay plain rows that say to open the Inbox on the owner, or to link the two Inboxes.
 
 ## Notifications
