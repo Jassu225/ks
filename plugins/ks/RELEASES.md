@@ -2,6 +2,12 @@
 
 ## 2026-11-17
 
+- **Setup suggests Plannotator (ks 1.3.9):** a new `ks-setup doctor` check, `plannotator`, looks for the `plannotator` binary and its Claude Code plugin (`plannotator@plannotator`, user scope). When either is missing, `/ks:setup` suggests it once, as an optional extra: plan and code review in the browser, and the Inbox, which ks-flow shows on the cards. The user installs it, since its installer downloads from plannotator.ai: `curl -fsSL https://plannotator.ai/install.sh | bash`, then `/plugin marketplace add backnotprop/plannotator` and `/plugin install plannotator@plannotator` in Claude, then a restart.
+  - **Several Macs, one Inbox:** with 2+ Macs on the ks-flow board, three more checks guide the one-time steps that give every Mac one Inbox showing both Macs' threads (Plannotator's own linking). The user does all three.
+    - `tailscale`: installed, running and logged in with one account on every Mac.
+    - `plannotator:tailnet`: the Inbox is published on the tailnet at every start: the Inbox's "Over the tailnet" setting, HTTPS, only for the account that owns the Mac.
+    - `plannotator:linked`: the Inboxes are linked once with a code (`plannotator inbox link --offer --tailscale`, then `plannotator inbox link <code>`). The link lasts until `plannotator inbox unlink`.
+
 - **Ticket worktrees get KS updates too (ks 1.3.8):** a worktree's sessions were stuck on the KS version from the day the worktree was started.
   - **Why:** Claude writes its own install record for a worktree (in `installed_plugins.json`) when the first session starts there, at the version current then, without `auto`. Sessions there load that record.
   - **Nothing moved it:** Claude's auto-update skips a record without `auto`. `claude plugin update --scope local`, run in the worktree, takes the first local record, which is the main checkout's, whatever the folder.

@@ -79,6 +79,18 @@ why in one line, and wait for it before step 2.
   unchanged); `--remove` unsets it. `remote-control:shell` (warn): the old
   `claude` shell function an earlier setup wrote is still in the shell's
   startup file; ask, then `ks-setup remote-control --yes` removes it.
+- **Plannotator**, optional, suggested: the `plannotator` check.
+  - **What it is:** plan and code review in the browser, and the Plannotator Inbox, where agents leave questions and finished work for later. ks-flow shows a card's Inbox questions as its NEEDS YOU sash.
+  - **When the check isn't ok:** suggest it once. You never install it: its installer downloads from plannotator.ai, so the user runs it.
+    1. In a terminal: `curl -fsSL https://plannotator.ai/install.sh | bash` (the `plannotator` binary).
+    2. In Claude: `/plugin marketplace add backnotprop/plannotator`, then `/plugin install plannotator@plannotator` (user scope: it isn't tied to a project).
+    3. Restart Claude.
+  - **Then:** `plannotator inbox` opens the Inbox.
+- **Several Macs: one Inbox across them** (`tailscale`, `plannotator:tailnet`, `plannotator:linked`; only with 2+ Macs on the ks-flow board). Each Plannotator Inbox listens only on its own Mac. Tailscale lets the Macs reach each other. Linking two Inboxes once makes each show both Macs' threads, and an answer reaches the agent on the Mac that asked. All of it is the user's to do: Plannotator leaves publishing to the person, so you only check and give the steps.
+  1. **Tailscale on every Mac**, logged in with the same account: the Mac App Store, tailscale.com/download, or `brew install --cask tailscale`.
+  2. **The Inbox on the tailnet, on every Mac:** the "Over the tailnet" switch in the Inbox's Settings (or `"inboxTailscale": true` in `~/.plannotator/config.json`), then `plannotator inbox restart`. It publishes over HTTPS only to the Tailscale account that owns the Mac, never to the internet.
+  3. **Link once:** on one Mac `plannotator inbox link --offer --tailscale` (prints a code, valid 10 minutes); on the other `plannotator inbox link <code>`. `plannotator inbox link --list` shows the links.
+  - **How long it lasts:** the link stays until `plannotator inbox unlink <machine>`. A Mac that is asleep or offline shows as away, and answers for it wait until it is back. Keep Tailscale running and step 2 on, or the other Mac can't reach this one after a restart.
 - **ks-flow's store**, when they want the shared Firestore board: they copy the
   service-account key file onto the Mac themselves (never through chat or git)
   and tell you its path; then ask and run

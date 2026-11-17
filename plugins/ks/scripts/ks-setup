@@ -214,6 +214,72 @@ version_check() { # data-dir
   check ks-flow:release "$level" "$ok" "$msg" "$fix"
 }
 
+# Plannotator (optional, suggested): plan and code review in the browser, and
+# its Inbox, where agents leave questions and finished work for the user (ks-flow
+# shows a card's Inbox questions as its NEEDS YOU sash). Two parts: the
+# `plannotator` binary (its installer, which the user runs) and the Claude Code
+# plugin plannotator@plannotator (user scope, like any tool not tied to a
+# project). Never installed by setup: it downloads from plannotator.ai.
+plannotator_check() {
+  local bin=0 plug=0 msg fix
+  if have plannotator || [ -x "$HOME/.local/bin/plannotator" ]; then bin=1; fi
+  if jq -e '.plugins["plannotator@plannotator"] // empty | if type == "array" then length > 0 else true end' \
+    "$(claude_plugins_dir)/installed_plugins.json" >/dev/null 2>&1; then plug=1; fi
+  if [ "$bin" = 1 ] && [ "$plug" = 1 ]; then check plannotator info 1 "Plannotator: the binary and the Claude Code plugin"; return 0; fi
+  if [ "$bin" = 0 ] && [ "$plug" = 0 ]; then
+    msg="Plannotator is not installed (optional, suggested: plan/code review in the browser and its Inbox, which ks-flow shows on the cards)"
+    fix="you run: curl -fsSL https://plannotator.ai/install.sh | bash   then in Claude: /plugin marketplace add backnotprop/plannotator and /plugin install plannotator@plannotator, and restart Claude"
+  elif [ "$bin" = 0 ]; then
+    msg="Plannotator's Claude Code plugin is installed, but not its binary (the Inbox and reviews need it)"
+    fix="you run: curl -fsSL https://plannotator.ai/install.sh | bash"
+  else
+    msg="the plannotator binary is installed, but not its Claude Code plugin"
+    fix="in Claude: /plugin marketplace add backnotprop/plannotator, then /plugin install plannotator@plannotator, and restart Claude"
+  fi
+  check plannotator info 0 "$msg" "$fix"
+}
+
+# Several Macs on one ks-flow board (device.json deviceCount >= 2): one
+# Plannotator Inbox across them. Each Inbox listens only on its own Mac;
+# Plannotator publishes it over the person's tailnet (`tailscale serve`, HTTPS,
+# only to the Tailscale account that owns the Mac) and links two Inboxes once
+# with a code, after which each shows both Macs' threads and an answer reaches
+# the agent on the Mac that asked. Checks:
+#   tailscale            installed and running (logged in)
+#   plannotator:tailnet  the Inbox published on the tailnet at every start
+#   plannotator:linked   this Inbox linked with another Mac's
+# All three are the person's to do (Plannotator: publishing is their choice).
+machines_check() { # ks-flow data dir (or "")
+  local dd="$1" n ts state cfg links
+  n="$( [ -n "$dd" ] && jq -r '.deviceCount // 0' "$dd/device.json" 2>/dev/null || echo 0)"
+  [ "${n:-0}" -ge 2 ] 2>/dev/null || return 0
+  ts="$(command -v tailscale 2>/dev/null || true)"
+  [ -z "$ts" ] && [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ] && ts=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+  if [ -z "$ts" ]; then
+    check tailscale warn 0 "Tailscale is not installed: with $n Macs on the board, it is how their Plannotator Inboxes reach each other" \
+      "install Tailscale (Mac App Store, tailscale.com/download, or brew install --cask tailscale) and log in with the same account on every Mac"
+  else
+    state="$("$ts" status --json 2>/dev/null | jq -r '.BackendState // empty' 2>/dev/null)"
+    if [ "$state" = Running ]; then check tailscale info 1 "Tailscale running"
+    else check tailscale warn 0 "Tailscale is installed but not running (${state:-no answer})" "open Tailscale and log in with the same account as on your other Macs"; fi
+  fi
+  have plannotator || [ -x "$HOME/.local/bin/plannotator" ] || return 0
+  cfg="$HOME/.plannotator/config.json"
+  if [ "${PLANNOTATOR_INBOX_TAILSCALE:-}" = 1 ] || [ "$(jq -r '.inboxTailscale // empty' "$cfg" 2>/dev/null)" = true ]; then
+    check plannotator:tailnet info 1 "the Plannotator Inbox is published on the tailnet at every start"
+  else
+    check plannotator:tailnet warn 0 "the Plannotator Inbox is not published on the tailnet, so your other Macs can't link with it" \
+      "you: turn on 'Over the tailnet' in the Inbox's Settings (or add \"inboxTailscale\": true to ~/.plannotator/config.json), then plannotator inbox restart"
+  fi
+  links="$( (plannotator inbox link --list 2>/dev/null || "$HOME/.local/bin/plannotator" inbox link --list 2>/dev/null) | grep -vc 'this computer' || true)"
+  if [ "${links:-0}" -gt 0 ] 2>/dev/null; then
+    check plannotator:linked info 1 "the Plannotator Inbox is linked with $links other machine(s): each shows both Macs' threads"
+  else
+    check plannotator:linked warn 0 "the Plannotator Inbox is not linked with your other Macs: their Inbox questions show only there" \
+      "you, once: on this Mac plannotator inbox link --offer --tailscale (prints a code, valid 10 min); on the other Mac plannotator inbox link <code>"
+  fi
+}
+
 # This device's open ks-flow problems: <data-dir>/errors.json, written by the
 # daemon (a store listener that stopped, a job that keeps failing); the board's
 # Errors page (/errors) lists them.
@@ -412,6 +478,8 @@ doctor() {
   if have tmux && { [ -d /Applications/Ghostty.app ] || [ -d /System/Applications/Utilities/Terminal.app ]; }; then
     check master info 1 "master can run (tmux + a viewer app)"
   else check master info 0 "the master needs tmux and Ghostty or Terminal.app" "ks-setup tools --yes tmux"; fi
+  plannotator_check
+  machines_check "${dd:-}"
   if [ "$(jq -r '.env.KS_MOD_STATUSLINE // empty' "$SETTINGS" 2>/dev/null)" = 1 ]; then check settings:statusline info 1 "statusline split for the ks mod"
   else check settings:statusline info 0 "env KS_MOD_STATUSLINE not set (only claude-ks set it)" "$(cs_fix)"; fi
   statusline_check
