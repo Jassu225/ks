@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, McpToolResult, Register, RenderChildren, RenderSurface, TextProps, Timer } from 'claude-code'
 
 import type { PreviewDeploy, ProjectInfo, StatusFacts, WorkflowUnit } from '../types'
-import { AUTO_RELOAD_ARGS, AUTO_RELOAD_COMMAND, AutoReload, hidesReloadOutput } from './reload/auto-reload'
+import { AUTO_RELOAD_ARGS, AUTO_RELOAD_COMMAND, AutoReload, hidesReloadOutput, reloadRan } from './reload/auto-reload'
 import type { LoadedPluginInfo } from './reload/auto-reload'
 import { currentPlugins, liveRoot, offerLabel, reloadOffer, targetOf, versionAt } from './reload/installed'
 import type { PluginSet, ReloadOffer, RootContext } from './reload/installed'
@@ -587,6 +587,26 @@ function loadedSnapshot($: EngineInterface): Promise<{ set: PluginSet; info: Loa
   return loadedPlugins
 }
 
+/**
+ * After a `/reload-plugins` that left this module in place (the engine re-runs
+ * changed modules only, so a release of ks-flow or ks-master alone keeps it):
+ * the plugins without a module were reloaded all the same, so read their
+ * versions again into what this module counts as loaded. ks itself stays as
+ * read: had it changed, a new module would have replaced this one.
+ */
+async function refreshLoadedOthers($: EngineInterface): Promise<void> {
+  const ctx = rootCtx
+  if (!ctx || !loadedPlugins) return
+  const prev = await loadedPlugins
+  const set: PluginSet = { ...prev.set }
+  for (const name of reloadNames.filter(n => n !== 'ks')) {
+    const found = await liveRoot(name, ctx)
+    set[name] = { root: found, version: await versionAt(ctx.fs, found) }
+  }
+  loadedPlugins = Promise.resolve({ set, info: { ...prev.info, version: targetOf(set, reloadNames) } })
+  await checkPlugins($)
+}
+
 /** The plugins on disk against the loaded ones: the offer the auto reload acts on, and the notice cleared when it no longer applies. */
 async function checkPlugins($: EngineInterface): Promise<void> {
   const ctx = rootCtx
@@ -754,6 +774,14 @@ export const register: Register = on => {
     }
     reload?.notePromptLeft(entered && typeof entered.text === 'string' ? (e.turnId ? 'into-turn' : 'new-turn') : 'dropped')
     return entered
+  })
+
+  // Any `/reload-plugins` (typed, or the auto reload's): once it ran, re-read the
+  // plugins without a module (refreshLoadedOthers). Never fails the command.
+  on('command.run', { command: AUTO_RELOAD_COMMAND }, async ($, e, next) => {
+    const out = await next(e)
+    if (reloadRan(out?.text)) await refreshLoadedOthers($).catch(() => undefined)
+    return out
   })
 
   // Our own `/reload-plugins ks` run's plain "Reloaded: …" row draws as nothing; a warning,

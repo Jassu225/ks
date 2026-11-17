@@ -208,6 +208,16 @@ export function hidesReloadOutput(props: { command?: unknown; args?: unknown; te
   return !/error|could not|not applied|--force|isn't available|failed/i.test(props.text)
 }
 
+/**
+ * Did a `/reload-plugins` (typed or ours, any arguments) reload the plugins?
+ * Its output starts `Reloaded:`; an error or failure says it did not. A
+ * pending-MCP warning (`--force`) still reloaded the plugins.
+ */
+export function reloadRan(output: unknown): boolean {
+  if (typeof output !== 'string' || !output.trimStart().startsWith('Reloaded:')) return false
+  return !/error|could not|failed/i.test(output)
+}
+
 export class AutoReload {
   /** The last offer: the target a reload loads, null for none; undefined before the first look. */
   private offer: string | null | undefined = undefined
@@ -434,9 +444,29 @@ export class AutoReload {
     })
   }
 
-  /** Still here after the check-in window: the reload did not load new code into this module. */
+  /**
+   * Still here after the check-in window: the reload did not replace this
+   * module. That is right when only plugins without a module changed (ks-flow,
+   * ks-master): the engine re-runs changed modules only, and the mod re-reads
+   * those plugins after every `/reload-plugins` (register.tsx's `command.run`
+   * hook), so `loaded()` already names the target. Then the reload took.
+   */
   private async notReplaced(record: AutoReloadRecord): Promise<void> {
     if (this.disposed) return
+    const loaded = await this.deps.loaded().catch(() => null)
+    const version = loaded?.version?.trim() ?? null
+    if (version === record.version) {
+      const at = await this.deps.now()
+      const took = await this.update((current) =>
+        current && current.at === record.at && current.outcome === 'pending'
+          ? { ...current, outcome: 'checked_in', checkedIn: { at, version, loadedAt: loaded?.loaded_at ?? null } }
+          : undefined,
+      )
+      this.deps.debug(
+        `auto-reload: this module stayed (only plugins without a module changed); they loaded ${version}${took ? '' : ' (the record could not be updated)'}`,
+      )
+      return
+    }
     const wrote = await this.update((current) =>
       current && current.at === record.at && current.outcome === 'pending' ? { ...current, outcome: 'did_not_take' } : undefined,
     )

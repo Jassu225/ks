@@ -2,6 +2,8 @@
 
 ## 2026-11-17
 
+- **No stuck "run /reload-plugins" pill after a ks-flow-only release (ks 1.3.1):** on `/reload-plugins` the engine re-runs changed mods only, so when only ks-flow (or ks-master, neither of which has a mod) changed, the ks mod stayed with its old note of their versions. Its auto reload then counted the reload as "didn't take" and showed the pill, and a `/reload-plugins` typed by hand didn't clear it either. Now a `command.run` hook re-reads those plugins' versions after every successful `/reload-plugins`, typed or automatic, and the auto reload checks what's loaded before giving up. Shipping 1.3.1 also clears today's pills: ks itself changed, so every session's mod reloads fresh.
+
 - **`ks-flow peers` (ks-flow 0.5.0, ks 1.3.0):** one table of every running Claude session on every Mac: device (`A · name`), peer name, ticket and its Linear title, state (working, idle, waiting on you, or last seen), the address to message (`bridge:session_…`, Remote Control's id), tmux pane and start time. `--md` prints it as Markdown, which agents now show as is (the KS rules' "Peers"); `--json` for scripts.
   - Each daemon publishes its sessions as `devices/{id}.sessions` within ~15 s of a change (a start or end, busy/idle, a wait). No prompt, transcript or path: the folder's name only. Cards still keep only the fixed fields, so busy/idle doesn't rewrite them.
   - **Removed:** the hand-made peers table (ListAgents matched to devices by `liveSessionNames`, then the label prefix). `liveSessionNames` is cleared from the store, and `ks-flow devices` lists devices only.

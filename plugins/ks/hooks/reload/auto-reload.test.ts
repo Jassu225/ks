@@ -11,6 +11,7 @@ import {
   AutoReload,
   hidesReloadOutput,
   readAutoReloads,
+  reloadRan,
   STORE_AUTO_RELOAD,
   type AutoReloadDeps,
   type LoadedPluginInfo,
@@ -273,6 +274,33 @@ describe('the auto reload', () => {
     second.setOffer(NEW)
     await second.tick()
     expect(state.runs).toBe(1)
+  })
+
+  test('a ks-flow-only release: the module stays, the reload re-read ks-flow, so it took (checked_in, no notice)', async () => {
+    const FLOW = 'ks@1.0.6,ks-flow@0.2.3'
+    const { d, state, elapse, record, gaveUp } = deps({
+      // As register.tsx's command.run hook does after the reload ran: the plugins without a module are read again.
+      run: async () => {
+        state.runs += 1
+        state.loaded = { ...state.loaded, version: FLOW }
+      },
+    })
+    const reload = new AutoReload(d)
+    reload.setOffer(FLOW)
+    await reload.tick()
+    expect(state.runs).toBe(1)
+    await elapse(AUTO_RELOAD_CHECK_IN_MS)
+    expect(record()?.outcome).toBe('checked_in')
+    expect(record()?.checkedIn?.version).toBe(FLOW)
+    expect(gaveUp).toEqual([])
+  })
+
+  test('a reload ran when its output starts "Reloaded:" with no error; a pending-MCP warning still counts', () => {
+    expect(reloadRan('Reloaded: 8 plugins · 245 skills')).toBe(true)
+    expect(reloadRan('  Reloaded: 6 plugins. Run /reload-plugins --force to apply MCP changes')).toBe(true)
+    expect(reloadRan('Reloaded: 6 plugins, 1 error')).toBe(false)
+    expect(reloadRan('Could not reload')).toBe(false)
+    expect(reloadRan(undefined)).toBe(false)
   })
 
   test('only a plain success of `/reload-plugins ks` is hidden', () => {
