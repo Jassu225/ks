@@ -1,0 +1,26 @@
+#!/bin/bash
+# claude-start — open a folder in a brand-new terminal window running plain
+# `claude` (no KS launcher: no session name, no KS rules beyond what the folder's
+# own settings load). claude-ks-start is the same for a claude-ks session.
+#
+#   claude-start [<dir>] [claude args…]
+#
+# <dir> defaults to this folder. Every other argument goes to claude as given
+# (a first message is its positional prompt: claude-start ~/proj "fix the build").
+# The window: Ghostty, else Terminal.app; with tmux installed the session runs
+# in a new tmux session named after the folder, so closing the window only
+# detaches it (lib/terminal.sh).
+#
+# Runs `open` / `osascript` and tmux, so a sandboxed agent needs it in the
+# sandbox's excludedCommands (ks-setup claude-settings).
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/lib/terminal.sh"
+
+DIR="."
+if [ $# -gt 0 ] && [ "${1#-}" = "$1" ] && [ -d "$1" ]; then DIR="$1"; shift; fi
+ABS="$(cd "$DIR" && pwd)"
+
+ks_start_window "$ABS" "$(basename "$ABS")" claude "$@" \
+  | sed 's/^/claude-start: /' \
+  || { echo "claude-start: could not open a terminal window (no Ghostty or Terminal.app reachable)" >&2; exit 1; }

@@ -11,7 +11,7 @@
 // A reader recomputes `self` and `stale` against now; `--live` reads the store.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { DeviceDoc } from './db/types.js';
+import type { DeviceDoc, PeerSession } from './db/types.js';
 
 /** As the board's DeviceChip: a device not seen this long is asleep or offline. */
 export const DEVICE_STALE_MS = 5 * 60_000;
@@ -28,8 +28,8 @@ export interface DeviceRow {
   forgotten: boolean;
   /** Not seen for 5 min (or never). */
   stale: boolean;
-  /** Its live Claude sessions' names (devices/{id}.liveSessionNames). */
-  liveSessionNames: string[];
+  /** Its running Claude sessions as it published them (devices/{id}.sessions; lib/peers.ts). */
+  sessions: PeerSession[];
 }
 
 export interface DevicesCache {
@@ -38,19 +38,10 @@ export interface DevicesCache {
   devices: DeviceRow[];
 }
 
-/** Session names as published: trimmed, non-empty, deduped, sorted. Names only. */
-export function liveSessionNames(sessions: ReadonlyArray<{ name?: string | null }>): string[] {
-  const names = new Set<string>();
-  for (const s of sessions) {
-    const n = typeof s.name === 'string' ? s.name.trim() : '';
-    if (n) names.add(n);
-  }
-  return [...names].sort();
-}
-
-/** Same names, same order (both already as liveSessionNames() makes them). */
-export function sameNames(a: readonly string[] | null | undefined, b: readonly string[]): boolean {
-  return !!a && a.length === b.length && a.every((n, i) => n === b[i]);
+/** Published sessions as read back: entries without a session id dropped. */
+export function cleanSessions(v: unknown): PeerSession[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((s): s is PeerSession => !!s && typeof s === 'object' && typeof (s as PeerSession).sessionId === 'string');
 }
 
 function isStale(lastSeenAt: string | null, now: number): boolean {
@@ -88,7 +79,7 @@ export function listDevices(
       master: !!masterDeviceId && d.deviceId === masterDeviceId,
       forgotten: d.forgotten === true,
       stale: false,
-      liveSessionNames: Array.isArray(d.liveSessionNames) ? liveSessionNames(d.liveSessionNames.map((name) => ({ name }))) : [],
+      sessions: cleanSessions(d.sessions),
     }),
   );
   return refreshRows(rows, selfId, now);
@@ -125,9 +116,7 @@ export function readDevicesCache(dataDir: string): DevicesCache | null {
         master: r.master === true,
         forgotten: r.forgotten === true,
         stale: r.stale === true,
-        liveSessionNames: Array.isArray(r.liveSessionNames)
-          ? liveSessionNames((r.liveSessionNames as unknown[]).map((name) => ({ name: typeof name === 'string' ? name : null })))
-          : [],
+        sessions: cleanSessions(r.sessions),
       });
     }
     return { updatedAt, self: str(j.self) ?? '', devices };
@@ -149,8 +138,8 @@ export function agoText(iso: string | null, now: number): string {
 }
 
 /**
- * The plain output: an aligned table, this device marked with `*`, each
- * device's live session names under it. `asOf`: the cache's updatedAt (a line
+ * The plain output: an aligned table, this device marked with `*` (its
+ * sessions: `ks-flow peers`). `asOf`: the cache's updatedAt (a line
  * says how old it is); null when read from the store.
  */
 export function formatDevices(rows: readonly DeviceRow[], now: number, asOf: string | null = null): string {
@@ -171,11 +160,5 @@ export function formatDevices(rows: readonly DeviceRow[], now: number, asOf: str
   const widths = head.map((_, i) => Math.max(...all.map((row) => row[i].length)));
   const line = (row: string[]): string =>
     row.map((c, i) => (i === row.length - 1 ? c : c.padEnd(widths[i]))).join('  ').trimEnd();
-  const indent = ' '.repeat(widths[0] + 2 + widths[1] + 2);
-  const out = [line(head)];
-  rows.forEach((r, i) => {
-    out.push(line(body[i]));
-    if (r.liveSessionNames.length) out.push(`${indent}sessions: ${r.liveSessionNames.join(', ')}`);
-  });
-  return out.join('\n') + footer;
+  return [line(head), ...body.map(line)].join('\n') + footer;
 }

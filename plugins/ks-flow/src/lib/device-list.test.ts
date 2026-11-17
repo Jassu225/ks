@@ -4,19 +4,25 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { DeviceDoc } from './db/types.js';
-import {
-  formatDevices,
-  listDevices,
-  liveSessionNames,
-  readDevicesCache,
-  refreshRows,
-  sameNames,
-  writeDevicesCache,
-} from './device-list.js';
+import type { DeviceDoc, PeerSession } from './db/types.js';
+import { cleanSessions, formatDevices, listDevices, readDevicesCache, refreshRows, writeDevicesCache } from './device-list.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00.000Z');
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
+const sess = (p: Partial<PeerSession> & { sessionId: string }): PeerSession => ({
+  name: null,
+  bridgeSessionId: null,
+  pid: 1,
+  unitId: null,
+  title: null,
+  folder: 'f',
+  tmuxPane: null,
+  startedAt: ago(60_000),
+  status: null,
+  statusAt: null,
+  waiting: null,
+  ...p,
+});
 const dev = (p: Partial<DeviceDoc> & { deviceId: string }): DeviceDoc => ({
   defaultName: `Mac ${p.deviceId}`,
   platform: 'darwin',
@@ -58,7 +64,7 @@ test('listDevices: this device first, then by label (none last), with every flag
     master: false,
     forgotten: false,
     stale: false,
-    liveSessionNames: [],
+    sessions: [],
   });
   const byId = new Map(rows.map((r) => [r.deviceId, r]));
   assert.equal(byId.get('d2')!.name, 'Mini', 'the user name over the default name');
@@ -93,34 +99,25 @@ test('formatDevices: an aligned table, this device marked', () => {
   assert.match(formatDevices([], NOW), /No device/);
 });
 
-test('liveSessionNames: trimmed, non-empty, deduped, sorted', () => {
-  assert.deepEqual(
-    liveSessionNames([{ name: ' B:KAR-2 ' }, { name: null }, { name: '' }, { name: 'B:KAR-1' }, { name: 'B:KAR-2' }, {}]),
-    ['B:KAR-1', 'B:KAR-2'],
-  );
-  assert.deepEqual(liveSessionNames([]), []);
-  assert.equal(sameNames(['a', 'b'], ['a', 'b']), true);
-  assert.equal(sameNames(['b', 'a'], ['a', 'b']), false);
-  assert.equal(sameNames(undefined, []), false, 'never published: write it once');
-  assert.equal(sameNames([], []), true);
+test('cleanSessions: entries without a session id dropped; not an array = []', () => {
+  const a = sess({ sessionId: 's1', name: 'A:KAR-1' });
+  assert.deepEqual(cleanSessions([a, null, 3, { name: 'x' }]), [a]);
+  assert.deepEqual(cleanSessions(undefined), []);
+  assert.deepEqual(cleanSessions('nope'), []);
 });
 
-test('listDevices: carries each device\'s session names (cleaned); none = []', () => {
-  const rows = listDevices(
-    [dev({ deviceId: 'a', liveSessionNames: ['A:KAR-9', ' ', 'A:KAR-1', 'A:KAR-9'] }), dev({ deviceId: 'b' })],
-    'a',
-    null,
-    NOW,
-  );
-  assert.deepEqual(rows[0].liveSessionNames, ['A:KAR-1', 'A:KAR-9']);
-  assert.deepEqual(rows[1].liveSessionNames, []);
+test("listDevices: carries each device's published sessions; none = []", () => {
+  const a = sess({ sessionId: 's1' });
+  const rows = listDevices([dev({ deviceId: 'a', sessions: [a] }), dev({ deviceId: 'b' })], 'a', null, NOW);
+  assert.deepEqual(rows[0].sessions, [a]);
+  assert.deepEqual(rows[1].sessions, []);
 });
 
 test('devices.json: written, read back; self and stale recomputed against now; bad files read as null', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ksf-devcache-'));
   assert.equal(readDevicesCache(dir), null);
   const rows = listDevices(
-    [dev({ deviceId: 'me', label: 'A', liveSessionNames: ['A:KAR-1'] }), dev({ deviceId: 'peer', label: 'B' })],
+    [dev({ deviceId: 'me', label: 'A', sessions: [sess({ sessionId: 's1' })] }), dev({ deviceId: 'peer', label: 'B' })],
     'me',
     'peer',
     NOW,
@@ -144,7 +141,7 @@ test('devices.json: written, read back; self and stale recomputed against now; b
   assert.equal(readDevicesCache(dir), null);
   writeFileSync(
     join(dir, 'devices.json'),
-    JSON.stringify({ updatedAt: ago(0), self: 'me', devices: [{ deviceId: 'x', liveSessionNames: ['n', 3] }, { label: 'Z' }] }),
+    JSON.stringify({ updatedAt: ago(0), self: 'me', devices: [{ deviceId: 'x', sessions: [{ sessionId: 'n' }, 3] }, { label: 'Z' }] }),
   );
   assert.deepEqual(readDevicesCache(dir)!.devices, [
     {
@@ -156,19 +153,17 @@ test('devices.json: written, read back; self and stale recomputed against now; b
       master: false,
       forgotten: false,
       stale: false,
-      liveSessionNames: ['n'],
+      sessions: [{ sessionId: 'n' }],
     },
   ]);
 });
 
-test('formatDevices: session names under their device; "as of" from the cache', () => {
-  const rows = listDevices([dev({ deviceId: 'me', label: 'A', liveSessionNames: ['A:KAR-1', 'A:KAR-2'] })], 'me', null, NOW);
+test('formatDevices: devices only (sessions: ks-flow peers); "as of" from the cache', () => {
+  const rows = listDevices([dev({ deviceId: 'me', label: 'A', sessions: [sess({ sessionId: 's1' })] })], 'me', null, NOW);
   const lines = formatDevices(rows, NOW, ago(3 * 60_000)).split('\n');
-  assert.equal(lines.length, 4);
-  assert.match(lines[2], /^\s+sessions: A:KAR-1, A:KAR-2$/);
-  assert.equal(lines[2].indexOf('sessions'), lines[0].indexOf('NAME'));
-  assert.match(lines[3], /^as of 3m ago/);
+  assert.equal(lines.length, 3);
+  assert.doesNotMatch(lines.join('\n'), /sessions:/);
+  assert.match(lines[2], /^as of 3m ago/);
   assert.doesNotMatch(formatDevices(rows, NOW), /as of/);
   assert.match(formatDevices([], NOW, ago(0)), /No device[\s\S]*as of just now/);
 });
-

@@ -99,10 +99,13 @@ ks-config list
   `~/.local/bin` shims (`# ks-shim v2`) carry the same resolver inline, with no
   folder baked in and no `claude` call; the SessionStart hook rewrites older
   shims once.
-- **`claude-ks [--local-plugin <name>]… [claude args…]`** — the command to
-  start Claude for KarmaSuite. It runs `ks-claude`.
-- **`ks-claude`** — the launcher behind `claude-ks`, `claude-ks-rc`,
-  `claude-ks-master`, `claude-ks-test` and `ks-start-ticket`: plain `claude`
+- **`claude-ks [--dir <dir> [--pane <tmux-pane>]] [--rc] [--local-plugin <name>]… [claude args…]`**
+  — the command to start Claude for KarmaSuite. It runs `ks-claude`; with
+  `--dir`, in that folder (see "New sessions" below). `--rc` turns Remote
+  Control on for that session whatever the setting.
+- **`ks-claude`** — the launcher behind `claude-ks`, `claude-ks-restart`,
+  `claude-ks-master`, `claude-ks-test` and `ks-start-ticket` (not on PATH: they
+  run it by its path): plain `claude`
   once the plugins are installed (in the checkout's `.claude/settings*.json` or
   user-wide), the old `--plugin-dir` launch before. An on-demand plugin
   (ks-master, ks-browser) is never installed: it loads for that session with
@@ -321,24 +324,27 @@ Use it only for files that are *already* failing on the main branch — otherwis
 
 - **`claude-ks-test [<claude-ks args>…]`** runs `claude-ks --local-plugin ks-browser` with every argument passed through: a session with the agent-browser MCP server and the `test-video` skill (see `plugins/ks-browser/README.md`). It finds `claude-ks` next to itself, so it works from any checkout of this repo.
 
-### Remote Control relaunch (`claude-ks-rc`, `claude-ks-rc-restart`)
+### New sessions (`claude-ks --dir`, `claude-ks-start`, `claude-start`, `claude-ks-restart`)
 
-Remote Control can be switched on only at launch (`claude --remote-control`) or by you typing `/remote-control`; an agent can do neither from inside its session. These two scripts let it swap itself for a fresh session that has Remote Control on. Agents also use the restart when you ask for a new session and at `/ks:project-manager` phase boundaries (`rules/ks-rules.md`, "New sessions and Remote Control").
+An agent can start a session elsewhere, or swap itself for a fresh one; Remote Control can be switched on only at launch (`claude --remote-control`) or by you typing `/remote-control`, so a restart is also how an agent gets you a Remote Control session. Agents use the restart when you ask for a new session and at `/ks:project-manager` phase boundaries (`rules/ks-rules.md`, "New sessions and Remote Control").
 
-- **`claude-ks-rc <dir> [--prompt <text>] [--name <name>] [--pane <tmux-pane>] [-- <claude-ks args>]`** starts `claude-ks --name <name> --remote-control <name> [prompt]` in `<dir>`. The name (peer and Remote Control) defaults to the checkout's unit (`KAR-123`), else the folder name, with the device label in front once 2+ Macs share the ks-flow board (`B:KAR-123`).
+- **`claude-ks --dir <dir> [--pane <tmux-pane>] [--rc] [claude args…]`** starts a `claude-ks` session in `<dir>`, named as there (the checkout's unit, `KAR-123`, else the folder name, with the device label in front once 2+ Macs share the ks-flow board: `B:KAR-123`) unless `--name` is given. A first message is claude's own positional prompt.
   - It runs in the `--pane` tmux pane, replacing what runs there (`respawn-pane -k`), if that pane still exists.
   - Otherwise it opens a new tmux window when tmux is running, or runs in this terminal.
   - In tmux, the pane drops to a login shell when Claude exits.
-- **`claude-ks-rc-restart [<ticket>] [--dry-run]`** replaces a ticket's session. The ticket defaults to this checkout's unit (`workflow-unit`).
+- **`claude-ks-start [<dir>] [--rc] [claude-ks args…]`** opens `<dir>` (default: here) in a **brand-new terminal window** running a `claude-ks` session; **`claude-start [<dir>] [claude args…]`** does the same with plain `claude` (no KS launcher). `lib/terminal.sh`:
+  - The window is Ghostty (a new instance that doesn't restore saved windows and quits when its window closes), else Terminal.app. `claude-ks-master`'s viewer opens the same way.
+  - With tmux installed, the session runs in a new tmux session named after it (`B:KAR-123` → `B-KAR-123`, `-2` when taken), so `claude-ks-restart` can replace it there, and closing the window only detaches it (`tmux attach -t <name>`). Without tmux it runs straight in the window.
+- **`claude-ks-restart [<ticket>] [--rc] [--dry-run]`** replaces a ticket's session. The ticket defaults to this checkout's unit (`workflow-unit`).
   - It asks ks-flow which Claude process works the ticket's worktree (`ks-flow session <ticket> --json`; the daemon matches `~/.claude/sessions/<pid>.json` to cards by cwd). It picks the calling session when `$CLAUDE_PID` is one of them, else the newest.
   - It re-checks the pid's start time and command with `ps` before signalling it.
-  - It hands the rest to the tmux server (`tmux run-shell -b`), because a session's own child dies with it. After 2 s, so the agent sees the output, it SIGTERMs the session (SIGKILL after 10 s). Then it runs `claude-ks-rc` in the same pane.
+  - It hands the rest to the tmux server (`tmux run-shell -b`), because a session's own child dies with it. After 2 s, so the agent sees the output, it SIGTERMs the session (SIGKILL after 10 s). Then it runs `claude-ks --dir <worktree> --pane <pane>` (with `--rc` when asked).
   - The new session is a **fresh** conversation whose first message is `/ks:project-manager Let's work on ./<workflow dir>/ project`, the same one `ks-start-ticket` sends. It reads the latest handoff and resumes. The old conversation stays in `/resume`.
-  - Log: `~/Library/Logs/claude-ks-rc.log`.
+  - Log: `~/Library/Logs/claude-ks-restart.log`.
 
-Both scripts run `tmux`, `ps` and `kill`, which the Bash sandbox blocks. For an agent to use them, list them in the sandbox's `excludedCommands` (`"claude-ks-rc *"`, `"claude-ks-rc-restart *"`) and call them as the first word of the command.
+They run `tmux` (the restart also `ps` and `kill`; the window ones `open` / `osascript`), which the Bash sandbox blocks. For an agent to use them, list them in the sandbox's `excludedCommands` (`"claude-ks *"`, `"claude-ks-start *"`, `"claude-start *"`, `"claude-ks-restart *"`; `ks-setup claude-settings`) and call them as the first word of the command.
 
-### ks-flow master (`claude-ks-master`, `claude-ks-rc-restart --master`)
+### ks-flow master (`claude-ks-master`, `claude-ks-restart --master`)
 
 The master is the long-lived session behind ks-flow's Briefing (`plugins/ks-master`, contract `plugins/ks-flow/docs/briefing.md`).
 
@@ -347,14 +353,14 @@ The master is the long-lived session behind ks-flow's Briefing (`plugins/ks-mast
   - It exports `KS_MASTER_DIR` (that `master/` folder) and `KS_MASTER_HANDOFFS` (`<project>/workflow/<user>/ks-master/handoffs`; `<user>` = `KS_MASTER_USER`, else the only folder under `workflow/`, else `id -un`).
   - With no flag it runs in this terminal. `--detached` always uses the tmux session `ks-master`: a new window there when the session exists, else a new detached session `ks-master`; it doesn't attach. Instead it makes sure the **viewer** is open: `ks-master-view <master-dir>`, a loop on `tmux attach -t ks-master` that reattaches whenever the session is replaced (a killed master, a restart into a new session), opened in Ghostty, else Terminal.app, only when `<dataDir>/master/viewer.pid` names no live viewer. So one window always shows the master; close it to stop it, and the next start reopens it. `--no-viewer` (or `KS_MASTER_NO_VIEWER=1`) skips it. `--pane` runs in that pane (`respawn-pane -k`), or detached when the pane is gone.
   - It refuses when a master is running or starting: `session.json`'s pid is a running Claude process; or, with no pid yet, its session id is a live interactive session in `~/.claude/sessions/*.json`; or `session.json` is under 3 minutes old (still starting). Replace a live master with the restart below.
-- **`claude-ks-rc-restart --master [--handoff <file>] [--force] [--dry-run]`** replaces the master. It reads the pid and pane from `session.json` instead of asking ks-flow about a ticket; with no pid recorded yet it finds the process by session id, as above. With none found and `session.json` under 3 minutes old it exits 1 ("master is still starting"), `--force` included, rather than start a second master.
+- **`claude-ks-restart --master [--handoff <file>] [--force] [--dry-run]`** replaces the master. It reads the pid and pane from `session.json` instead of asking ks-flow about a ticket; with no pid recorded yet it finds the process by session id, as above. With none found and `session.json` under 3 minutes old it exits 1 ("master is still starting"), `--force` included, rather than start a second master.
   - Graceful (the default) needs a handoff written since the master started. `--handoff <file>` records it in `session.json.handoff`; otherwise the one already recorded must be that recent. `--force` skips the check: the daemon's hard restart of a stuck master.
   - Like the ticket restart, the kill and relaunch run in the tmux server (`--apply-master`): SIGTERM after 2 s (SIGKILL after 10 s), then `claude-ks-master --pane <pane>`. A master whose process is already gone is started straight away.
-  - Log: `~/Library/Logs/claude-ks-rc.log`.
+  - Log: `~/Library/Logs/claude-ks-restart.log`.
 
 With several ks-flow devices, the master runs on the one chosen in ks-flow's Settings → Devices: only that device's daemon starts and hard-restarts it, and a board on another device sends Brief me / Restart through the store (ks-flow README, "Several devices").
 
-The ticket form (`claude-ks-rc-restart [<ticket>] [--dry-run]`) is unchanged. `claude-ks-master` needs the same sandbox exclusion as the others (`"claude-ks-master *"`); the ks-flow daemon runs it unsandboxed.
+The ticket form (`claude-ks-restart [<ticket>] [--dry-run]`) is unchanged. `claude-ks-master` needs the same sandbox exclusion as the others (`"claude-ks-master *"`); the ks-flow daemon runs it unsandboxed.
 
 ### Machine helpers (`quit-chrome`, `mem-info`)
 

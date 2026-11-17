@@ -122,30 +122,26 @@ When creating a new view or modifying an existing one, **do not edit `database_v
 
 ## New sessions and Remote Control
 
-You **can** start a new session for the user. Never answer "I can't open a new session". `claude-ks-rc-restart` (on `$PATH`; no argument means this checkout's ticket) ends this session and starts a fresh one in the same tmux pane. The new session opens with `/ks:project-manager Let's work on ./<workflow dir>/ project`, so it resumes from the latest handoff. It also has Remote Control on, so the user can follow it from claude.ai/code or the app. Use it when the user asks to:
+You **can** start a new session for the user. Never answer "I can't open a new session". `claude-ks-restart` (on `$PATH`; no argument means this checkout's ticket) ends this session and starts a fresh one in the same tmux pane. The new session opens with `/ks:project-manager Let's work on ./<workflow dir>/ project`, so it resumes from the latest handoff. It gets Remote Control when the setting is on (`ks-setup remote-control`), or with `--rc`. Use it when the user asks to:
 - start or switch to a new or fresh session (a phase boundary included);
-- turn on Remote Control, or reach the session from their phone (you can't switch Remote Control on in a running session).
+- turn on Remote Control, or reach the session from their phone: `claude-ks-restart --rc` (you can't switch Remote Control on in a running session).
 
 How:
 - Run it as its own Bash command: first word, nothing chained (no `cd … &&`, `;`, pipes or `2>&1`). The sandbox exempts it only then. Run any other way, its `ps`/`tmux`/`kill` calls fail.
 - Make sure the workflow's handoff is current first, since the new session starts from it. This conversation doesn't carry over, but it stays in `/resume`.
-- Run `claude-ks-rc-restart --dry-run` first. If it succeeds, tell the user in one line that this session ends now and which pane the next one opens in, then run `claude-ks-rc-restart`. Nothing after it runs: the session ends about 2 s later.
+- Run `claude-ks-restart --dry-run` first. If it succeeds, tell the user in one line that this session ends now and which pane the next one opens in, then run `claude-ks-restart`. Nothing after it runs: the session ends about 2 s later.
 - If the dry run fails (not in tmux, ks-flow not running, not a ticket checkout), give the manual command: `cd <worktree> && claude-ks "/ks:project-manager Let's work on ./<workflow dir>/ project"`.
-- `claude-ks-rc <dir> [--prompt <text>]` starts a Remote Control session in another directory, in a new tmux window, without ending this one.
+- `claude-ks --dir <dir> [--rc] ["<first message>"]` starts a session in another directory, in a new tmux window, without ending this one (same first-word rule).
+- `claude-ks-start <dir> [--rc] ["<first message>"]` does the same in a brand-new Ghostty window (else Terminal.app); `claude-start <dir> [claude args…]` opens plain `claude` there instead. Use them when the user wants a session they can see in its own window.
 
 ## Peers
 
 Sessions started with `claude-ks` are named `<device label>:<unit>` (`B:KAR-123`) once two or more Macs share the ks-flow board; with one Mac, just the unit (`KAR-123`). The `ks-master` session has no prefix.
 
-When you list peers (ListAgents) for the user, show one markdown table with these columns:
-- **Device**: `B · <device name>`, from `ks-flow devices --json` (its own Bash command, nothing chained; `devices[].label` and `.name`); mark this device (`self`), e.g. `A · MacBook Pro (this Mac)`.
-- **Peer**: the exact name to address it by.
-- **Kind**: interactive or Remote Control.
-- **State** and **Started**.
+To list peers (the running Claude sessions, on every Mac), run `ks-flow peers --md` (its own Bash command, nothing chained) and show its table as it is. Don't build the table from ListAgents. It covers every session ks-flow sees on every device sharing the board:
+- **Device** (`A · MacBook Pro (this Mac)`), **Peer** (its name; `(you)` marks this session), **Ticket** and the card's **Title**.
+- **State**: working, idle, waiting on you, or `last seen …` when that Mac's daemon is quiet.
+- **Address**: what to message, `bridge:session_…` (Remote Control's id). On this Mac the name works too. `— (no Remote Control)` means the session can't be reached from here.
+- **Pane** (tmux) and **Started**.
 
-Group the rows by device, this device first. Match each peer to its device in this order:
-1. Its name is in exactly one device's `liveSessionNames` (each daemon publishes the names of its live sessions): that device.
-2. Its name starts with a device's label (`B:`): that device.
-3. Otherwise "unknown device". The `[ref]` in ListAgents is not the session id, so it can't be matched.
-
-`ks-flow devices --json` reads the local cache (updated every minute, works offline); `--live` reads the store. To message a peer, address it by its exact name; add the `[ref]` only when two peers share a name.
+To message a peer, SendMessage `to` its Address exactly. `ks-flow peers --json` gives the same rows as data. Each Mac's daemon publishes its sessions within ~15 s of a change; a Mac whose daemon isn't running shows no sessions.

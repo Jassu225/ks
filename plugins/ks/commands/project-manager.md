@@ -59,8 +59,8 @@ Show the update body to the user and ask for confirmation before posting. Use th
 - **Phase 7:** "Created draft TAD. Please review"
 
 **Starting the fresh session (after phases 1, 2 in a ticket workflow, 8, 9):** You *can* start it. Write the handoff first if the phase's pattern calls for one. Then tell the user "{next phase} starts a fresh session. Want me to switch this session over to it now?" On yes:
-1. Run `claude-ks-rc-restart --dry-run`, on its own and with nothing chained. It shows which session (pid, tmux pane) gets replaced.
-2. If that succeeds, say in one line that this session ends now and the next one starts in the same pane, then run `claude-ks-rc-restart` the same way. The new session opens with `/ks:project-manager Let's work on ./{project-directory-path}/ project` and has Remote Control on.
+1. Run `claude-ks-restart --dry-run`, on its own and with nothing chained. It shows which session (pid, tmux pane) gets replaced.
+2. If that succeeds, say in one line that this session ends now and the next one starts in the same pane, then run `claude-ks-restart` the same way. The new session opens with `/ks:project-manager Let's work on ./{project-directory-path}/ project`.
 
 If the user says no, or the dry run fails (not in tmux, or ks-flow not running), give the manual command instead: `cd {cwd} && claude-ks "/ks:project-manager Let's work on ./{project-directory-path}/ project"`. Rules: ks-rules.md, "New sessions and Remote Control".
 

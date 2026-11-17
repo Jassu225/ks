@@ -22,7 +22,19 @@
 //     { source: cache | store, updatedAt: the cache's last store read (store: now),
 //       self: <this deviceId>,
 //       devices: [{ label, name, deviceId, lastSeenAt, self, master, forgotten,
-//                   stale (not seen for 5 min, against now), liveSessionNames }] }
+//                   stale (not seen for 5 min, against now), sessions }] }
+//   ks-flow peers [--md|--json]         every running Claude session on every
+//                                       device (lib/peers.ts): device, peer name,
+//                                       ticket and title, state (working, idle,
+//                                       waiting on you, last seen …), address
+//                                       (bridge:<Remote Control id>), tmux pane,
+//                                       started; from the store, the daemon's
+//                                       cache when the store can't answer.
+//                                       --md: a Markdown table; --json:
+//     { source: store | cache, updatedAt, self,
+//       rows: [{ device: { deviceId, label, name, self, stale, lastSeenAt },
+//                session: PeerSession | null (a device with none), state,
+//                address, you (this is the asking session: $CLAUDE_PID) }] }
 //
 // Exit: 0 answered / moved / nothing to move; 1 card-move refused; 2 usage,
 // or the store can't answer.
@@ -30,7 +42,8 @@ import { dataDir, loadConfig } from './lib/config.js';
 import { createProvider } from './lib/db/index.js';
 import { deviceIdentity, resolveDeviceId } from './lib/device.js';
 import { cardOwner, moveCard, startDecision } from './lib/card-owner.js';
-import { formatDevices, listDevices, readDevicesCache, refreshRows } from './lib/device-list.js';
+import { agoText, formatDevices, listDevices, readDevicesCache, refreshRows } from './lib/device-list.js';
+import { formatPeers, formatPeersMarkdown, peerRows, type PeerRow } from './lib/peers.js';
 
 const READ_TIMEOUT_MS = 10_000;
 
@@ -82,7 +95,31 @@ async function main(): Promise<void> {
     else console.log(formatDevices(out.devices, now, out.source === 'cache' ? out.updatedAt : null));
     process.exit(0);
   }
-  if (cmd !== 'card-owner' && cmd !== 'card-move') fail(2, 'usage: device-cli.js {device-id|devices|card-owner <unit>|card-move <unit>} [--json]');
+  if (cmd === 'peers') {
+    const now = Date.now();
+    const pid = Number(process.env.CLAUDE_PID);
+    const callerPid = Number.isInteger(pid) && pid > 0 ? pid : null;
+    let source: 'store' | 'cache' = 'store';
+    let updatedAt = new Date(now).toISOString();
+    let rows: PeerRow[];
+    try {
+      const devices = await timed(createProvider(loadConfig()).devices().getDevices());
+      rows = peerRows(devices, self.deviceId, now, callerPid);
+    } catch (e) {
+      const cache = readDevicesCache(dataDir());
+      if (!cache) fail(2, `can't read the store (${(e as Error).message}) and the daemon has no devices cache yet`);
+      source = 'cache';
+      updatedAt = cache.updatedAt;
+      rows = peerRows(cache.devices, self.deviceId, now, callerPid);
+    }
+    if (json) console.log(JSON.stringify({ source, updatedAt, self: self.deviceId, rows }, null, 2));
+    else if (rest.includes('--md')) {
+      console.log(formatPeersMarkdown(rows, now));
+      if (source === 'cache') console.log(`\n(as of ${agoText(updatedAt, now)}: the daemon's cache, the store could not be read)`);
+    } else console.log(formatPeers(rows, now, source === 'cache' ? updatedAt : null));
+    process.exit(0);
+  }
+  if (cmd !== 'card-owner' && cmd !== 'card-move') fail(2, 'usage: device-cli.js {device-id|devices|peers|card-owner <unit>|card-move <unit>} [--json]');
   if (!unit) fail(2, `usage: ks-flow ${cmd} <unit> [--json]`);
 
   const store = createProvider(loadConfig()).devices();

@@ -9,7 +9,7 @@
 #               a new window there when that session exists, else a new
 #               detached session `ks-master` (`tmux attach -t ks-master` to watch)
 #   --pane      run in that tmux pane, replacing what runs there
-#               (claude-ks-rc-restart --master); a pane that is gone falls back
+#               (claude-ks-restart --master); a pane that is gone falls back
 #               to --detached
 #   --no-viewer don't open the viewer window (also KS_MASTER_NO_VIEWER=1)
 #   --dry-run   print what it would start and write, start nothing
@@ -36,7 +36,7 @@
 # Refuses when session.json's pid is still a live Claude process — or, with no
 # pid yet, when its session id is a live one in ~/.claude/sessions/*.json, or
 # session.json is under 3 minutes old (a master still starting): replace a
-# running master with `claude-ks-rc-restart --master`.
+# running master with `claude-ks-restart --master`.
 #
 # Runs tmux and ps, so a sandboxed agent needs it in the sandbox's
 # excludedCommands; the ks-flow daemon runs it unsandboxed.
@@ -70,6 +70,7 @@ while [ $# -gt 0 ]; do
 done
 
 . "$SCRIPT_DIR/lib/ks-config.sh"
+. "$SCRIPT_DIR/lib/terminal.sh"
 PROJECT="$(ksc_project_root || true)"
 [ -n "$PROJECT" ] && [ -d "$PROJECT" ] || {
   echo "claude-ks-master: KS_PROJECT_ROOT_PATH is not set or not a directory (ks-config set ks.KS_PROJECT_ROOT_PATH <path>, or /ks:setup)" >&2
@@ -78,7 +79,7 @@ PROJECT="$(ksc_project_root || true)"
 PROJECT="$(cd "$PROJECT" && pwd)"
 
 # KS_MASTER_DIR (set by the ks-flow daemon when it runs this, and by
-# claude-ks-rc-restart's relaunch) wins; else resolve the data dir.
+# claude-ks-restart's relaunch) wins; else resolve the data dir.
 MASTER_DIR="${KS_MASTER_DIR:-}"
 if [ -z "$MASTER_DIR" ]; then
   . "$SCRIPT_DIR/lib/ks-root.sh"
@@ -100,7 +101,7 @@ HANDOFFS="$PROJECT/workflow/$WF_USER/ks-master/handoffs"
 
 # The live pid of the Claude process running session $1: its
 # ~/.claude/sessions/<pid>.json (kind interactive, that sessionId) whose pid
-# still runs `claude`. Empty when none. (Same lookup in claude-ks-rc-restart.)
+# still runs `claude`. Empty when none. (Same lookup in claude-ks-restart.)
 pid_for_session() {
   local sid="$1" f pid
   [ -n "$sid" ] || return 0
@@ -126,11 +127,11 @@ elif [ -z "$OLD_PID" ]; then
   LIVE_PID="$(pid_for_session "$OLD_SID")"
 fi
 if [ -n "$LIVE_PID" ]; then
-  echo "claude-ks-master: a master is already running (pid $LIVE_PID); use claude-ks-rc-restart --master to replace it" >&2
+  echo "claude-ks-master: a master is already running (pid $LIVE_PID); use claude-ks-restart --master to replace it" >&2
   exit 1
 fi
 # No pid and no process yet, but session.json under 3 minutes old: a master is
-# still starting. claude-ks-rc-restart --master sets KS_MASTER_REPLACING to the
+# still starting. claude-ks-restart --master sets KS_MASTER_REPLACING to the
 # session it has just stopped, which is the one exception.
 if [ -z "$OLD_PID" ] && [ -n "$OLD_STARTED" ] && [ "${KS_MASTER_REPLACING:-}" != "$OLD_SID" ]; then
   STARTED_EPOCH="$(date -j -u -f '%Y-%m-%dT%H:%M:%S' "${OLD_STARTED%%.*}" +%s 2>/dev/null || echo 0)"
@@ -177,24 +178,12 @@ ensure_viewer() {
     echo "claude-ks-master: viewer already open (pid $other); it reattaches by itself"
     return 0
   fi
-  local app=""
-  for a in /Applications/Ghostty.app "$HOME/Applications/Ghostty.app"; do [ -d "$a" ] && app="$a" && break; done
-  if [ -n "$app" ]; then
-    # A new Ghostty instance (-n) restores the person's saved windows when their
-    # config has window-save-state = always: blank extra windows beside the
-    # viewer. This instance only ever holds the viewer, so it neither restores
-    # nor saves window state, and it quits when the viewer window closes.
-    open -na "$app" --args --window-save-state=never --quit-after-last-window-closed=true \
-      -e "$viewer" "$MASTER_DIR" >/dev/null 2>&1 \
-      && echo "claude-ks-master: opened the viewer in Ghostty" \
-      || echo "claude-ks-master: could not open Ghostty for the viewer (run: $viewer $MASTER_DIR)" >&2
+  # A new terminal window (lib/terminal.sh: Ghostty, else Terminal.app).
+  local app
+  if app="$(ks_open_terminal "$viewer" "$MASTER_DIR")"; then
+    echo "claude-ks-master: opened the viewer in $app"
   else
-    local cmd
-    cmd="$(printf '%q %q' "$viewer" "$MASTER_DIR")"
-    osascript -e 'tell application "Terminal" to activate' \
-      -e "tell application \"Terminal\" to do script \"${cmd//\"/\\\"}\"" >/dev/null 2>&1 \
-      && echo "claude-ks-master: opened the viewer in Terminal" \
-      || echo "claude-ks-master: could not open Terminal for the viewer (run: $viewer $MASTER_DIR)" >&2
+    echo "claude-ks-master: could not open a terminal for the viewer (run: $viewer $MASTER_DIR)" >&2
   fi
   return 0
 }

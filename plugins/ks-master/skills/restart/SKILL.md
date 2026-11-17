@@ -1,6 +1,6 @@
 ---
 name: restart
-description: Gracefully restart the ks-master session - write a handoff into the master handoffs folder, record it, and replace this session with a fresh master in the same tmux pane (claude-ks-rc-restart --master). Use when context is past ~70%, after log-off, or when a restart is requested from the board. Arguments - why (context N%, log-off, requested from the board).
+description: Gracefully restart the ks-master session - write a handoff into the master handoffs folder, record it, and replace this session with a fresh master in the same tmux pane (claude-ks-restart --master). Use when context is past ~70%, after log-off, or when a restart is requested from the board. Arguments - why (context N%, log-off, requested from the board).
 argument-hint: <reason>
 ---
 
@@ -38,7 +38,7 @@ Write it into the master handoffs folder (`$KS_MASTER_HANDOFFS`, run
 ## 3. Restart
 
 ```bash
-claude-ks-rc-restart --master --handoff <absolute path of the handoff>
+claude-ks-restart --master --handoff <absolute path of the handoff>
 ```
 
 It records the handoff in `session.json`, then ends this session in about two

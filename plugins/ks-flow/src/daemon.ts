@@ -75,7 +75,7 @@ import {
   type DeviceIdResolution,
 } from './lib/device.js';
 import { planSelfLabel } from './lib/device-label.js';
-import { listDevices, liveSessionNames, sameNames, writeDevicesCache } from './lib/device-list.js';
+import { listDevices, writeDevicesCache } from './lib/device-list.js';
 import { sharedBlocks } from './lib/device-backfill.js';
 import { pendingSettingsWrite, syncSharedSettings } from './lib/sharedsettings.js';
 import { pruneFired, readFired, recordFired, shouldFire, writeFired } from './lib/reminders-fired.js';
@@ -123,7 +123,8 @@ import {
   unitCompleted,
 } from './lib/phasemodel.js';
 import { joinUnit, sessionMatchesUnit } from './lib/join.js';
-import { CLAUDE_SESSIONS_DIR, readLiveSessions } from './lib/claude-sessions.js';
+import { CLAUDE_SESSIONS_DIR, readLiveProcesses, toLiveSession, type LiveProcess } from './lib/claude-sessions.js';
+import { peerSessions, peerSessionsSig } from './lib/peers.js';
 import { parseStateYaml } from './lib/stateyaml.js';
 import {
   CLAUDE_PROJECTS_DIR,
@@ -678,13 +679,12 @@ async function deviceHeartbeat(): Promise<void> {
   await maybeAnnounceRelease().catch((e) => log('version: release announcement failed', (e as Error)?.message));
 }
 
-// ── this device's label (lib/device-label.ts) and live session names ────────
+// ── this device's label (lib/device-label.ts) and the devices cache ─────────
 // Read every device each heartbeat: give this one a label when it has none (or
-// loses a duplicate), publish its live Claude sessions' names when they
-// changed (names only: no prompt, no cwd), keep <dataDir>/device.json's label,
-// name and deviceCount current for the CLIs and the session names
-// (`B:KAR-123`), and cache every device in <dataDir>/devices.json for
-// `ks-flow devices` (lib/device-list.ts).
+// loses a duplicate), keep <dataDir>/device.json's label, name and deviceCount
+// current for the CLIs and the session names (`B:KAR-123`), and cache every
+// device (with its published sessions) in <dataDir>/devices.json for
+// `ks-flow devices` and `ks-flow peers` offline (lib/device-list.ts).
 /** device.json as last written (null before the first write). */
 let deviceFileLast: DeviceFile | null = null;
 /** The last devices read failed (logged once until one succeeds). */
@@ -724,10 +724,10 @@ async function refreshDeviceLabel(): Promise<void> {
   const masterId = sharedSettings?.masterDeviceId ?? null;
   const plan = planSelfLabel(SELF.deviceId, devices, masterId);
   const selfDoc = devices.find((d) => d.deviceId === SELF.deviceId);
-  const names = liveSessionNames(liveSessions);
   const patch: Partial<DeviceDoc> = {};
   if (plan.write && plan.label) patch.label = plan.label;
-  if (!sameNames(selfDoc?.liveSessionNames, names)) patch.liveSessionNames = names;
+  // The retired names list (now devices/{id}.sessions): cleared once.
+  if (selfDoc?.liveSessionNames != null) patch.liveSessionNames = null;
   if (Object.keys(patch).length) {
     await devicesStore.mergeDevice(SELF.deviceId, patch);
     if (patch.label) log(`devices: label ${plan.label}${selfDoc?.label ? ` (was ${selfDoc.label}, held by another device)` : ''}`);
@@ -886,7 +886,8 @@ let clock: Scheduler | null = null; // the one clock (startWatchers)
 const worktreePathCache = new Map<string, string | null>(); // cwd → toplevel
 const pendingOverlays = new Map<string, Array<{ id: string; kind: string; since: string }>>();
 let knownWorktrees: string[] = conf.worktreePaths ?? [];
-let liveSessions: LiveSession[] = []; // Claude processes running now (lib/claude-sessions)
+let liveSessions: LiveSession[] = []; // Claude processes running now, cards' fields (lib/claude-sessions)
+let liveProcs: LiveProcess[] = []; // the same with Remote Control id and busy/idle (peers)
 let eventsOffset = 0;
 let pbHandle: PbHandle | null = null;
 
@@ -1301,11 +1302,35 @@ async function recomputeProject(): Promise<void> {
   noticeInbox(joined.filter((u) => isLive(u.worktreeDir) && !isForeign(u.unitId)));
 }
 
-/** Re-read the running Claude processes; recompute the cards if the set changed. */
+/**
+ * Re-read the running Claude processes; recompute the cards if the set changed
+ * (cards keep only the fixed fields: busy/idle flips don't rewrite them), and
+ * publish this device's sessions for `ks-flow peers` when they changed.
+ */
 function rescanLiveSessions(): void {
   const before = JSON.stringify(liveSessions);
-  liveSessions = readLiveSessions();
+  liveProcs = readLiveProcesses();
+  liveSessions = liveProcs.map(toLiveSession);
   if (JSON.stringify(liveSessions) !== before) scheduleProjectRecompute();
+  publishPeerSessions();
+}
+
+// ── this device's running sessions for `ks-flow peers` (lib/peers.ts) ──────
+// devices/{self}.sessions: written only when something in them changed (a
+// session started or ended, busy/idle, a wait, its card), so at most once per
+// 15 s tick. The card match uses the cards as last computed: a new session's
+// card shows up on the next tick after its recompute.
+let lastPeerSig: string | null = null;
+function publishPeerSessions(): void {
+  if (!deviceMode) return;
+  const sessions = peerSessions(liveProcs, [...lastJoined.values()], (id) => sessionDocs.get(id));
+  const sig = peerSessionsSig(sessions);
+  if (sig === lastPeerSig) return;
+  lastPeerSig = sig;
+  devicesStore.mergeDevice(SELF.deviceId, { sessions }).catch((e) => {
+    lastPeerSig = null; // try again next tick
+    log('devices: sessions not published', (e as Error)?.message);
+  });
 }
 
 // ── state.yaml ingestion ────────────────────────────────────────────────────
@@ -2159,7 +2184,7 @@ function slotLabel(d: Date): string {
  * master" press (start-request.json) launches claude-ks-master --detached unless
  * a master runs or is starting. Then, only while briefing is on: no live process
  * for session.json → claude-ks-master --detached; a request pending > 15 min
- * with a heartbeat older than 5 min → claude-ks-rc-restart --master --force. At
+ * with a heartbeat older than 5 min → claude-ks-restart --master --force. At
  * most one of either per 10 min. Live = session.json's pid or session id among
  * the running Claude processes (liveSessions), else its pid running `claude`.
  */
@@ -2404,7 +2429,8 @@ async function main(): Promise<void> {
   // → roll it out now that we've drained it, so today starts a fresh file.
   const evDay = fileDay(EVENTS_PATH);
   if (evDay && evDay !== activeDay) rotateEvents(evDay);
-  liveSessions = readLiveSessions(); // before backfill's first recompute
+  liveProcs = readLiveProcesses(); // before backfill's first recompute
+  liveSessions = liveProcs.map(toLiveSession);
   {
     // The last label, name and count carry over a restart (same device): the
     // first heartbeat rewrites them from the store.

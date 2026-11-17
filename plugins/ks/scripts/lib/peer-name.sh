@@ -30,6 +30,14 @@ ks_device_label() {
     "$dd/device.json" 2>/dev/null || true
 }
 
+# The name a claude-ks session started in folder $1 gets (ks-claude names it
+# there): its peer name, else the folder's name. For window titles.
+ks_peer_name_in() {
+  local name
+  name="$(cd "$1" && ks_peer_name "$("$(dirname "${BASH_SOURCE[0]}")/../session-title.sh" --print 2>/dev/null)" || true)"
+  printf '%s\n' "${name:-$(basename "$1")}"
+}
+
 # The peer name for this checkout: [<label>:]<unit>. $1 = the workflow unit's
 # name (session-title.sh --print), or empty.
 ks_peer_name() {

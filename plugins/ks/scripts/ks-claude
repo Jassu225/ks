@@ -1,7 +1,7 @@
 #!/bin/bash
 # ks-claude — start `claude` for KarmaSuite: behind claude-ks (the command to
-# type) and the other KS launchers (claude-ks-rc, claude-ks-master,
-# claude-ks-test, ks-start-ticket).
+# type) and the other KS launchers (claude-ks-restart, claude-ks-master,
+# claude-ks-test, ks-start-ticket). Not on PATH: they run it by its path.
 #
 #   ks-claude [--local-plugin <name>]… [--plugin <name>]… [claude args…]
 #

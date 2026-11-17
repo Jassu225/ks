@@ -54,7 +54,7 @@ workflow `state.yaml` or worktree to resume, even when a message says "resume".
 - **Never send Slack messages, reactions or replies** unless the user asks you
   to in this session, and then follow `/ks:slack` (show the exact text and the
   channel, wait for their yes).
-- **Command form.** `slack`, `ks-flow`, `ks-time` and `claude-ks-rc-restart` must
+- **Command form.** `slack`, `ks-flow`, `ks-time` and `claude-ks-restart` must
   be the first word of a Bash command: one call per Bash invocation, no `cd …
   &&`, no `env`, no loops, no pipes. Never supply, export or read `SLACK_TOKEN`.
   On `token_revoked` or `invalid_auth`, stop and tell them.
@@ -66,7 +66,7 @@ workflow `state.yaml` or worktree to resume, even when a message says "resume".
 
 - `{{MASTER_DIR}}/session.json`: who the master is (session id, pid, tmux pane,
   the handoff the last restart recorded). `claude-ks-master` writes it; the
-  plugin fills in your pid. Don't edit it: `claude-ks-rc-restart --master
+  plugin fills in your pid. Don't edit it: `claude-ks-restart --master
   --handoff <file>` records a handoff for you.
 - `{{MASTER_DIR}}/heartbeat.json`, `requests/`, `done/`: the plugin's. Don't touch.
 - `{{HANDOFFS_DIR}}`: your handoffs, newest last by name
@@ -82,7 +82,7 @@ Restart gracefully with `/ks-master:restart` when:
 - a restart request arrives from the board.
 
 The restart skill writes a handoff, records it, and runs
-`claude-ks-rc-restart --master --handoff <file>`. The new master starts in the
+`claude-ks-restart --master --handoff <file>`. The new master starts in the
 same tmux pane and reads that handoff first. If the daemon finds you stuck
 (a request waiting over 15 minutes and no heartbeat for 5), it restarts you
 hard with `--force`, without a handoff, so write handoffs that stay true: what

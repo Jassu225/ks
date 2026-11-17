@@ -1,17 +1,85 @@
 #!/bin/bash
 # claude-ks — the way to start Claude for KarmaSuite (in the checkout or one of
 # its worktrees). A plain `claude` gets the plugins, rules, task list and tokens
-# too; claude-ks adds:
+# too; claude-ks adds (scripts/ks-claude):
 #   - the session (peer) name: the workflow unit (KAR-123), prefixed with this
 #     Mac's ks-flow device label once 2+ Macs share the board (B:KAR-123), so
 #     agents on other Macs can tell it apart and message it;
-#   - Remote Control when it is on (ks.KS_REMOTE_CONTROL=1, `ks-setup remote-control`);
+#   - Remote Control when it is on (ks.KS_REMOTE_CONTROL=1, `ks-setup
+#     remote-control`), or for this session with --rc;
 #   - on-demand plugins: --local-plugin / --plugin <name> (ks-master, ks-browser)
 #     load for this session only.
 #
-#   claude-ks [--local-plugin <name>]… [claude args…]
+#   claude-ks [--rc] [--local-plugin <name>]… [claude args…]          here
+#   claude-ks --dir <dir> [--pane <tmux-pane>] [--rc] [claude args…]  in another folder
 #
-# It runs scripts/ks-claude, the launcher behind every KS launcher (old clone
-# setup included).
+# --rc (no value) turns Remote Control on for this one session, whatever the
+# setting; the name is the session's own. (`--rc=<name>`, `--remote-control
+# <name>` go to claude as given.)
+#
+# --dir starts the session in <dir>: in the --pane pane (%42) if it still
+# exists, replacing whatever runs there; else a new tmux window when tmux is
+# running; else this terminal. In tmux the pane drops to a login shell when
+# Claude exits, so it stays usable. A first message is claude's own positional
+# prompt: claude-ks --dir ~/wt/KAR-123 "Let's work on …". claude-ks-restart
+# uses --dir/--pane to put a fresh session in the old one's pane.
+#
+# With --dir it runs tmux, so a sandboxed agent needs claude-ks in the
+# sandbox's excludedCommands (ks-setup claude-settings).
+set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec "$SCRIPT_DIR/ks-claude" "$@"
+
+DIR="" PANE=""
+ARGS=() RC_ENV=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dir) DIR="${2-}"; [ -n "$DIR" ] || { echo "claude-ks: --dir needs a folder" >&2; exit 2; }; shift 2 ;;
+    --pane) PANE="${2-}"; [ -n "$PANE" ] || { echo "claude-ks: --pane needs a tmux pane" >&2; exit 2; }; shift 2 ;;
+    # ks-claude reads the setting env first, so this covers this session only
+    # (and survives the hop through tmux, below, as part of the command).
+    --rc) RC_ENV=(env KS_REMOTE_CONTROL=1); shift ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+
+if [ -z "$DIR" ]; then
+  [ -z "$PANE" ] || { echo "claude-ks: --pane goes with --dir" >&2; exit 2; }
+  exec ${RC_ENV[@]+"${RC_ENV[@]}"} "$SCRIPT_DIR/ks-claude" ${ARGS[@]+"${ARGS[@]}"}
+fi
+
+ABS="$(cd "$DIR" 2>/dev/null && pwd)" || { echo "claude-ks: no such directory: $DIR" >&2; exit 1; }
+DIR="$ABS"
+
+# The window title: the name ks-claude gives the session there, unless the
+# caller names it.
+NAME=""
+for ((i = 0; i < ${#ARGS[@]}; i++)); do
+  case "${ARGS[i]}" in
+    -n|--name) NAME="${ARGS[i+1]-}" ;;
+    --name=*) NAME="${ARGS[i]#--name=}" ;;
+  esac
+done
+if [ -z "$NAME" ]; then
+  . "$SCRIPT_DIR/lib/ks-config.sh"
+  . "$SCRIPT_DIR/lib/ks-root.sh"
+  . "$SCRIPT_DIR/lib/peer-name.sh"
+  NAME="$(ks_peer_name_in "$DIR")"
+fi
+
+CMD=(${RC_ENV[@]+"${RC_ENV[@]}"} "$SCRIPT_DIR/ks-claude" ${ARGS[@]+"${ARGS[@]}"})
+SH="${SHELL:-/bin/zsh}"
+INNER="cd $(printf '%q' "$DIR") && $(printf '%q ' "${CMD[@]}"); exec $(printf '%q' "$SH") -l"
+
+if [ -n "$PANE" ] && tmux display-message -p -t "$PANE" '#{pane_id}' >/dev/null 2>&1; then
+  tmux respawn-pane -k -t "$PANE" -c "$DIR" "$SH" -lc "$INNER"
+  echo "claude-ks: started $NAME in tmux pane $PANE ($DIR)"
+elif [ -n "${TMUX:-}" ] || tmux has-session 2>/dev/null; then
+  tmux new-window -c "$DIR" -n "$NAME" "$SH" -lc "$INNER"
+  echo "claude-ks: started $NAME in a new tmux window ($DIR)"
+elif [ -t 0 ] && [ -t 1 ]; then
+  cd "$DIR"
+  exec "${CMD[@]}"
+else
+  echo "claude-ks: no tmux and no terminal here to start the session in" >&2
+  exit 1
+fi

@@ -29,7 +29,7 @@ as a `masterRequests` doc in the store, which that daemon turns into a file in
 | `skills/briefing` | `/ks-master:briefing <trigger> [slot]`: one Slack pass. The master opens and closes the run; a subagent reads Slack and writes the items |
 | `skills/log-in` | `/ks-master:log-in`: catch-up pass, overdue/hot/promises, session roll call, the day's plan, saved to the daily log |
 | `skills/log-off` | `/ks-master:log-off`: last pass, archived/open/slipped, promises due tomorrow, roll call with suggestions, time from `ks-time`, a walk through open items (archive or keep: the user archives on the board), daily log, restart |
-| `skills/restart` | `/ks-master:restart <reason>`: handoff into the master handoffs folder, then `claude-ks-rc-restart --master --handoff <file>` |
+| `skills/restart` | `/ks-master:restart <reason>`: handoff into the master handoffs folder, then `claude-ks-restart --master --handoff <file>` |
 | `skills/docs-review` | `/ks-master:docs-review [paths]`: strict review of the uncommitted changes in `~/git/ks-docs/content` before the user commits them. A subagent checks OKF format, product knowledge vs code detail, the three gotcha checks (reusable, recurring, not local), and size and duplication. It returns a table with 1–5 scores (product value, reusability, recurrence, conciseness) and keep/trim/discard per file, plus trimmed text for each trim. Report only: it never edits, deletes, verifies or commits. The rubric and the report format are in `references/reviewer.md`; calibration pairs are in `references/examples.md` (add new real cases there) |
 
 ## Starting and restarting
@@ -38,7 +38,7 @@ as a `masterRequests` doc in the store, which that daemon turns into a file in
   session `ks-master` (a new window there when it exists, else that session
   created), not attached; it opens the viewer (`plugins/ks/scripts/ks-master-view`, a self-reattaching `tmux attach -t ks-master` in Ghostty, else Terminal.app) when none is open, so one window always shows the master; what the ks-flow daemon runs when no master is alive. `--pane <id>`
   — in that pane. `--dry-run` — print, start nothing.
-- `claude-ks-rc-restart --master [--handoff <file>] [--force] [--dry-run]` —
+- `claude-ks-restart --master [--handoff <file>] [--force] [--dry-run]` —
   replace the running master in its pane. A graceful restart needs a handoff
   written since the master started (`--handoff` records it); `--force` skips
   that (the daemon's hard restart).
@@ -103,8 +103,8 @@ still waits for idle before taking a request, so a request stays in
 ## Sandbox
 
 In the karmasuite project's sandbox, `ks-flow`, `slack`, `ks-time` and
-`claude-ks-rc-restart` must be excluded first-word commands (`"ks-flow *"`,
-`"claude-ks-rc-restart *"`, …), and PocketBase on 127.0.0.1 reachable.
+`claude-ks-restart` must be excluded first-word commands (`"ks-flow *"`,
+`"claude-ks-restart *"`, …), and PocketBase on 127.0.0.1 reachable.
 
 ## Checks
 

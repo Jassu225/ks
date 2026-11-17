@@ -1,0 +1,42 @@
+#!/bin/bash
+# claude-ks-start — open a folder in a brand-new terminal window running a
+# claude-ks session (named, KS rules, Remote Control when configured or with
+# --rc). claude-start is the same for plain `claude`.
+#
+#   claude-ks-start [<dir>] [--rc] [--local-plugin <name>]… [claude args…]
+#
+# <dir> defaults to this folder. The rest goes to claude-ks (a first message is
+# claude's positional prompt: claude-ks-start ~/wt/KAR-123 "Let's work on …").
+# The window: Ghostty, else Terminal.app; with tmux installed the session runs
+# in a new tmux session named after it (`B:KAR-123` → `B-KAR-123`), so
+# claude-ks-restart can replace it there and closing the window only detaches
+# it (lib/terminal.sh). For a new tmux window or a given pane instead:
+# claude-ks --dir.
+#
+# Runs `open` / `osascript` and tmux, so a sandboxed agent needs it in the
+# sandbox's excludedCommands (ks-setup claude-settings).
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/lib/ks-config.sh"
+. "$SCRIPT_DIR/lib/ks-root.sh"
+. "$SCRIPT_DIR/lib/peer-name.sh"
+. "$SCRIPT_DIR/lib/terminal.sh"
+
+DIR="."
+if [ $# -gt 0 ] && [ "${1#-}" = "$1" ] && [ -d "$1" ]; then DIR="$1"; shift; fi
+ABS="$(cd "$DIR" && pwd)"
+
+# The title: the caller's --name, else the name ks-claude gives the session there.
+NAME=""
+ARGS=("$@")
+for ((i = 0; i < ${#ARGS[@]}; i++)); do
+  case "${ARGS[i]}" in
+    -n|--name) NAME="${ARGS[i+1]-}" ;;
+    --name=*) NAME="${ARGS[i]#--name=}" ;;
+  esac
+done
+[ -n "$NAME" ] || NAME="$(ks_peer_name_in "$ABS")"
+
+ks_start_window "$ABS" "$NAME" "$SCRIPT_DIR/claude-ks" "$@" \
+  | sed 's/^/claude-ks-start: /' \
+  || { echo "claude-ks-start: could not open a terminal window (no Ghostty or Terminal.app reachable)" >&2; exit 1; }

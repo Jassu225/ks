@@ -42,7 +42,9 @@ import { ksPluginRoot } from './ksroot.js';
 /** No live master: start one in a new tmux window (or a new tmux session). */
 export const MASTER_START_CMD = ['claude-ks-master', '--detached'] as const;
 /** A master that stopped taking requests: replace it, no handoff. */
-export const MASTER_RESTART_CMD = ['claude-ks-rc-restart', '--master', '--force'] as const;
+export const MASTER_RESTART_CMD = ['claude-ks-restart', '--master', '--force'] as const;
+/** Earlier ks releases' names for a command, used while the ks plugin here is still older. */
+const OLD_SCRIPT_NAMES: Record<string, string> = { 'claude-ks-restart': 'claude-ks-rc-restart' };
 
 /** A request older than this, with a stale heartbeat, means the master is stuck. */
 export const REQUEST_STUCK_MS = 15 * 60_000;
@@ -405,7 +407,7 @@ export function pidIsClaude(pid: number): boolean {
 let scriptsDirCache: string | null = null;
 
 /**
- * The ks plugin's scripts/, where claude-ks-master and claude-ks-rc-restart live.
+ * The ks plugin's scripts/, where claude-ks-master and claude-ks-restart live.
  * KS_SCRIPTS_DIR overrides; else the ks plugin's folder (lib/ksroot.ts: the
  * registry, then `claude plugin list`; clone or installed); else walk up from
  * this file to a dir holding ks/scripts (running from the repo); else ask the
@@ -480,7 +482,9 @@ export function runMasterCommand(
     return;
   }
   const [name, ...args] = cmd;
-  const script = join(dir, name!);
+  let script = join(dir, name!);
+  const old = OLD_SCRIPT_NAMES[name!];
+  if (old && !existsSync(script) && existsSync(join(dir, old))) script = join(dir, old);
   const logPath = join(masterDirPath, 'launch.log');
   let out: number;
   try {

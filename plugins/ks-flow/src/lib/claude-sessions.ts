@@ -46,15 +46,42 @@ function alive(pid: number): boolean {
   }
 }
 
-/** Live interactive Claude Code sessions, newest first. */
+/**
+ * A live session with the fields that change while it runs, for the peers
+ * list (lib/peers.ts): its Remote Control id and Claude's own busy/idle. Cards
+ * keep only the LiveSession part (toLiveSession), so these flips never rewrite
+ * a card.
+ */
+export interface LiveProcess extends LiveSession {
+  /** Remote Control's session id (`session_…`), the address `bridge:<id>`; null without Remote Control. */
+  bridgeSessionId: string | null;
+  /** Claude's own status (busy, idle, …) and when it last changed (ISO). */
+  status: string | null;
+  statusAt: string | null;
+}
+
+/** The fields a card keeps. */
+export function toLiveSession(p: LiveProcess): LiveSession {
+  return { pid: p.pid, sessionId: p.sessionId, cwd: p.cwd, procStart: p.procStart, startedAt: p.startedAt, tmuxPane: p.tmuxPane, name: p.name };
+}
+
+const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+const isoOrNull = (v: unknown): string | null => (typeof v === 'number' && v > 0 ? new Date(v).toISOString() : null);
+
+/** Live interactive Claude Code sessions, newest first (cards' fields only). */
 export function readLiveSessions(): LiveSession[] {
+  return readLiveProcesses().map(toLiveSession);
+}
+
+/** Live interactive Claude Code sessions with their changing fields, newest first. */
+export function readLiveProcesses(): LiveProcess[] {
   let files: string[];
   try {
     files = readdirSync(CLAUDE_SESSIONS_DIR).filter((f) => /^\d+\.json$/.test(f));
   } catch {
     return [];
   }
-  const found: LiveSession[] = [];
+  const found: LiveProcess[] = [];
   for (const f of files) {
     let r: Record<string, unknown>;
     try {
@@ -75,6 +102,9 @@ export function readLiveSessions(): LiveSession[] {
       startedAt: new Date(Number(r.startedAt) || 0).toISOString(),
       tmuxPane: tmux ? tmux[0] : null,
       name: typeof r.name === 'string' ? r.name : null,
+      bridgeSessionId: strOrNull(r.bridgeSessionId),
+      status: strOrNull(r.status),
+      statusAt: isoOrNull(r.statusUpdatedAt),
     });
   }
   const starts = found.length ? startTimes(found.map((s) => s.pid)) : null;

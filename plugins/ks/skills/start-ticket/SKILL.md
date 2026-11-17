@@ -19,10 +19,10 @@ argument-hint: <linear issue URL>
    about without a terminal is skipped; mention `ks-flow restore --unit <id>`.
 
 2. Open the session there:
-   - tmux running: `claude-ks-rc <KS_WORKTREE> --prompt "<KS_PROMPT>"` — a new
-     tmux window with Remote Control, named after the ticket.
+   - tmux running: `claude-ks --dir <KS_WORKTREE> "<KS_PROMPT>"` — a new
+     tmux window named after the ticket.
    - otherwise give the user the command:
-     `cd <KS_WORKTREE> && claude -n <ticket id> "<KS_PROMPT>"`
+     `cd <KS_WORKTREE> && claude-ks "<KS_PROMPT>"`
      (or open that folder in the Claude desktop app and send the prompt).
 
 3. Report the worktree path, the branch and where the session runs.

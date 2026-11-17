@@ -62,7 +62,7 @@ MARKETPLACE=karmasuite
 # it is excluded, Claude can run the rest of setup, including the other entries
 # (after you agree). ks-flow's entry is added only when ks-flow is in use.
 EXCLUDED=(linear slack grain gh ks-config ks-time ks-start-ticket create-worktree
-  tmux claude-ks-master claude-ks-rc claude-ks-rc-restart quit-chrome mem-info)
+  tmux claude-ks claude-ks-start claude-start claude-ks-master claude-ks-restart quit-chrome mem-info)
 SELF_EXCLUDED=ks-setup
 FLOW_EXCLUDED=ks-flow
 # Where Claude may turn the sandbox on (managed settings win; any of them on = on).
@@ -74,11 +74,15 @@ MANAGED_SETTINGS="/Library/Application Support/ClaudeCode/managed-settings.json"
 # prompt injection, not a wall: a wrapped call (sh -c, a script) gets past it.
 DENY=('Bash(security *)' 'Bash(/usr/bin/security *)')
 # Commands that get a ~/.local/bin shim (plugin:command).
-SHIMS=(ks:linear ks:slack ks:grain ks:ks-time ks:ks-config ks:ks-setup ks:ks-root ks:claude-ks ks:ks-claude
-  ks:claude-ks-master ks:claude-ks-rc ks:claude-ks-rc-restart ks:claude-ks-test ks:ks-master-view
+SHIMS=(ks:linear ks:slack ks:grain ks:ks-time ks:ks-config ks:ks-setup ks:ks-root ks:claude-ks
+  ks:claude-ks-start ks:claude-start ks:claude-ks-master ks:claude-ks-restart ks:claude-ks-test ks:ks-master-view
   ks:remove_worktree ks:create-worktree ks:ks-start-ticket ks:ks-start-project ks:quality-typecheck.sh
   ks:spec_metadata.sh ks:deploy.sh ks:pre-deploy.sh ks:quit-chrome ks:mem-info ks:resolve-plugin-dir ks:statusline
   ks-flow:ks-flow)
+# Shims earlier versions wrote for commands that are gone (claude-ks-rc is now
+# `claude-ks --dir`, claude-ks-rc-restart is claude-ks-restart, ks-claude runs
+# only by path): removed when the shims are written, if they are KS shims.
+RETIRED_SHIMS=(ks-claude claude-ks-rc claude-ks-rc-restart claude-ks-serena)
 # The status line command written by `ks-setup statusline`: the shim, so it
 # follows plugin updates and needs no PATH.
 STATUSLINE_CMD='~/.local/bin/statusline'
@@ -527,7 +531,7 @@ remote_control_settings() {
     say "Remote Control is already on for claude-ks sessions (ks.KS_REMOTE_CONTROL=1)"
   else
     say "To set ks.KS_REMOTE_CONTROL=1 in $(ksc_dir)/ks.env: Claude started with claude-ks"
-    say "(and the KS launchers) gets --rc (Remote Control); a plain \`claude\` is unchanged."
+    say "(claude-ks-restart, claude-ks-test too) gets --rc (Remote Control); a plain \`claude\` is unchanged."
     say "Remote Control keeps those sessions' transcripts on Anthropic's servers; commands still run only here."
     if ! interactive && [ "$YES" = 0 ]; then
       # No one to ask: one command does both (the old block, if any, goes too).
@@ -973,6 +977,9 @@ write_shims() { # resolver (ks_root, or ksr_live_root: never spawns claude)
     plug="${s%%:*}"; cmd="${s#*:}"
     root="$("$1" "$plug" 2>/dev/null)" || continue
     [ -x "$root/bin/$cmd" ] && write_shim "$plug" "$cmd"
+  done
+  for cmd in "${RETIRED_SHIMS[@]}"; do
+    sed -n 2p "$LOCAL_BIN/$cmd" 2>/dev/null | grep -q '^# ks-shim' && rm -f "$LOCAL_BIN/$cmd"
   done
   return 0
 }

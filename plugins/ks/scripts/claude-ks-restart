@@ -1,9 +1,10 @@
 #!/bin/bash
-# claude-ks-rc-restart — replace a ticket's Claude session with a fresh one that
-# has Remote Control on, so the work can carry on from claude.ai/code or the app.
+# claude-ks-restart — replace a ticket's Claude session with a fresh one, which
+# carries on from the latest handoff. Remote Control as for any claude-ks
+# session (ks.KS_REMOTE_CONTROL); --rc turns it on for the new one regardless.
 #
-#   claude-ks-rc-restart [<ticket>] [--dry-run]
-#   claude-ks-rc-restart --master [--handoff <file>] [--force] [--dry-run]
+#   claude-ks-restart [<ticket>] [--rc] [--dry-run]
+#   claude-ks-restart --master [--handoff <file>] [--force] [--dry-run]
 #
 # <ticket> defaults to this checkout's workflow unit. ks-flow (`ks-flow session`)
 # says which Claude process works the ticket's worktree and in which tmux pane;
@@ -13,8 +14,9 @@
 # The kill and relaunch run inside the tmux server (`tmux run-shell -b`), since
 # a session's own child dies with it: it waits 2 s so the calling agent gets
 # this script's output, SIGTERMs the session (SIGKILL after 10 s), then runs
-# claude-ks-rc in the same pane with the project-manager prompt, which reads
-# the latest handoff and carries on. Log: ~/Library/Logs/claude-ks-rc.log.
+# `claude-ks --dir <worktree> --pane <pane>` with the project-manager prompt,
+# which reads the latest handoff and carries on. Log:
+# ~/Library/Logs/claude-ks-restart.log.
 #
 # --master replaces the ks-flow master session (plugins/ks-master) instead: its
 # pid and tmux pane come from <ks-flow data dir>/master/session.json, and the
@@ -42,7 +44,7 @@ SELF="$SCRIPT_DIR/$(basename "$0")"
 # The ks-flow CLI: its plugin folder (clone or installed), else whatever is on PATH.
 KS_FLOW="$(ks_root ks-flow 2>/dev/null)/bin/ks-flow"
 [ -x "$KS_FLOW" ] || KS_FLOW="$(command -v ks-flow || echo ks-flow)"
-LOG="$HOME/Library/Logs/claude-ks-rc.log"
+LOG="$HOME/Library/Logs/claude-ks-restart.log"
 
 squash() { tr -s ' ' <<<"$1" | sed 's/^ //; s/ $//'; }
 
@@ -70,9 +72,9 @@ age_of() {
   echo $(($(date +%s) - at))
 }
 
-# ── stage 2, inside the tmux server: claude-ks-rc-restart --apply … ──────────
+# ── stage 2, inside the tmux server: claude-ks-restart --apply … ──────────
 if [ "${1-}" = "--apply" ]; then
-  PID="$2" DIR="$3" PROMPT="$4" PANE="$5"
+  PID="$2" DIR="$3" PROMPT="$4" PANE="$5" RC="${6-}"
   echo "$(date '+%F %T') restart: pid $PID → $DIR (pane ${PANE:--})"
   sleep 2
   kill -TERM "$PID" 2>/dev/null || true
@@ -85,10 +87,10 @@ if [ "${1-}" = "--apply" ]; then
     kill -KILL "$PID" 2>/dev/null || true
     sleep 0.5
   fi
-  exec "$SCRIPT_DIR/claude-ks-rc" "$DIR" --prompt "$PROMPT" ${PANE:+--pane "$PANE"}
+  exec "$SCRIPT_DIR/claude-ks" --dir "$DIR" ${PANE:+--pane "$PANE"} ${RC:+--rc} "$PROMPT"
 fi
 
-# ── stage 2 for the master: claude-ks-rc-restart --apply-master <pid|-> <pane|-> <session id|-> ──
+# ── stage 2 for the master: claude-ks-restart --apply-master <pid|-> <pane|-> <session id|-> ──
 if [ "${1-}" = "--apply-master" ]; then
   PID="${2--}" PANE="${3--}" OLD_SID="${4--}"
   [ "$PID" != "-" ] || PID=""
@@ -119,11 +121,12 @@ if [ "${1-}" = "--apply-master" ]; then
 fi
 
 # ── stage 1: work out what to replace ───────────────────────────────────────
-TICKET="" DRY="" MASTER="" FORCE="" HANDOFF=""
-RC_USAGE="usage: claude-ks-rc-restart [<ticket>] [--dry-run] | --master [--handoff <file>] [--force] [--dry-run]"
+TICKET="" DRY="" MASTER="" FORCE="" HANDOFF="" RC=""
+RC_USAGE="usage: claude-ks-restart [<ticket>] [--rc] [--dry-run] | --master [--handoff <file>] [--force] [--dry-run]"
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
+    --rc) RC=1 ;;
     --master) MASTER=1 ;;
     --force) FORCE=1 ;;
     --handoff) HANDOFF="${2-}"; [ -n "$HANDOFF" ] || { echo "$RC_USAGE" >&2; exit 2; }; shift ;;
@@ -133,7 +136,11 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -z "$MASTER" ] && { [ -n "$FORCE" ] || [ -n "$HANDOFF" ]; }; then
-  echo "claude-ks-rc-restart: --force and --handoff go with --master" >&2
+  echo "claude-ks-restart: --force and --handoff go with --master" >&2
+  exit 2
+fi
+if [ -n "$MASTER" ] && [ -n "$RC" ]; then
+  echo "claude-ks-restart: the master always has Remote Control; --rc goes with a ticket" >&2
   exit 2
 fi
 
@@ -144,14 +151,14 @@ if [ -n "$MASTER" ]; then
   if [ -z "$MASTER_DIR" ]; then
     . "$SCRIPT_DIR/lib/ks-config.sh"
     PROJECT="$(ksc_project_root || true)"
-    [ -n "$PROJECT" ] && [ -d "$PROJECT" ] || { echo "claude-ks-rc-restart: KS_PROJECT_ROOT_PATH is not set (ks-config set ks.KS_PROJECT_ROOT_PATH <path>)" >&2; exit 1; }
-    FLOW_ROOT="$(ks_root ks-flow)" || { echo "claude-ks-rc-restart: the ks-flow plugin was not found (ks-root ks-flow)" >&2; exit 1; }
+    [ -n "$PROJECT" ] && [ -d "$PROJECT" ] || { echo "claude-ks-restart: KS_PROJECT_ROOT_PATH is not set (ks-config set ks.KS_PROJECT_ROOT_PATH <path>)" >&2; exit 1; }
+    FLOW_ROOT="$(ks_root ks-flow)" || { echo "claude-ks-restart: the ks-flow plugin was not found (ks-root ks-flow)" >&2; exit 1; }
     MASTER_DIR="$(node "$FLOW_ROOT/src/lib/datadir.mjs" --cwd "$PROJECT")/master"
   fi
   # The new master uses the same dir (claude-ks-master honours KS_MASTER_DIR).
   export KS_MASTER_DIR="$MASTER_DIR"
   SESSION_FILE="$MASTER_DIR/session.json"
-  [ -f "$SESSION_FILE" ] || { echo "claude-ks-rc-restart: no master session ($SESSION_FILE); start one with claude-ks-master" >&2; exit 1; }
+  [ -f "$SESSION_FILE" ] || { echo "claude-ks-restart: no master session ($SESSION_FILE); start one with claude-ks-master" >&2; exit 1; }
   PID="$(jq -r '.pid // empty' "$SESSION_FILE")"
   RECORDED_PID="$PID"
   SID="$(jq -r '.sessionId // empty' "$SESSION_FILE")"
@@ -160,7 +167,7 @@ if [ -n "$MASTER" ]; then
 
   # Is the pid still a Claude process? (ps is blocked in the sandbox.)
   if ! ps -p 1 >/dev/null 2>&1; then
-    echo "claude-ks-rc-restart: can't run ps here — sandboxed. Run claude-ks-rc-restart as the first word of the command, nothing chained." >&2
+    echo "claude-ks-restart: can't run ps here — sandboxed. Run claude-ks-restart as the first word of the command, nothing chained." >&2
     exit 1
   fi
   if [ -n "$PID" ] && [[ "$(ps -p "$PID" -o command= 2>/dev/null || true)" != *claude* ]]; then
@@ -177,7 +184,7 @@ if [ -n "$MASTER" ]; then
   if [ -z "$PID" ] && [ -z "$RECORDED_PID" ] && [ -n "$STARTED_AT" ] && [ "$(age_of "$STARTED_AT")" -lt 180 ]; then
     # session.json is under 3 minutes old with no pid and no process found yet:
     # Claude is still coming up. Starting another now would run two masters.
-    echo "claude-ks-rc-restart: master is still starting (session $SID, started $STARTED_AT); try again in a few minutes" >&2
+    echo "claude-ks-restart: master is still starting (session $SID, started $STARTED_AT); try again in a few minutes" >&2
     exit 1
   fi
   if [ -n "$PANE" ] && ! tmux display-message -p -t "$PANE" '#{pane_id}' >/dev/null 2>&1; then PANE=""; fi
@@ -185,7 +192,7 @@ if [ -n "$MASTER" ]; then
   # A graceful restart leaves a handoff behind; record the one named.
   if [ -n "$HANDOFF" ]; then
     case "$HANDOFF" in /*) ;; *) HANDOFF="$(pwd)/$HANDOFF" ;; esac
-    [ -f "$HANDOFF" ] || { echo "claude-ks-rc-restart: no such handoff file: $HANDOFF" >&2; exit 1; }
+    [ -f "$HANDOFF" ] || { echo "claude-ks-restart: no such handoff file: $HANDOFF" >&2; exit 1; }
   fi
   RECORDED="${HANDOFF:-$(jq -r '.handoff // empty' "$SESSION_FILE")}"
   if [ -z "$FORCE" ] && [ -n "$PID" ]; then
@@ -196,7 +203,7 @@ if [ -n "$MASTER" ]; then
       [ "$(stat -f %m "$RECORDED")" -ge "$START_EPOCH" ] && FRESH=1
     fi
     [ -n "$FRESH" ] || {
-      echo "claude-ks-rc-restart: no handoff written since this master started ($STARTED_AT)." >&2
+      echo "claude-ks-restart: no handoff written since this master started ($STARTED_AT)." >&2
       echo "Write one into the master handoffs folder and pass --handoff <file>, or use --force." >&2
       exit 1
     }
@@ -218,7 +225,7 @@ if [ -n "$MASTER" ]; then
     exec "$SCRIPT_DIR/claude-ks-master" --detached
   fi
   if ! tmux has-session 2>/dev/null; then
-    echo "claude-ks-rc-restart: the master isn't in tmux and no tmux server is running to run the restart in" >&2
+    echo "claude-ks-restart: the master isn't in tmux and no tmux server is running to run the restart in" >&2
     exit 1
   fi
   mkdir -p "$(dirname "$LOG")"
@@ -229,7 +236,7 @@ fi
 if [ -z "$TICKET" ]; then
   TICKET="$("$SCRIPT_DIR/workflow-unit" 2>/dev/null | cut -f3 || true)"
   [ -n "$TICKET" ] && [ "$TICKET" != "-" ] || {
-    echo "claude-ks-rc-restart: not in a ticket checkout; name the ticket" >&2
+    echo "claude-ks-restart: not in a ticket checkout; name the ticket" >&2
     exit 2
   }
 fi
@@ -237,12 +244,12 @@ fi
 INFO="$("$KS_FLOW" session "$TICKET" --json)" || [ -n "${INFO:-}" ] || exit 1
 DIR="$(jq -r '.worktreeDir // empty' <<<"$INFO")"
 WF="$(jq -r '.workflowDir' <<<"$INFO")"
-[ -n "$DIR" ] || { echo "claude-ks-rc-restart: $TICKET has no live worktree" >&2; exit 1; }
+[ -n "$DIR" ] || { echo "claude-ks-restart: $TICKET has no live worktree" >&2; exit 1; }
 
 # The calling session if it is one of the ticket's, else the newest one.
 TARGET="$(jq -c --arg me "${CLAUDE_PID:-}" '
   (.liveSessions | map(select((.pid | tostring) == $me)) | first) // .activeSession' <<<"$INFO")"
-[ "$TARGET" != "null" ] || { echo "claude-ks-rc-restart: no live Claude session for $TICKET" >&2; exit 1; }
+[ "$TARGET" != "null" ] || { echo "claude-ks-restart: no live Claude session for $TICKET" >&2; exit 1; }
 PID="$(jq -r .pid <<<"$TARGET")"
 PANE="$(jq -r '.tmuxPane // empty' <<<"$TARGET")"
 LIVE_COUNT="$(jq '.liveSessions | length' <<<"$INFO")"
@@ -253,15 +260,15 @@ LIVE_COUNT="$(jq '.liveSessions | length' <<<"$INFO")"
 STARTED="$(TZ=UTC ps -p "$PID" -o lstart= 2>/dev/null || true)"
 COMMAND="$(ps -p "$PID" -o command= 2>/dev/null || true)"
 if [ -z "$STARTED" ] && ! ps -p 1 >/dev/null 2>&1; then
-  echo "claude-ks-rc-restart: can't run ps here — sandboxed. Run claude-ks-rc-restart as the first word of the command, nothing chained." >&2
+  echo "claude-ks-restart: can't run ps here — sandboxed. Run claude-ks-restart as the first word of the command, nothing chained." >&2
   exit 1
 fi
 if [ "$(squash "$STARTED")" != "$(jq -r .procStart <<<"$TARGET")" ] || [[ "$COMMAND" != *claude* ]]; then
-  echo "claude-ks-rc-restart: pid $PID is no longer $TICKET's session (ks-flow catches up within 15 s)" >&2
+  echo "claude-ks-restart: pid $PID is no longer $TICKET's session (ks-flow catches up within 15 s)" >&2
   exit 1
 fi
 if [ -z "$PANE" ] && ! tmux has-session 2>/dev/null; then
-  echo "claude-ks-rc-restart: the session isn't in tmux and no tmux server is running to reopen it in" >&2
+  echo "claude-ks-restart: the session isn't in tmux and no tmux server is running to reopen it in" >&2
   exit 1
 fi
 
@@ -269,7 +276,7 @@ REL="${WF#"$DIR"/}"
 [ "$REL" = "$WF" ] || REL="./$REL"
 PROMPT="/ks:project-manager Let's work on $REL/ project"
 
-echo "$TICKET: replacing session pid $PID (tmux ${PANE:-new window}) with a Remote Control session in $DIR"
+echo "$TICKET: replacing session pid $PID (tmux ${PANE:-new window}) with a fresh session in $DIR${RC:+ (Remote Control on)}"
 echo "First message: $PROMPT"
 [ "$LIVE_COUNT" -le 1 ] || echo "Note: $LIVE_COUNT sessions are live in this worktree; only pid $PID is replaced."
 [ -z "$DRY" ] || { echo "(dry run: nothing killed)"; exit 0; }
@@ -277,5 +284,5 @@ echo "First message: $PROMPT"
 mkdir -p "$(dirname "$LOG")"
 # The tmux server's PATH is launchd's bare one (no Homebrew tmux, no node), so
 # stage 2 carries this shell's.
-tmux run-shell -b "PATH=$(printf '%q' "$PATH") $(printf '%q ' "$SELF" --apply "$PID" "$DIR" "$PROMPT" "$PANE") >>$(printf '%q' "$LOG") 2>&1"
+tmux run-shell -b "PATH=$(printf '%q' "$PATH") $(printf '%q ' "$SELF" --apply "$PID" "$DIR" "$PROMPT" "$PANE" "$RC") >>$(printf '%q' "$LOG") 2>&1"
 echo "Restart scheduled: this session ends in ~2 s."

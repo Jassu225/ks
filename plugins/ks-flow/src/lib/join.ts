@@ -6,7 +6,7 @@
 // and with the Claude processes live in its worktree right now.
 import type { LiveSession, SessionDoc, WaitingState, WorkUnitDoc } from './db/types.js';
 
-function sameOrUnder(child: string | null, parent: string | null): boolean {
+export function sameOrUnder(child: string | null, parent: string | null): boolean {
   if (!child || !parent) return false;
   return child === parent || child.startsWith(parent.endsWith('/') ? parent : parent + '/');
 }

@@ -106,8 +106,10 @@ export interface DeviceDoc {
   name?: string | null;
   /** Short label on the shared board (A, B, … A2; lib/device-label.ts): the daemon assigns one, Settings → Devices sets it. */
   label?: string | null;
-  /** Names of this device's live Claude sessions (~/.claude/sessions/<pid>.json `name`, pid alive): sorted, deduped. Names only. */
-  liveSessionNames?: string[];
+  /** This device's running Claude sessions, for `ks-flow peers` (lib/peers.ts): written by its daemon when they change (checked every 15 s). */
+  sessions?: PeerSession[];
+  /** Retired (replaced by `sessions`): the daemon clears it to null. */
+  liveSessionNames?: string[] | null;
   defaultName: string;
   platform: string;
   daemonVersion: string;
@@ -267,6 +269,31 @@ export interface WorkUnitDoc {
    * for convenient rendering. */
   state: Record<string, unknown> | null;
   updatedAt: string;
+}
+
+/**
+ * One running Claude session as its device publishes it (`devices/{id}.sessions`,
+ * lib/peers.ts). No prompt, no transcript, no full path: the folder's name only.
+ */
+export interface PeerSession {
+  /** The peer name (`B:KAR-123`, `ks-master`); null when the session has none. */
+  name: string | null;
+  sessionId: string;
+  /** Remote Control's id: message it as `bridge:<id>`. Null without Remote Control. */
+  bridgeSessionId: string | null;
+  pid: number;
+  /** The card it works on (ticket id or project slug) and the card's title; null off any card. */
+  unitId: string | null;
+  title: string | null;
+  /** The folder's name (not the path). */
+  folder: string;
+  tmuxPane: string | null;
+  startedAt: string;
+  /** Claude's own status (busy, idle, …) and since when. */
+  status: string | null;
+  statusAt: string | null;
+  /** Waiting on the person (an ask, a plan, a permission): the tool and since when. */
+  waiting: { tool: string; since: string } | null;
 }
 
 /** A live interactive Claude Code process. Only the fields that stay fixed for
