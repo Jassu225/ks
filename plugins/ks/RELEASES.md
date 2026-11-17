@@ -2,6 +2,12 @@
 
 ## 2026-11-17
 
+- **A ticket whose worktree setup failed still gets its card (ks 1.3.11, ks-flow 0.8.5):**
+  - **What happened:** on B, `ks-start-ticket` created KAR-13509's worktree, but `create-worktree` then failed at `pnpm install` (pnpm missing). It printed `WORKTREE_PATH=` only on its last line, so `ks-start-ticket` saw a failure, said "Failed to create worktree" and never recorded `worktree_dir`. With no worktree on record, ks-flow couldn't tie the card or its session to the folder, so the board hid the card. Any Mac whose dependency step fails would do the same; nothing earlier today changed this.
+  - **`create-worktree`:** prints the path as soon as the worktree exists.
+  - **`ks-start-ticket`:** when a later setup step fails, it still records `worktree_dir` (both copies), warns with the command to finish by hand, prints `KS_WARNING=` for `/ks:start-ticket`, and opens the session.
+  - **ks-flow:** a `state.yaml` that sits inside a worktree but says `worktree_dir: null` now counts as that worktree's, so a ticket already left this way shows up with no edit.
+
 - **`ks-flow inbox-check`: put the Plannotator Inbox right after a reboot (ks-flow 0.8.4, a stopgap):**
   - **The problem:** Tailscale keeps its `serve` mappings across a reboot, and the restarted Inbox refuses to publish over its own leftover mapping, or to reuse its link door's ("Another tailscale serve mapping already uses port …").
   - **What it checks:** Plannotator, Tailscale, the Inbox running, leftover mappings, the tailnet address and the linked Macs.

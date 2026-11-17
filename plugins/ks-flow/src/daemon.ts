@@ -130,7 +130,7 @@ import {
 import { joinUnit, sessionMatchesUnit } from './lib/join.js';
 import { CLAUDE_SESSIONS_DIR, readLiveProcesses, toLiveSession, type LiveProcess } from './lib/claude-sessions.js';
 import { peerSessions, peerSessionsSig } from './lib/peers.js';
-import { parseStateYaml } from './lib/stateyaml.js';
+import { parseStateYaml, worktreeHolding } from './lib/stateyaml.js';
 import {
   CLAUDE_PROJECTS_DIR,
   DAEMON_LOG_PATH,
@@ -1492,6 +1492,9 @@ function ingestStateYaml(path: string, mtimeMs: number): void {
   if (!parsed) return; // mid-write / malformed → keep last good, retry next tick (mtime NOT recorded)
   const u: WorkUnitDoc = {
     ...parsed.doc,
+    // No worktree_dir recorded (a ticket start that stopped after making the
+    // worktree): the worktree this state.yaml lives in.
+    worktreeDir: parsed.doc.worktreeDir ?? worktreeHolding(path, knownWorktrees, projectPath ?? null),
     currentPhase: null,
     waiting: null,
     sessionIds: [],

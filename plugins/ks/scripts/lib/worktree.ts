@@ -344,11 +344,24 @@ export async function createWorktreeAndLaunchClaude(
 
   try {
     const targetDir = process.env.KS_ORIGINAL_DIR || process.cwd();
-    const output = execSync(`"${createWorktreeScript}" "${worktreeName}"`, {
-      encoding: 'utf-8',
-      stdio: ['inherit', 'pipe', 'inherit'],
-      cwd: targetDir,
-    });
+    let output: string;
+    let setupFailed = false;
+    try {
+      output = execSync(`"${createWorktreeScript}" "${worktreeName}"`, {
+        encoding: 'utf-8',
+        stdio: ['inherit', 'pipe', 'inherit'],
+        cwd: targetDir,
+      });
+    } catch (e) {
+      // create-worktree prints WORKTREE_PATH= as soon as the worktree exists.
+      // A later step that failed (pnpm missing, a package build) still leaves
+      // the worktree: record it and go on, so the card and the session find
+      // it, and say what to finish by hand.
+      const partial = String((e as { stdout?: unknown }).stdout ?? '').match(/WORKTREE_PATH=(.+)/);
+      if (!partial || !fs.existsSync(partial[1].trim())) throw e;
+      output = String((e as { stdout?: unknown }).stdout);
+      setupFailed = true;
+    }
 
     const worktreePathMatch = output.match(/WORKTREE_PATH=(.+)/);
     if (!worktreePathMatch) {
@@ -356,6 +369,12 @@ export async function createWorktreeAndLaunchClaude(
     }
 
     const worktreePath = worktreePathMatch[1].trim();
+    if (setupFailed) {
+      console.error(chalk.yellow(`\n⚠ The worktree was created, but its setup did not finish (see the error above).`));
+      console.error(chalk.yellow(`  Finish it by hand: cd "${worktreePath}" && pnpm install`));
+      // For the /ks:start-ticket skill (--no-launch): tell the user.
+      console.log(`KS_WARNING=worktree setup did not finish (dependencies); run: cd "${worktreePath}" && pnpm install`);
+    }
 
     // Update state file with worktree directory (original repo copy)
     updateWorktreeDir(outputPath, worktreePath);

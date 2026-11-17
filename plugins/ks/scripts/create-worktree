@@ -204,6 +204,10 @@ if ! git -C "$MAIN_REPO_DIR" worktree add ${TRACK_FLAG} -b "$NEW_BRANCH_NAME" "$
     exit 1
 fi
 success "Git worktree created with branch '${NEW_BRANCH_NAME}'"
+# The path now, not only on the last line: a later step that fails (pnpm
+# missing, a package build) still leaves a worktree, and its caller
+# (ks-start-ticket) must record it. The last line repeats it on success.
+echo "WORKTREE_PATH=${WORKTREE_PATH}"
 
 # Copy .env files
 info "Copying .env files..."

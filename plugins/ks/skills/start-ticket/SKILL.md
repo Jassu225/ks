@@ -15,7 +15,9 @@ argument-hint: <linear issue URL or KAR-123>
    Run it from the KarmaSuite main checkout (`ks-config get ks.KS_PROJECT_ROOT_PATH`).
    It fetches the ticket, writes `workflow/<user>/tickets/<id>/state.yaml`,
    creates or reuses the worktree, and ends with two lines:
-   `KS_WORKTREE=<path>` and `KS_PROMPT=<prompt>`. A backup restore it can't ask
+   `KS_WORKTREE=<path>` and `KS_PROMPT=<prompt>`. A `KS_WARNING=` line means the
+   worktree exists but its setup did not finish (say, pnpm missing): open the
+   session anyway and tell the user the command it names. A backup restore it can't ask
    about without a terminal is skipped; mention `ks-flow restore --unit <id>`.
 
 2. Open the session there:

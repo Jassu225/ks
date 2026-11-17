@@ -153,3 +153,21 @@ export function parseStateYaml(path: string): ParsedWorkUnit | null {
     },
   };
 }
+
+/**
+ * The worktree a state.yaml lives in, for one that says `worktree_dir: null`
+ * (a start that stopped before recording it: ks-start-ticket's setup failed
+ * after the worktree was made). The deepest worktree holding the file, never
+ * the main checkout (its workflow/ copy belongs to no one worktree).
+ */
+export function worktreeHolding(stateYamlPath: string, worktrees: readonly string[], mainCheckout: string | null): string | null {
+  const strip = (p: string) => p.replace(/\/+$/, '');
+  const main = mainCheckout ? strip(mainCheckout) : null;
+  let best: string | null = null;
+  for (const raw of worktrees) {
+    const w = strip(raw);
+    if (!w || w === main) continue;
+    if (stateYamlPath.startsWith(`${w}/`) && (!best || w.length > best.length)) best = w;
+  }
+  return best;
+}
