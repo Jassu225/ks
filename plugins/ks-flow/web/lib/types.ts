@@ -389,6 +389,24 @@ export interface DailyLogDoc {
   updatedAt: string;
 }
 
+/** `deviceCommands/{uid}` (src/lib/db/types.ts DeviceCommandDoc): the message
+ * board. One command for one device's daemon, from a fixed list, with its outcome. */
+export interface DeviceCommandDoc {
+  uid: string;
+  to: string;
+  from: { deviceId: string; by: string };
+  command: 'ping' | 'start-ticket' | 'new-session' | 'restart-session' | 'backup';
+  args: { ticket?: string; dir?: string; unit?: string };
+  note?: string | null;
+  createdAt: string;
+  status: 'queued' | 'running' | 'ok' | 'failed' | 'refused' | 'expired';
+  startedAt?: string | null;
+  endedAt?: string | null;
+  message?: string | null;
+  output?: string | null;
+  exitCode?: number | null;
+}
+
 /** `master_events` (src/lib/db/types.ts MasterEventDoc): the daemon starting or
  * hard-restarting the master, or a request written / dropped for it. */
 export interface MasterEventDoc {

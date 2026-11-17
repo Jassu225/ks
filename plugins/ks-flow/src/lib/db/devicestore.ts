@@ -8,6 +8,7 @@
 //   workUnits/{unitId}       ← the cards (owner = `deviceId`)
 //   meta/project             ← retired; read and deleted by the backfill
 import type {
+  DeviceCommandDoc,
   DeviceDoc,
   DeviceStore,
   DocDb,
@@ -23,6 +24,7 @@ export const SETTINGS_PATH = 'meta/settings';
 export const LEGACY_PROJECT_PATH = 'meta/project';
 export const MASTER_REQUESTS = 'masterRequests';
 export const WORK_UNITS = 'workUnits';
+export const DEVICE_COMMANDS = 'deviceCommands';
 
 /** Firestore refuses `undefined` fields; a JSON round-trip drops them. */
 function plain<T extends object>(doc: T): Record<string, unknown> {
@@ -75,6 +77,25 @@ export function docDeviceStore(db: DocDb): DeviceStore {
     },
     ...(db.transact
       ? {
+          async claimDeviceCommand(uid: string, startedAt: string) {
+            const out = await db.transact!(`${DEVICE_COMMANDS}/${uid}`, (cur) =>
+              cur && cur.status === 'queued' ? { status: 'running', startedAt } : null,
+            );
+            return out !== null;
+          },
+        }
+      : {}),
+    async addDeviceCommand(doc: DeviceCommandDoc) {
+      await db.write([{ op: 'set', path: `${DEVICE_COMMANDS}/${doc.uid}`, data: plain(doc) }]);
+    },
+    async updateDeviceCommand(uid: string, patch: Partial<DeviceCommandDoc>) {
+      await db.write([{ op: 'merge', path: `${DEVICE_COMMANDS}/${uid}`, data: plain(patch) }]);
+    },
+    async deleteDeviceCommand(uid: string) {
+      await db.write([{ op: 'delete', path: `${DEVICE_COMMANDS}/${uid}` }]);
+    },
+    ...(db.transact
+      ? {
           async raiseVersion(patch: (current: SettingsDoc | null) => Partial<SettingsDoc> | null) {
             const out = await db.transact!(SETTINGS_PATH, (cur) => {
               const p = patch(cur as SettingsDoc | null);
@@ -86,6 +107,9 @@ export function docDeviceStore(db: DocDb): DeviceStore {
       : {}),
     ...(db.watchDoc
       ? {
+          watchDeviceCommand(uid: string, onChange: (cmd: DeviceCommandDoc | null) => void, onError?: (e: Error) => void): Unsubscribe {
+            return db.watchDoc!(`${DEVICE_COMMANDS}/${uid}`, (d) => onChange(d ? ({ ...(d as unknown as DeviceCommandDoc), uid }) : null), onError);
+          },
           watchSettings(onChange: (settings: SettingsDoc | null) => void, onError?: (e: Error) => void): Unsubscribe {
             return db.watchDoc!(SETTINGS_PATH, (d) => onChange(d as SettingsDoc | null), onError);
           },
@@ -122,6 +146,15 @@ export function docDeviceStore(db: DocDb): DeviceStore {
                 ),
               onError,
               { where: [{ field: 'deviceId', op: '!=', value: self }] },
+            );
+          },
+          watchDeviceCommands(self: string, onChange: (cmds: DeviceCommandDoc[]) => void, onError?: (e: Error) => void): Unsubscribe {
+            return db.watch!(
+              DEVICE_COMMANDS,
+              [],
+              (docs) => onChange(docs.map((d) => ({ ...(d.data as unknown as DeviceCommandDoc), uid: d.id }))),
+              onError,
+              { where: [{ field: 'to', op: '==', value: self }] },
             );
           },
           watchDevices(onChange: (devices: DeviceDoc[]) => void, onError?: (e: Error) => void): Unsubscribe {

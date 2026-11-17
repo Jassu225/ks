@@ -18,6 +18,7 @@ const TABS: { href: string; label: string; notesOnly?: boolean }[] = [
   { href: '/daily', label: 'Daily log' },
   { href: '/notes', label: 'Notes', notesOnly: true },
   { href: '/activity', label: 'Activity Log' },
+  { href: '/commands', label: 'Commands' },
 ];
 
 function isActive(pathname: string, href: string): boolean {

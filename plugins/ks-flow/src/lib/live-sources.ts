@@ -9,7 +9,8 @@
 //   backupRuns     the newest 100 backupRuns         the daily sweep check, backup status, Activity
 //   backupUnits    backupUnits                      backup status (what the bucket holds per unit)
 //   masterRequests masterRequests                   the master device only
-import type { DeviceStore, DocDb, WatchQuery, BackupRunDoc, BackupUnitDoc, BriefingItemDoc, DeviceDoc, MasterRequestDoc, ReminderDoc, SettingsDoc } from './db/types.js';
+//   deviceCommands deviceCommands where to == self  the message board: commands for this device
+import type { DeviceStore, DocDb, WatchQuery, DeviceCommandDoc, BackupRunDoc, BackupUnitDoc, BriefingItemDoc, DeviceDoc, MasterRequestDoc, ReminderDoc, SettingsDoc } from './db/types.js';
 import type { LiveSpec } from './live-mirror.js';
 
 /** The newest backup runs the listener keeps: today's sweep check needs a few, Activity's history the rest. */
@@ -36,11 +37,12 @@ export interface LiveSources {
   backupRuns: LiveSpec<BackupRunDoc[]>;
   backupUnits: LiveSpec<BackupUnitDoc[]>;
   masterRequests: LiveSpec<MasterRequestDoc[]>;
+  deviceCommands: LiveSpec<DeviceCommandDoc[]>;
 }
 
 /** The listener specs, or null where the store can't listen (PocketBase: a local server, read directly as before). */
 export function liveSources(db: DocDb | undefined, store: DeviceStore, self: string): LiveSources | null {
-  if (!db?.watch || !db.watchDoc || !store.watchSettings || !store.watchDevices || !store.watchForeignCards || !store.watchMasterRequests) return null;
+  if (!db?.watch || !db.watchDoc || !store.watchSettings || !store.watchDevices || !store.watchForeignCards || !store.watchMasterRequests || !store.watchDeviceCommands) return null;
   return {
     settings: { name: 'settings', label: 'Shared settings (meta/settings)', attach: (d, e) => store.watchSettings!(d, e) },
     devices: { name: 'devices', label: 'Devices', attach: (d, e) => store.watchDevices!(d, e) },
@@ -50,5 +52,6 @@ export function liveSources(db: DocDb | undefined, store: DeviceStore, self: str
     backupRuns: collection<BackupRunDoc>(db, 'backupRuns', 'Backup runs', 'backupRuns', { orderBy: 'startedAt', desc: true, limit: BACKUP_RUNS_KEPT }),
     backupUnits: collection<BackupUnitDoc>(db, 'backupUnits', 'Backup index', 'backupUnits'),
     masterRequests: { name: 'masterRequests', label: 'Master requests', attach: (d, e) => store.watchMasterRequests!(d, e) },
+    deviceCommands: { name: 'deviceCommands', label: 'Commands for this device', attach: (d, e) => store.watchDeviceCommands!(self, d, e) },
   };
 }

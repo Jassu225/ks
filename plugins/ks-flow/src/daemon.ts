@@ -61,6 +61,7 @@ import {
   masterStatusSig,
   readMasterStatus,
   writeStartRequest,
+  ksScriptsDir,
 } from './lib/master.js';
 import { isMasterDevice, MasterRequestQueue } from './lib/master-device.js';
 import { masterEvent, recordMasterEvent, scheduleRequestEvent, supervisorEvent } from './lib/master-events.js';
@@ -145,6 +146,7 @@ import { scheduler, type Scheduler } from './lib/schedule.js';
 import { LiveMirror, type LiveSpec } from './lib/live-mirror.js';
 import { liveSources } from './lib/live-sources.js';
 import { openErrors, recordError, resolveError } from './lib/errors-log.js';
+import { DeviceCommandQueue, refusal, runCommand, type Step, type StepResult } from './lib/device-commands.js';
 import { fetchLinearFacts, type LinearFacts } from './lib/linear-sync.js';
 import {
   attachInbox,
@@ -654,6 +656,8 @@ const live = LIVE
       // A run or an index entry changed: the board's backup status follows in ~5 s.
       backupRuns: mirror.add(tap(LIVE.backupRuns, () => kickBackupStatus())),
       backupUnits: mirror.add(tap(LIVE.backupUnits, () => kickBackupStatus())),
+      // The message board (lib/device-commands.ts): commands for this device.
+      deviceCommands: mirror.add(tap(LIVE.deviceCommands, (list) => void commandQueue.take(list))),
       // Only on the master device (syncMasterRequestsListener).
       masterRequests: mirror.add(
         tap(LIVE.masterRequests, (list) => {
@@ -2636,6 +2640,77 @@ async function masterRequestsTick(): Promise<void> {
   if (!masterStoreSide() || !masterHere()) return;
   await masterRequests.take();
 }
+
+// ── the message board (lib/device-commands.ts) ─────────────────────────────
+// Commands for this device (deviceCommands where to == self) arrive through
+// the deviceCommands listener; each is checked, taken once and run here, and
+// its outcome written back onto its doc (the board's Commands page).
+
+/** Where a command may open a session: the checkout and its live worktrees. */
+const commandContext = {
+  projectPath: projectPath && existsSync(projectPath) ? projectPath : null,
+  worktrees: () => knownWorktrees,
+};
+
+/** A command's longest run (a ticket's worktree with its dependencies can take minutes). */
+const COMMAND_TIMEOUT_MS = 15 * 60_000;
+
+/** Run one step through the login shell (the user's PATH: tmux, claude, the KS commands), output captured. */
+function execCommandStep(step: Step): Promise<StepResult> {
+  return new Promise((resolve) => {
+    let script: string;
+    if (step.kind === 'backup') script = backupScriptPath();
+    else {
+      const dir = ksScriptsDir();
+      if (!dir) {
+        resolve({ code: 127, output: 'plugins/ks/scripts not found (set KS_SCRIPTS_DIR)' });
+        return;
+      }
+      script = join(dir, step.name);
+    }
+    const argv = step.kind === 'backup' ? [process.execPath, script, ...step.args] : [script, ...step.args];
+    // The shell string is fixed: the program and its args go in as argv ($0 "$@").
+    const prelude = `${LOGIN_PRELUDE} export PATH="$KS_FLOW_NODE_DIR:$PATH";`;
+    let output = '';
+    const keep = (b: Buffer): void => {
+      output += b.toString('utf8');
+      if (output.length > 200_000) output = output.slice(-100_000);
+    };
+    let child;
+    try {
+      child = spawn('/bin/zsh', ['-c', `${prelude} exec "$0" "$@"`, ...argv], {
+        cwd: step.cwd ?? (commandContext.projectPath || undefined),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, KS_FLOW_NODE_DIR: dirname(process.execPath), KS_COMMAND: '1' },
+      });
+    } catch (e) {
+      resolve({ code: 127, output: `failed to start: ${(e as Error)?.message}` });
+      return;
+    }
+    const timer = setTimeout(() => {
+      output += `\n[ks-flow] stopped after ${COMMAND_TIMEOUT_MS / 60_000} min`;
+      child.kill('SIGTERM');
+    }, COMMAND_TIMEOUT_MS);
+    timer.unref();
+    child.stdout?.on('data', keep);
+    child.stderr?.on('data', keep);
+    child.on('error', (e: Error) => {
+      clearTimeout(timer);
+      resolve({ code: 127, output: `${output}\nfailed to start: ${e.message}` });
+    });
+    child.on('close', (code: number | null) => {
+      clearTimeout(timer);
+      resolve({ code, output });
+    });
+  });
+}
+
+const commandQueue = new DeviceCommandQueue(
+  devicesStore,
+  (doc) => runCommand(doc, commandContext, execCommandStep, { version: DAEMON_VERSION, device: SELF.defaultName }),
+  (doc) => refusal(doc, commandContext),
+  (m) => log(m),
+);
 
 // ── lifecycle ───────────────────────────────────────────────────────────────
 async function main(): Promise<void> {

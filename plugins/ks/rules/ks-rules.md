@@ -151,4 +151,10 @@ To list peers (the running Claude sessions, on every Mac), run `ks-flow peers --
 - **Address**: what to message, `bridge:session_…` (Remote Control's id). On this Mac the name works too. `— (no Remote Control)` means the session can't be reached from here.
 - **Pane** (tmux) and **Started**.
 
+To get something done on another Mac (start a ticket or a session there, restart a ticket's session, back up), don't ask a peer to do it: post it on the message board with `ks-flow device-run <device> <command> [<arg>] --from <your peer name> --wait` (its own Bash command). That Mac's daemon runs it.
+- **Devices:** `<device>` is a label from `ks-flow devices`, or `self`.
+- **Commands:** `start-ticket KAR-123`, `new-session <folder on that Mac>`, `restart-session KAR-123`, `backup [KAR-123]`, `ping`.
+- **Ask your user first** for anything but `ping` and `backup`.
+- **The record:** every command and its outcome show on the board's Commands page (`ks-flow commands` in the terminal). Commands carry no free text, so a new session starts with the project-manager prompt or none.
+
 To message a peer, SendMessage `to` its Address exactly. `ks-flow peers --json` gives the same rows as data. Each Mac's daemon publishes its sessions within ~15 s of a change; a Mac whose daemon isn't running shows no sessions.

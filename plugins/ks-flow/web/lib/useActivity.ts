@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { openLive } from './liveStore';
 import { getPb } from './pocketbase';
-import type { BoardConfig, MasterEventDoc } from './types';
+import type { BoardConfig, DeviceCommandDoc, MasterEventDoc } from './types';
 
 const EVENTS = 200;
 
@@ -19,6 +19,8 @@ export interface ActivityData {
   masterEvents: MasterEventDoc[];
   /** Bumped on each change to backup_runs. */
   backupRunsVersion: number;
+  /** The message board's newest commands (Firestore only), newest first. */
+  deviceCommands: DeviceCommandDoc[];
   loaded: boolean;
   refresh: () => Promise<void>;
 }
@@ -28,6 +30,7 @@ const byAtDesc = (a: MasterEventDoc, b: MasterEventDoc): number => (b.at ?? '').
 export function useActivity(cfg: BoardConfig): ActivityData {
   const [masterEvents, setMasterEvents] = useState<MasterEventDoc[]>([]);
   const [backupRunsVersion, setVersion] = useState(0);
+  const [deviceCommands, setCommands] = useState<DeviceCommandDoc[]>([]);
   const [loaded, setLoaded] = useState(false);
   const reloadRef = useRef<() => Promise<void>>(async () => {});
 
@@ -40,11 +43,11 @@ export function useActivity(cfg: BoardConfig): ActivityData {
     };
     return cfg.dbProvider === 'pocketbase'
       ? subscribePocketbase(cfg, emit, bump, (fn) => (reloadRef.current = fn))
-      : subscribeFirestore(emit, bump, (fn) => (reloadRef.current = fn));
+      : subscribeFirestore(emit, bump, (docs) => setCommands(docs.filter(Boolean).sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))), (fn) => (reloadRef.current = fn));
   }, [cfg]);
 
   const refresh = useCallback(() => reloadRef.current(), []);
-  return { masterEvents, backupRunsVersion, loaded, refresh };
+  return { masterEvents, backupRunsVersion, deviceCommands, loaded, refresh };
 }
 
 function subscribePocketbase(
@@ -83,12 +86,14 @@ function subscribePocketbase(
 function subscribeFirestore(
   emit: (docs: MasterEventDoc[]) => void,
   bump: () => void,
+  commands: (docs: DeviceCommandDoc[]) => void,
   register: (fn: () => Promise<void>) => void,
 ): () => void {
   const live = openLive('activity', {
     onSnap: (key, docs) => {
       if (key === 'masterEvents') emit(docs as MasterEventDoc[]);
       else if (key === 'backupRuns') bump();
+      else if (key === 'deviceCommands') commands(docs as DeviceCommandDoc[]);
     },
   });
   register(live.reload);

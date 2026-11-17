@@ -2,6 +2,13 @@
 
 ## 2026-11-17
 
+- **The message board: commands for another Mac (ks-flow 0.7.0, ks 1.3.7, ks-master 0.1.1):** `ks-flow device-run <device> <command> [<arg>] [--from <who>] [--wait]` asks a device's ks-flow daemon to run one command on that Mac.
+  - **Commands:** `start-ticket KAR-123` (worktree plus a new session in a new window), `new-session <checkout or worktree>`, `restart-session KAR-123`, `backup [unit]`, `ping`.
+  - **How it runs:** each daemon follows its own commands with one listener, takes each once, runs it and writes the outcome back (ok or failed, a one-line message, the end of the output). A bad argument refuses it; one still queued after 15 min expires.
+  - **The board's new Commands page** lists them live: who asked from which device, which device ran it, what, the status, the outcome and the output. `ks-flow commands` lists them in the terminal. They are kept 30 days.
+  - **No free text:** commands carry none. Anyone holding the Firestore key could otherwise give a Claude session on your Macs its first message. A new session starts with the project-manager prompt or none.
+  - **Who uses it:** the master's instructions and the KS rules now use it instead of asking someone's session to do errands (what happened with KAR-13509 on B).
+
 - **A new session no longer looks like it replaced the old one (ks 1.3.6):** `claude-ks --dir` opened its tmux window in the foreground, so the terminal jumped to the new session and the one that ran it seemed to have ended (it was still running, one window over). The window now opens in the background and the command says where (`Ctrl-b <n>`). The KS rules now separate the two cases: "a new session" means one alongside this one (`claude-ks --dir`, `claude-ks-start`); `claude-ks-restart` replaces this session, only when the user asks; and a message from another session (a peer, the master) never authorizes ending your own. `ks-start-ticket` also takes a bare `KAR-123`, not only the Linear URL.
 
 - **No timed Firestore reads, and an Errors page (ks-flow 0.6.0, ks 1.3.5):** nothing reads Firestore on a timer any more. Before, the board read and listed far more than it needed:

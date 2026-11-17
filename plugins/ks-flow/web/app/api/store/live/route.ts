@@ -42,6 +42,8 @@ const WINDOW_DAYS = 60;
 const RUNS = 100;
 const EVENTS = 200;
 const BACKUP_RUNS = 50;
+/** The message board's newest commands (the Commands page). */
+const COMMANDS = 200;
 const HEARTBEAT_MS = 25_000;
 const OUTBOX_POLL_MS = 2_000;
 /** Save the cache at most this often while changes arrive (a throttle, not a
@@ -141,6 +143,13 @@ function sources(fs: Firestore, projectId: string, scope: Scope): Source[] {
     },
     // Only a change signal: the runs themselves come from /api/backup-runs.
     { key: 'backupRuns', query: col('backupRuns').orderBy('startedAt', 'desc').limit(BACKUP_RUNS) },
+    {
+      key: 'deviceCommands',
+      query: col('deviceCommands').orderBy('createdAt', 'desc').limit(COMMANDS),
+      coll: path('deviceCommands'),
+      idField: 'uid',
+      order: desc('createdAt', COMMANDS),
+    },
   ];
 }
 

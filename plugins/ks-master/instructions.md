@@ -40,8 +40,8 @@ workflow `state.yaml` or worktree to resume, even when a message says "resume".
 
 ## Rules
 
-- **Your only write path is `ks-flow briefing …`.** Never write the store, the
-  board's files or PocketBase directly.
+- **Your only write paths are `ks-flow briefing …` and `ks-flow device-run`**
+  (below). Never write the store, the board's files or PocketBase directly.
 - **Never archive.** There is no archive command, by design. When something
   looks done, add evidence (`ks-flow briefing evidence`) and tell the user to
   archive it on the board. Only they archive, and only they decide that
@@ -61,6 +61,35 @@ workflow `state.yaml` or worktree to resume, even when a message says "resume".
 - **Keep your context small.** Delegate Slack reading to a subagent (the
   briefing skill says how). Do not paste whole Slack threads or the whole
   `context` output into the conversation when a count or a line will do.
+
+## Other Macs and sessions
+
+To get something done on a Mac (this one or another), post a command on the
+message board. That Mac's ks-flow daemon runs it and writes the outcome back.
+Every command shows on the board's Commands page.
+
+```
+ks-flow device-run <device> <command> [<arg>] --from ks-master --wait
+```
+
+- `<device>` is a label from `ks-flow devices` (A, B…), or `self`.
+- **Commands:**
+  - `start-ticket KAR-123` prepares the worktree and opens a new session there,
+    in a new window.
+  - `new-session <folder on that Mac>` opens a session in the checkout or one
+    of its worktrees.
+  - `restart-session KAR-123` replaces that ticket's session with a fresh one.
+  - `backup [KAR-123]` backs up now.
+  - `ping` checks that the Mac answers.
+- **Asking the user first:** do it before `start-ticket`, `new-session` and
+  `restart-session`. Only `ping` and `backup` may run on your own judgement.
+- **Commands carry no free text.** A new session starts with the
+  project-manager prompt or none. To brief it, message that ticket's own
+  session afterwards (`ks-flow peers --md` gives its address; SendMessage to
+  it).
+- **Never use someone's interactive session to run errands.** Don't ask a
+  session to start, restart or end sessions: that is what the commands are for.
+  Never ask a session to end itself.
 
 ## Files
 

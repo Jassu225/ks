@@ -183,7 +183,8 @@ The KarmaSuite setup keeps the store in Firestore: GCP project `ks-flow`, its
 project holds one board, so the collections are **flat, at the database root**
 (no per-project level): `devices`, `meta/settings`, `workUnits`, `sessions`,
 `reminders`, `backupUnits`, `backupRuns`, `briefingItems`, `briefingRuns`,
-`dailyLogs`, `masterEvents`, `masterRequests` and the `slack_names` cache.
+`dailyLogs`, `masterEvents`, `masterRequests`, `deviceCommands` (the
+[message board](#message-board-commands)) and the `slack_names` cache.
 `meta/project` is retired: the [device backfill](#several-devices) moves it into
 `devices/<id>`. One board may span [several devices](#several-devices); a
 second *board* (another person, another project) on the same database would mix
@@ -789,6 +790,72 @@ older PID). `POST /api/processes` re-validates the pid against a live `ps` scan
 and refuses to kill anything that isn't a running ks-flow daemon, so it can't
 terminate an arbitrary process. (The launchd-managed daemon respawns if killed,
 so the kill only sticks for the stray one.)
+
+### Message board: commands (`/commands`)
+
+One device (the master, an agent, you) can ask another device's ks-flow daemon
+to do something on that Mac:
+
+```
+ks-flow device-run <device> <command> [<arg>] [--from <who>] [--note <why>] [--wait [<s>]] [--json]
+ks-flow commands [--limit <n>] [--json]
+```
+
+`<device>` is its label (`A`, `B`), its name, its id, or `self`.
+
+**Commands** (`src/lib/device-commands.ts`), a fixed list that is never a shell
+command:
+
+| Command | What it does on that Mac |
+|---|---|
+| `ping` | answers with its ks-flow version |
+| `start-ticket <KAR-123\|URL>` | `ks-start-ticket --no-launch` in the checkout, then `claude-ks-start` in the worktree it printed, with the project-manager prompt it printed |
+| `new-session <dir>` | `claude-ks-start <dir>`, with no first message. `<dir>` must be the checkout or one of its live worktrees |
+| `restart-session <KAR-123>` | `claude-ks-restart <KAR-123>` |
+| `backup [<unit>]` | the backup sweep now, as "Back up now" (one unit with an argument) |
+
+**How a command runs:**
+- **Posting:** `device-run` writes `deviceCommands/{uid}` with `to`, `from`
+  (device and who), the command, its arguments and a note, as `queued`.
+- **Taking it:** each daemon follows its own commands (`to == self`) with one
+  listener. It checks each queued command, then takes it in a transaction
+  (`queued` → `running`), so the command runs once.
+- **Running it:** through the login shell, so the user's PATH, tmux and the KS
+  commands are there, with arguments passed as argv.
+- **The outcome** is written back onto the same doc: `ok` or `failed`, a
+  one-line message, the exit code and the end of the output (at most 8000
+  characters).
+
+**Other endings:**
+- `refused`: an unknown command, a bad argument, or a folder outside the
+  checkout.
+- `expired`: still queued after 15 minutes.
+- `failed` ("interrupted"): the daemon restarted while it ran.
+
+**Waiting and cleanup:**
+- `--wait` follows the doc until the command ends (default 180 s). Exit codes:
+  0 ok; 1 failed, refused or expired; 3 still running when the wait ends.
+- The device that ran a command deletes it after 30 days.
+
+**Commands carry no free text.** Anyone who holds the Firestore service-account
+key can write the store, and so can post commands. So a command can never give
+a Claude session its first message: a new session starts with the
+project-manager prompt that `ks-start-ticket` derives, or with none. Any other
+argument refuses the command. Keep the key file out of shared folders and
+backups.
+
+**The Commands page** lists the newest 200 commands live, from the board's
+stream (the `activity` scope):
+- when it was asked
+- who asked, and from which device
+- which device runs it
+- the command and its argument
+- its status and how long it took
+- the outcome; a click shows the note and the output
+
+The master uses commands to start tickets on another Mac
+(`plugins/ks-master/instructions.md`). The KS rules tell every agent to use them
+instead of asking a peer session to do such errands.
 
 ### Errors (`/errors`)
 

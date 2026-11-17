@@ -169,6 +169,45 @@ export interface MasterRequestDoc {
   createdAt: string;
 }
 
+/** What a device's daemon can be asked to run (lib/device-commands.ts). A fixed list: never a shell command. */
+export type DeviceCommandName = 'ping' | 'start-ticket' | 'new-session' | 'restart-session' | 'backup';
+
+/** queued → running → ok | failed; refused (bad arguments, unknown command); expired (queued over 15 min). */
+export type DeviceCommandStatus = 'queued' | 'running' | 'ok' | 'failed' | 'refused' | 'expired';
+
+/**
+ * `deviceCommands/{uid}`: the message board. Something (the master, an agent,
+ * the CLI) asks a device's daemon to run one command; that daemon runs it and
+ * writes the outcome back onto the same doc. Kept 30 days (the board's
+ * Commands page lists them), then deleted by the device that ran them.
+ */
+export interface DeviceCommandDoc {
+  uid: string;
+  /** The device that runs it. */
+  to: string;
+  /** Who asked: the asking device, and the session or tool (`ks-master`, `KAR-123`, `cli`). */
+  from: { deviceId: string; by: string };
+  command: DeviceCommandName;
+  /**
+   * The command's arguments (lib/device-commands.ts checks them before running).
+   * No free text on purpose: whoever can write the store must not be able to
+   * hand a Claude session its first message. A session starts with the fixed
+   * project-manager prompt ks-start-ticket prints, or none.
+   */
+  args: { ticket?: string; dir?: string; unit?: string };
+  /** Why, in a few words (shown on the Commands page). */
+  note?: string | null;
+  createdAt: string;
+  status: DeviceCommandStatus;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  /** One line: what happened. */
+  message?: string | null;
+  /** The end of the command's output (at most 8000 characters). */
+  output?: string | null;
+  exitCode?: number | null;
+}
+
 /** The collections whose docs belong to one device (each carries `deviceId`). */
 export const OWNED_COLLECTIONS = ['workUnits', 'sessions', 'backupRuns', 'backupUnits', 'masterEvents'] as const;
 export type OwnedCollection = (typeof OWNED_COLLECTIONS)[number];
@@ -205,6 +244,17 @@ export interface DeviceStore {
   ): Unsubscribe;
   /** Every device, live. Absent where the store can't listen. */
   watchDevices?(onChange: (devices: DeviceDoc[]) => void, onError?: (e: Error) => void): Unsubscribe;
+  /** Post a command on the message board (deviceCommands/{uid}). */
+  addDeviceCommand?(doc: DeviceCommandDoc): Promise<void>;
+  /** Merge an outcome into a command (the running device only). */
+  updateDeviceCommand?(uid: string, patch: Partial<DeviceCommandDoc>): Promise<void>;
+  /** Take a queued command (queued → running, atomically): false when it was not queued any more. */
+  claimDeviceCommand?(uid: string, startedAt: string): Promise<boolean>;
+  deleteDeviceCommand?(uid: string): Promise<void>;
+  /** The commands for this device (`to == self`), live. Absent where the store can't listen. */
+  watchDeviceCommands?(self: string, onChange: (cmds: DeviceCommandDoc[]) => void, onError?: (e: Error) => void): Unsubscribe;
+  /** One command, live (`ks-flow device-run --wait`). */
+  watchDeviceCommand?(uid: string, onChange: (cmd: DeviceCommandDoc | null) => void, onError?: (e: Error) => void): Unsubscribe;
   /**
    * Read meta/settings and merge `patch(current)` into it in one transaction
    * (never creates it: `patch` gets null then). Resolves to the doc as written,

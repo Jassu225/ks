@@ -35,15 +35,32 @@
 //       rows: [{ device: { deviceId, label, name, self, stale, lastSeenAt },
 //                session: PeerSession | null (a device with none), state,
 //                address, you (this is the asking session: $CLAUDE_PID) }] }
+//   ks-flow device-run <device> <command> [<ticket|dir|unit>] [--from <who>]
+//                      [--note <why>] [--wait [<seconds>]] [--json]
+//                                       the message board (lib/device-commands.ts):
+//                                       ask <device>'s daemon (its label A/B, name,
+//                                       id, or "self") to run one command: ping,
+//                                       start-ticket <KAR-123|URL>, new-session
+//                                       <absolute dir on that device>,
+//                                       restart-session <KAR-123>, backup [<unit>].
+//                                       --from: who asks (your peer name;
+//                                       default $KS_COMMAND_FROM, else "cli").
+//                                       --wait: until it finishes (default 180 s)
+//                                       and print the outcome. Firestore only.
+//   ks-flow commands [--limit <n>] [--json]   the newest commands on the board
 //
-// Exit: 0 answered / moved / nothing to move; 1 card-move refused; 2 usage,
-// or the store can't answer.
+// Exit: 0 answered / moved / nothing to move / the command ran (or was posted);
+// 1 card-move refused, or the command failed, was refused or expired; 2 usage,
+// or the store can't answer; 3 --wait ran out while it was still queued or running.
 import { dataDir, loadConfig } from './lib/config.js';
 import { createProvider } from './lib/db/index.js';
 import { deviceIdentity, resolveDeviceId } from './lib/device.js';
 import { cardOwner, moveCard, startDecision } from './lib/card-owner.js';
 import { agoText, formatDevices, listDevices, readDevicesCache, refreshRows } from './lib/device-list.js';
 import { formatPeers, formatPeersMarkdown, peerRows, type PeerRow } from './lib/peers.js';
+import { randomUUID } from 'node:crypto';
+import { COMMANDS, isCommandName } from './lib/device-commands.js';
+import type { DeviceCommandDoc, DeviceDoc } from './lib/db/types.js';
 
 const READ_TIMEOUT_MS = 10_000;
 
@@ -119,7 +136,9 @@ async function main(): Promise<void> {
     } else console.log(formatPeers(rows, now, source === 'cache' ? updatedAt : null));
     process.exit(0);
   }
-  if (cmd !== 'card-owner' && cmd !== 'card-move') fail(2, 'usage: device-cli.js {device-id|devices|peers|card-owner <unit>|card-move <unit>} [--json]');
+  if (cmd === 'device-run') return deviceRun(rest, self.deviceId, json);
+  if (cmd === 'commands') return listCommands(rest, self.deviceId, json);
+  if (cmd !== 'card-owner' && cmd !== 'card-move') fail(2, 'usage: device-cli.js {device-id|devices|peers|device-run|commands|card-owner <unit>|card-move <unit>} [--json]');
   if (!unit) fail(2, `usage: ks-flow ${cmd} <unit> [--json]`);
 
   const store = createProvider(loadConfig()).devices();
@@ -146,6 +165,149 @@ async function main(): Promise<void> {
   if (json) console.log(JSON.stringify({ moved: res.moved, refused, message: res.message, ...res.info }, null, 2));
   else console.log(res.message);
   process.exit(refused ? 1 : 0);
+}
+
+/** The value after a flag, or undefined. */
+function flag(args: string[], name: string): string | undefined {
+  const i = args.indexOf(name);
+  return i >= 0 && i + 1 < args.length && !args[i + 1].startsWith('--') ? args[i + 1] : undefined;
+}
+
+/** Positional arguments (flags and their values left out). */
+function positional(args: string[], valued: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (valued.includes(args[i])) {
+      if (i + 1 < args.length && !args[i + 1].startsWith('--')) i++;
+      continue;
+    }
+    if (!args[i].startsWith('--')) out.push(args[i]);
+  }
+  return out;
+}
+
+/** A device by its label (A), id (or 6+ leading characters), name, or "self". */
+function findDevice(devices: DeviceDoc[], key: string, self: string): DeviceDoc | null {
+  const k = key.trim().toLowerCase();
+  if (k === 'self' || k === 'this' || k === 'here') return devices.find((d) => d.deviceId === self) ?? null;
+  const live = devices.filter((d) => !d.forgotten);
+  return (
+    live.find((d) => (d.label ?? '').toLowerCase() === k) ??
+    live.find((d) => d.deviceId === key || (k.length >= 6 && d.deviceId.startsWith(k))) ??
+    live.find((d) => (d.name ?? '').toLowerCase() === k || (d.defaultName ?? '').toLowerCase() === k) ??
+    null
+  );
+}
+
+const TERMINAL = new Set(['ok', 'failed', 'refused', 'expired']);
+
+function describe(c: DeviceCommandDoc, names: Map<string, string>): string {
+  const arg = c.args?.ticket ?? c.args?.dir ?? c.args?.unit ?? '';
+  const to = names.get(c.to) ?? c.to.slice(0, 8);
+  return `${c.createdAt.slice(0, 16).replace('T', ' ')}  ${c.from?.by ?? '?'} → ${to}: ${c.command}${arg ? ` ${arg}` : ''}  [${c.status}]${c.message ? ` ${c.message}` : ''}`;
+}
+
+async function deviceRun(rest: string[], selfId: string, json: boolean): Promise<void> {
+  const valued = ['--from', '--note', '--wait'];
+  const [deviceKey, command, arg] = positional(rest, valued);
+  if (!deviceKey || !command) {
+    fail(2, `usage: ks-flow device-run <device> <command> [<ticket|dir|unit>] [--from <who>] [--note <why>] [--wait [<s>]] [--json]\ncommands:\n${Object.entries(COMMANDS).map(([n, d]) => `  ${n.padEnd(16)} ${d}`).join('\n')}`);
+  }
+  if (!isCommandName(command)) fail(2, `unknown command "${command}" (one of: ${Object.keys(COMMANDS).join(', ')})`);
+  const store = createProvider(loadConfig()).devices();
+  if (!store.addDeviceCommand || !store.watchDeviceCommand) fail(2, 'the message board needs the Firestore store');
+  let devices: DeviceDoc[];
+  try {
+    devices = await timed(store.getDevices());
+  } catch (e) {
+    fail(2, `can't read the store (${(e as Error).message})`);
+  }
+  const target = findDevice(devices, deviceKey, selfId);
+  if (!target) fail(2, `no device "${deviceKey}" (devices: ${devices.filter((d) => !d.forgotten).map((d) => `${d.label ?? '?'} ${d.name || d.defaultName}`).join(', ')})`);
+  const args: DeviceCommandDoc['args'] = {};
+  if (command === 'start-ticket' || command === 'restart-session') {
+    if (!arg) fail(2, `${command} needs a ticket (KAR-123)`);
+    args.ticket = arg;
+  } else if (command === 'new-session') {
+    if (!arg) fail(2, 'new-session needs an absolute folder on that device');
+    args.dir = arg;
+  } else if (command === 'backup' && arg) args.unit = arg;
+  const doc: DeviceCommandDoc = {
+    uid: randomUUID(),
+    to: target.deviceId,
+    from: { deviceId: selfId, by: flag(rest, '--from') || process.env.KS_COMMAND_FROM || 'cli' },
+    command,
+    args,
+    note: flag(rest, '--note') ?? null,
+    createdAt: new Date().toISOString(),
+    status: 'queued',
+  };
+  try {
+    await timed(store.addDeviceCommand!(doc));
+  } catch (e) {
+    fail(2, `can't post the command (${(e as Error).message})`);
+  }
+  const name = `${target.label ? `${target.label} · ` : ''}${target.name || target.defaultName || target.deviceId}`;
+  if (!rest.includes('--wait')) {
+    if (json) console.log(JSON.stringify({ posted: true, ...doc }, null, 2));
+    else console.log(`posted ${command}${arg ? ` ${arg}` : ''} for ${name} (${doc.uid}); ks-flow commands shows its outcome`);
+    process.exit(0);
+  }
+  const secs = Number(flag(rest, '--wait') ?? 180);
+  const waitMs = (Number.isFinite(secs) && secs > 0 ? secs : 180) * 1000;
+  let last: DeviceCommandDoc = doc;
+  const done = await new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      stop();
+      resolve(false);
+    }, waitMs);
+    const stop = store.watchDeviceCommand!(
+      doc.uid,
+      (c) => {
+        if (!c) return;
+        last = c;
+        if (TERMINAL.has(c.status)) {
+          clearTimeout(timer);
+          stop();
+          resolve(true);
+        }
+      },
+      () => {},
+    );
+  });
+  if (json) console.log(JSON.stringify({ finished: done, ...last }, null, 2));
+  else if (done) console.log(`${name}: ${command} ${last.status}: ${last.message ?? ''}`);
+  else console.log(`${name}: ${command} still ${last.status} after ${waitMs / 1000}s (${doc.uid}); ks-flow commands shows it when it ends`);
+  process.exit(!done ? 3 : last.status === 'ok' ? 0 : 1);
+}
+
+async function listCommands(rest: string[], selfId: string, json: boolean): Promise<void> {
+  const limit = Math.max(1, Math.min(200, Number(flag(rest, '--limit') ?? 20) || 20));
+  const cfg = loadConfig();
+  const provider = createProvider(cfg);
+  const db = provider.docDb?.();
+  if (!db) fail(2, 'the message board needs the Firestore store');
+  let cmds: DeviceCommandDoc[];
+  let devices: DeviceDoc[];
+  try {
+    [cmds, devices] = await timed(
+      Promise.all([
+        db.list('deviceCommands').then((l) => l.map((d) => ({ ...(d.data as unknown as DeviceCommandDoc), uid: d.id }))),
+        provider.devices().getDevices(),
+      ]),
+    );
+  } catch (e) {
+    fail(2, `can't read the store (${(e as Error).message})`);
+  }
+  cmds.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  cmds = cmds.slice(0, limit);
+  if (json) {
+    console.log(JSON.stringify({ self: selfId, commands: cmds }, null, 2));
+    process.exit(0);
+  }
+  const names = new Map(devices.map((d) => [d.deviceId, d.label ?? (d.name || d.defaultName || d.deviceId.slice(0, 8))]));
+  console.log(cmds.length ? cmds.map((c) => describe(c, names)).join('\n') : 'no commands yet');
+  process.exit(0);
 }
 
 main().catch((e) => fail(2, (e as Error).message));
