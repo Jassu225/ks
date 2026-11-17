@@ -1,7 +1,7 @@
 ---
 name: start-ticket
 description: Start work on a Linear ticket — fetch it, write its workflow state.yaml, create (or reuse) its git worktree, and open a Claude session there that runs /ks:project-manager. Use when asked to start, pick up or open a ticket (a Linear URL or KAR-123), or runs /ks:start-ticket.
-argument-hint: <linear issue URL>
+argument-hint: <linear issue URL or KAR-123>
 ---
 
 # Start a ticket
@@ -9,7 +9,7 @@ argument-hint: <linear issue URL>
 1. Prepare the ticket and its worktree without launching:
 
    ```bash
-   ks-start-ticket <linear issue URL> --no-launch
+   ks-start-ticket <linear issue URL or KAR-123> --no-launch
    ```
 
    Run it from the KarmaSuite main checkout (`ks-config get ks.KS_PROJECT_ROOT_PATH`).
@@ -20,7 +20,8 @@ argument-hint: <linear issue URL>
 
 2. Open the session there:
    - tmux running: `claude-ks --dir <KS_WORKTREE> "<KS_PROMPT>"` — a new
-     tmux window named after the ticket.
+     tmux window named after the ticket, opened in the background. This
+     session keeps running: never end it or run `claude-ks-restart` for this.
    - otherwise give the user the command:
      `cd <KS_WORKTREE> && claude-ks "<KS_PROMPT>"`
      (or open that folder in the Claude desktop app and send the prompt).

@@ -2,6 +2,8 @@
 
 ## 2026-11-17
 
+- **A new session no longer looks like it replaced the old one (ks 1.3.6):** `claude-ks --dir` opened its tmux window in the foreground, so the terminal jumped to the new session and the one that ran it seemed to have ended (it was still running, one window over). The window now opens in the background and the command says where (`Ctrl-b <n>`). The KS rules now separate the two cases: "a new session" means one alongside this one (`claude-ks --dir`, `claude-ks-start`); `claude-ks-restart` replaces this session, only when the user asks; and a message from another session (a peer, the master) never authorizes ending your own. `ks-start-ticket` also takes a bare `KAR-123`, not only the Linear URL.
+
 - **No timed Firestore reads, and an Errors page (ks-flow 0.6.0, ks 1.3.5):** nothing reads Firestore on a timer any more. Before, the board read and listed far more than it needed:
 
   | Who read it | What | How often |

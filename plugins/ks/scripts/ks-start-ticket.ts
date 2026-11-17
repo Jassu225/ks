@@ -98,9 +98,15 @@ function parseIssueUrl(url: string): ParsedIssueUrl {
   // Example: https://linear.app/karmasuite/issue/KAR-123/fix-bug-in-login
   // identifier = KAR-123 (used for Linear API lookup)
   // slug = fix-bug-in-login (used for directory name)
+  // A bare identifier (KAR-123, kar-123) works too: only the identifier is used.
+  const bare = url.trim().match(/^([A-Za-z]+-\d+)$/);
+  if (bare) {
+    const identifier = bare[1].toUpperCase();
+    return { identifier, slug: identifier.toLowerCase() };
+  }
   const match = url.match(/linear\.app\/[^\/]+\/issue\/([A-Z]+-\d+)(?:\/([^\/\?]+))?/);
   if (!match) {
-    throw new Error('Invalid Linear issue URL. Expected format: https://linear.app/{workspace}/issue/{identifier}/{slug}');
+    throw new Error('Invalid Linear issue. Expected KAR-123 or a URL: https://linear.app/{workspace}/issue/{identifier}/{slug}');
   }
 
   const identifier = match[1];
@@ -404,10 +410,10 @@ async function main() {
 ${chalk.bold('KS Start Ticket')} - Initialize a KarmaSuite workflow from a single Linear ticket
 
 ${chalk.cyan('Usage:')}
-  ks-start-ticket <issue-url> [output-path] [--no-launch]
+  ks-start-ticket <issue-url | KAR-123> [output-path] [--no-launch]
 
 ${chalk.cyan('Arguments:')}
-  issue-url      Linear issue URL (e.g., https://linear.app/karmasuite/issue/KAR-123/fix-bug)
+  issue-url      Linear issue URL (e.g., https://linear.app/karmasuite/issue/KAR-123/fix-bug), or just its identifier (KAR-123)
   output-path    Optional output file path (default: ./workflow/{username}/tickets/{identifier}/state.yaml)
 
 ${chalk.cyan('Environment:')}

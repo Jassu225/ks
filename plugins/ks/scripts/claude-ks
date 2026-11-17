@@ -19,7 +19,8 @@
 #
 # --dir starts the session in <dir>: in the --pane pane (%42) if it still
 # exists, replacing whatever runs there; else a new tmux window when tmux is
-# running; else this terminal. In tmux the pane drops to a login shell when
+# running, opened in the background (the terminal stays on the session that
+# ran it); else this terminal. In tmux the pane drops to a login shell when
 # Claude exits, so it stays usable. A first message is claude's own positional
 # prompt: claude-ks --dir ~/wt/KAR-123 "Let's work on …". claude-ks-restart
 # uses --dir/--pane to put a fresh session in the old one's pane.
@@ -74,8 +75,11 @@ if [ -n "$PANE" ] && tmux display-message -p -t "$PANE" '#{pane_id}' >/dev/null 
   tmux respawn-pane -k -t "$PANE" -c "$DIR" "$SH" -lc "$INNER"
   echo "claude-ks: started $NAME in tmux pane $PANE ($DIR)"
 elif [ -n "${TMUX:-}" ] || tmux has-session 2>/dev/null; then
-  tmux new-window -c "$DIR" -n "$NAME" "$SH" -lc "$INNER"
-  echo "claude-ks: started $NAME in a new tmux window ($DIR)"
+  # -d: in the background. Without it tmux switches the terminal to the new
+  # window, and the session that ran this looks replaced (it is still running,
+  # one window over).
+  WIN="$(tmux new-window -d -P -F '#{session_name}:#{window_index}' -c "$DIR" -n "$NAME" "$SH" -lc "$INNER")"
+  echo "claude-ks: started $NAME in a new tmux window in the background: $WIN ($DIR). This session keeps running; to look at the new one, Ctrl-b ${WIN##*:} (or Ctrl-b w)."
 elif [ -t 0 ] && [ -t 1 ]; then
   cd "$DIR"
   exec "${CMD[@]}"
