@@ -10,7 +10,7 @@ import { useShared } from '@/lib/boardData';
 import type { DeviceMasterStatus, MasterStatus } from '@/lib/types';
 import { versionNotices } from '@/lib/versioning';
 import { DeviceChip, agoText, deviceLabel, isDeviceStale } from './DeviceChip';
-import { BellIcon, GearIcon, InboxIcon, ProcessesIcon } from './icons';
+import { BellIcon, GearIcon, InboxIcon, ProcessesIcon, WarningIcon } from './icons';
 
 const TABS: { href: string; label: string; notesOnly?: boolean }[] = [
   { href: '/', label: 'Board' },
@@ -187,7 +187,7 @@ function DevBuildChip() {
 
 export function AppHeader({ toolbar }: { toolbar?: ReactNode }) {
   const pathname = usePathname() ?? '/';
-  const { config, board, notesEnabled, bellCount, inboxCount, version, boardVersion, ksVersion } = useShared();
+  const { config, board, notesEnabled, bellCount, inboxCount, version, boardVersion, ksVersion, errorCount } = useShared();
   // The board's own version; amber when its daemon runs another one (the board
   // wasn't rebuilt: `ks-flow open` does it).
   const daemonVersion = version?.version ?? null;
@@ -319,6 +319,22 @@ export function AppHeader({ toolbar }: { toolbar?: ReactNode }) {
           <DeviceChip deviceId={board.self} prefix="this device: " className="!max-w-[16rem] !px-2 !py-1 !text-xs" />
           <DevBuildChip />
           <MasterChip />
+          <Link
+            href="/errors"
+            aria-label={errorCount ? `${errorCount} ks-flow problem${errorCount === 1 ? '' : 's'} on this device` : 'No ks-flow problems on this device'}
+            title={errorCount ? `${errorCount} ks-flow problem${errorCount === 1 ? '' : 's'} on this device — see the Errors page` : 'No ks-flow problems on this device'}
+            aria-current={isActive(pathname, '/errors') ? 'page' : undefined}
+            className={`flex items-center gap-1 rounded-md p-1.5 ${
+              errorCount
+                ? 'border border-red-900 bg-[#2a0d12] px-2 text-red-200 hover:bg-red-950'
+                : isActive(pathname, '/errors')
+                  ? 'bg-indigo-950 text-indigo-200'
+                  : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+            }`}
+          >
+            <WarningIcon />
+            {errorCount > 0 && <span className="text-xs font-bold">{errorCount}</span>}
+          </Link>
           {iconLink('/processes', 'Running processes on this device', <ProcessesIcon />)}
           {iconLink('/settings', 'Settings', <GearIcon />)}
         </div>

@@ -65,6 +65,7 @@ import {
   downloadJson,
   downloadObject,
   listObjects,
+  type RemoteObject,
   uploadFile,
   uploadJson,
   type GcsConfig,
@@ -927,6 +928,11 @@ export interface UnitStatus {
   lastArchivedAt: string | null;
 }
 
+/** The project's prefix in the bucket ('' or `<prefix>/`): what unitStatuses lists. */
+export function bucketRoot(gcs: GcsConfig): string {
+  return gcs.prefix ? `${gcs.prefix}/` : '';
+}
+
 /**
  * Per-unit backup status, computed from the BUCKET rather than from the local
  * index.
@@ -944,11 +950,14 @@ export async function unitStatuses(
   gcs: GcsConfig,
   store: BackupStore | null,
   projectId: string,
+  /** Already in hand (the daemon: its cached bucket listing, the index from its listener): not read again. */
+  known: { objects?: RemoteObject[]; index?: ArchiveIndex } = {},
 ): Promise<UnitStatus[]> {
-  const root = gcs.prefix ? `${gcs.prefix}/` : '';
-  const objects = await listObjects(gcs, root);
+  const root = bucketRoot(gcs);
+  const objects = known.objects ?? (await listObjects(gcs, root));
   // The index only adds lastArchivedAt and a fallback location: status still answers without it.
-  const index: ArchiveIndex = store ? await loadArchiveIndex(store, projectId).catch(() => ({ units: {} })) : { units: {} };
+  const index: ArchiveIndex =
+    known.index ?? (store ? await loadArchiveIndex(store, projectId).catch(() => ({ units: {} })) : { units: {} });
 
   // Where each unit's transcripts live: live worktree, else completed-unit
   // record, else the location stamped on its objects, else the index.

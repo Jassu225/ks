@@ -29,6 +29,8 @@ export type Scheduler = {
 export function scheduler(
   jobs: Record<string, Job>,
   onError: (name: string, e: unknown) => void = () => {},
+  /** A clock run finished without throwing (the daemon resolves the job's open problem). */
+  onSuccess: (name: string) => void = () => {},
 ): Scheduler {
   const lastRun: Record<string, number> = {};
   const running = new Set<string>();
@@ -41,6 +43,7 @@ export function scheduler(
     lastRun[name] = now;
     void Promise.resolve()
       .then(() => job.run())
+      .then(() => onSuccess(name))
       .catch((e) => onError(name, e))
       .finally(() => running.delete(name));
   };

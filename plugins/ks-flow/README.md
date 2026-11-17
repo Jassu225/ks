@@ -195,6 +195,41 @@ board server streams it the live collections over Server-Sent Events
 (`/api/store/live?scope=board,briefing,activity`), one stream per tab for all three: a browser keeps at most 6 connections per site, so a stream per page part would starve every other request once two tabs are open. So there is no Firebase Auth,
 no browser API key, and no client access at all.
 
+**No timed reads: listeners only.** Nothing reads Firestore on a timer. The
+daemon keeps one snapshot listener per collection a job needs (`src/lib/live-sources.ts`):
+`meta/settings`, `devices`, the cards other devices own (`workUnits` where
+`deviceId != self`), `reminders`, the open `briefingItems`, the newest 100
+`backupRuns`, `backupUnits`, and `masterRequests` on the master device. Its jobs
+read their latest copies from memory. A listener costs one read per doc when it
+attaches and one per changed doc after that, so an idle store costs nothing. The
+daemon has **one timer, every 15 s**: it first attaches again any listener that
+stopped (an error ends a Firestore listener for good; the wait doubles from 15 s
+up to 15 min), then runs every job that is due (each job's interval is a multiple
+of 15 s). The board's polled routes read only files that the daemon keeps current
+from those listeners:
+- `backup-status.json` holds each card's backup chip and Restore, the last sweep
+  and the Activity Log's Backup rows. The bucket is listed again only after a
+  backup changes the index or a run.
+- `devices.json` holds the master chip on another device.
+- `errors.json` drives the ⚠ icon.
+
+The board's live data comes from its SSE stream's listeners. On PocketBase (a
+local server) the daemon reads the store directly, as before.
+
+**Problems: the Errors page (`/errors`).** Each device's daemon records what
+fails in `<dataDir>/errors.json`:
+- a listener that stopped, with its error and the time of the next attempt
+- a job that throws
+- the fix: an entry resolves when the listener delivers again or the job next
+  succeeds; resolved entries stay 7 days
+
+When something fails:
+- **macOS notice:** sent once when a problem opens (for a job, from its third
+  failure in a row) and once when it works again.
+- **Header:** a ⚠ icon links to the page; it turns red, with the count, while
+  any problem is open.
+- **Doctor:** `ks-setup doctor` reports them as `ks-flow:errors`.
+
 **The live security rules deny everything** (`firestore.rules`: `allow read,
 write: if false` on every document). No browser or app can read or write the
 database; the Admin SDK ignores rules, so ks-flow and ks-works (which shares
@@ -754,6 +789,15 @@ older PID). `POST /api/processes` re-validates the pid against a live `ps` scan
 and refuses to kill anything that isn't a running ks-flow daemon, so it can't
 terminate an arbitrary process. (The launchd-managed daemon respawns if killed,
 so the kill only sticks for the stray one.)
+
+### Errors (`/errors`)
+
+This device's ks-flow problems, from the daemon's `errors.json` (see [No timed
+reads](#store-firestore-cloud)). **Open** problems come first: what failed
+(a store listener or a daemon job), the last error, the number of failures since
+when, and when the daemon tries again. Below them are the ones **resolved** in
+the last 7 days. The header's ⚠ links here and turns red, with the count, while
+any problem is open.
 
 ### Activity Log (`/activity`)
 

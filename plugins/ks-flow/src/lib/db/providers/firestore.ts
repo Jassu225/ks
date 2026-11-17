@@ -213,6 +213,15 @@ function snapshotError(coll: string): (e: Error) => void {
   return (e) => console.error(`[ks-flow] firestore ${coll} listener stopped: ${e.message}`);
 }
 
+/** Log a stopped listener, then hand the error on (lib/live-mirror.ts re-attaches it). */
+function listenerError(coll: string, onError?: (e: Error) => void): (e: Error) => void {
+  const log = snapshotError(coll);
+  return (e) => {
+    log(e);
+    onError?.(e);
+  };
+}
+
 /** Firestore refuses `undefined` fields (optional ones left out); a JSON round-trip drops them. */
 function plain<T>(doc: T): T {
   return JSON.parse(JSON.stringify(doc)) as T;
@@ -476,14 +485,24 @@ export function firestoreDocDb(fs: Firestore, ob: Outbox): DocDb {
         }),
       );
     },
-    watch(coll, fields, onChange) {
-      const c = fs.collection(coll);
-      return (fields.length ? c.select(...fields) : c).onSnapshot((snap) => onChange(rows(snap.docs)), snapshotError(coll));
+    watch(coll, fields, onChange, onError, query) {
+      // A live query can't select fields ('select' clauses are not supported
+      // for real-time queries): read whole docs, keep only the named fields.
+      let q: Query = fs.collection(coll);
+      for (const w of query?.where ?? []) q = q.where(w.field, w.op, w.value);
+      if (query?.orderBy) q = q.orderBy(query.orderBy, query.desc ? 'desc' : 'asc');
+      if (query?.limit) q = q.limit(query.limit);
+      const pick = (d: Record<string, unknown>) =>
+        fields.length ? Object.fromEntries(fields.filter((f) => f in d).map((f) => [f, d[f]])) : d;
+      return q.onSnapshot(
+        (snap) => onChange(snap.docs.map((d) => ({ id: d.id, data: pick(d.data() as Record<string, unknown>) }))),
+        listenerError(coll, onError),
+      );
     },
-    watchDoc(path, onChange) {
+    watchDoc(path, onChange, onError) {
       return fs
         .doc(path)
-        .onSnapshot((snap) => onChange(snap.exists ? (snap.data() as Record<string, unknown>) : null), snapshotError(path));
+        .onSnapshot((snap) => onChange(snap.exists ? (snap.data() as Record<string, unknown>) : null), listenerError(path, onError));
     },
   };
 }

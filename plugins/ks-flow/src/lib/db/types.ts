@@ -193,8 +193,18 @@ export interface DeviceStore {
   /** The retired meta/project (legacy daemons write it until the backfill). */
   getLegacyProject(): Promise<ProjectDoc | null>;
   deleteLegacyProject(): Promise<void>;
-  /** Every card's owner, live (the first call delivers them all). Absent where the store can't listen. */
-  watchCardOwners?(onChange: (owners: Array<{ unitId: string; deviceId: string | null }>) => void): Unsubscribe;
+  /**
+   * The cards another device owns, live (`deviceId != self`; the first call
+   * delivers them all). A card that leaves the list was moved to this device
+   * (or deleted). Absent where the store can't listen.
+   */
+  watchForeignCards?(
+    self: string,
+    onChange: (cards: Array<{ unitId: string; deviceId: string }>) => void,
+    onError?: (e: Error) => void,
+  ): Unsubscribe;
+  /** Every device, live. Absent where the store can't listen. */
+  watchDevices?(onChange: (devices: DeviceDoc[]) => void, onError?: (e: Error) => void): Unsubscribe;
   /**
    * Read meta/settings and merge `patch(current)` into it in one transaction
    * (never creates it: `patch` gets null then). Resolves to the doc as written,
@@ -202,9 +212,9 @@ export interface DeviceStore {
    */
   raiseVersion?(patch: (current: SettingsDoc | null) => Partial<SettingsDoc> | null): Promise<SettingsDoc | null>;
   /** meta/settings, live (null while it does not exist). Absent where the store can't listen. */
-  watchSettings?(onChange: (settings: SettingsDoc | null) => void): Unsubscribe;
+  watchSettings?(onChange: (settings: SettingsDoc | null) => void, onError?: (e: Error) => void): Unsubscribe;
   /** The waiting masterRequests, live, oldest first. Absent where the store can't listen. */
-  watchMasterRequests?(onChange: (requests: MasterRequestDoc[]) => void): Unsubscribe;
+  watchMasterRequests?(onChange: (requests: MasterRequestDoc[]) => void, onError?: (e: Error) => void): Unsubscribe;
 }
 
 /** Project-level document — RETIRED as `meta/project` once the device backfill
@@ -690,11 +700,37 @@ export interface DocDb {
   create(path: string, data: Record<string, unknown>): Promise<boolean>;
   /** Through the offline outbox where there is one; ≤ 500 ops form one batch. */
   write(ops: StoreOp[]): Promise<void>;
-  /** Live doc changes of a collection (ids + the named fields; none named = whole docs). */
-  watch?(coll: string, fields: string[], onChange: (docs: Array<{ id: string; data: Record<string, unknown> }>) => void): Unsubscribe;
+  /**
+   * Live doc changes of a collection, optionally filtered (`where`): ids + the
+   * named fields (none named = whole docs; Firestore can't project a live query,
+   * so it reads whole docs and keeps the fields in memory). `onError` once when
+   * the listener stops for good (lib/live-mirror.ts attaches it again).
+   */
+  watch?(
+    coll: string,
+    fields: string[],
+    onChange: (docs: Array<{ id: string; data: Record<string, unknown> }>) => void,
+    onError?: (e: Error) => void,
+    query?: WatchQuery,
+  ): Unsubscribe;
   /** Read one doc and merge `fn(current)` into it atomically (no write when fn returns null).
    * Resolves to the merged doc, or null when nothing was written. Direct, never queued. */
   transact?(path: string, fn: (current: Record<string, unknown> | null) => Record<string, unknown> | null): Promise<Record<string, unknown> | null>;
-  /** Live changes of one doc (null while it does not exist). */
-  watchDoc?(path: string, onChange: (data: Record<string, unknown> | null) => void): Unsubscribe;
+  /** Live changes of one doc (null while it does not exist); `onError` as for watch. */
+  watchDoc?(path: string, onChange: (data: Record<string, unknown> | null) => void, onError?: (e: Error) => void): Unsubscribe;
+}
+
+/** One filter of a live query: single-field only (no composite index needed). */
+export interface WatchWhere {
+  field: string;
+  op: '==' | '!=' | '>=';
+  value: string | number | boolean;
+}
+
+/** A live query's filters, or one ordering with a limit (single-field: no composite index). */
+export interface WatchQuery {
+  where?: WatchWhere[];
+  orderBy?: string;
+  desc?: boolean;
+  limit?: number;
 }

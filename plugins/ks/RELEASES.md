@@ -2,6 +2,25 @@
 
 ## 2026-11-17
 
+- **No timed Firestore reads, and an Errors page (ks-flow 0.6.0, ks 1.3.5):** nothing reads Firestore on a timer any more. Before, the board read and listed far more than it needed:
+
+  | Who read it | What | How often |
+  |---|---|---|
+  | Each daemon | the whole `reminders` collection | every 30 s |
+  | Each daemon | `meta/settings` and every device | every 60 s |
+  | The master device | `masterRequests` | every 15 s |
+  | Each daemon | the open Briefing items | every minute |
+  | Each daemon | all `backupRuns`, until the day's sweep | every minute |
+  | Every open board tab | all `backupRuns` twice, all `backupUnits` and a full bucket listing | every minute |
+  | Every open board tab | `meta/settings` and the master's device | every 15 s |
+  | The Activity page | all `backupRuns` | every 30 s |
+
+  - **One listener per collection:** the daemon now follows each collection with one snapshot listener. That covers settings, devices, the cards other devices own, reminders, open items, the newest 100 runs, the backup index, and master requests on the master device. Its jobs read memory.
+  - **One timer, every 15 s:** it first re-attaches any listener that stopped, then runs the due jobs.
+  - **Board polls read files only:** the daemon writes `backup-status.json`, listing the bucket again only after a backup changes something, and keeps `devices.json` current on every change.
+  - **Broken listeners fixed:** the card-owner listener had never run (Firestore refuses `select()` in a live query). The settings and master-requests listeners had stopped for good after network errors, and nothing restarted them.
+  - **Errors page (`/errors`):** each daemon records what fails in `errors.json`: a listener that stopped (with when it tries again) or a job that keeps failing. You get a macOS notice when a problem opens and when it is fixed. A ⚠ in the board's header turns red with the count, and `ks-setup doctor` reports them (`ks-flow:errors`).
+
 - **The ks version on the board (ks-flow 0.5.2):** the header shows `· ks <version>` beside ks-flow's, and the Processes page a "plugins on this Mac" line (ks, and ks-flow with the board's version when it differs from the daemon's). `/api/version` returns `ks`, read from the ks plugin's live folder.
 - **No reload pill after a scripts-only ks release (ks 1.3.4):** the engine re-runs the ks mod only when the mod's own files change, not on a version change, so after 1.3.2 and 1.3.3 (scripts only) the mod kept its note of ks 1.3.1, and every `/reload-plugins` fell short of the target and left the pill. After a successful `/reload-plugins` the mod now re-reads every plugin's version, ks included (from its own folder), not only ks-flow and ks-master.
 

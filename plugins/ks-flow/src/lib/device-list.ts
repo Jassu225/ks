@@ -30,6 +30,8 @@ export interface DeviceRow {
   stale: boolean;
   /** Its running Claude sessions as it published them (devices/{id}.sessions; lib/peers.ts). */
   sessions: PeerSession[];
+  /** The master's status as the master device published it (devices/{id}.master), else null. */
+  masterStatus?: Record<string, unknown> | null;
 }
 
 export interface DevicesCache {
@@ -80,6 +82,7 @@ export function listDevices(
       forgotten: d.forgotten === true,
       stale: false,
       sessions: cleanSessions(d.sessions),
+      ...(d.master && typeof d.master === 'object' ? { masterStatus: d.master as unknown as Record<string, unknown> } : {}),
     }),
   );
   return refreshRows(rows, selfId, now);
@@ -117,6 +120,7 @@ export function readDevicesCache(dataDir: string): DevicesCache | null {
         forgotten: r.forgotten === true,
         stale: r.stale === true,
         sessions: cleanSessions(r.sessions),
+        ...(r.masterStatus && typeof r.masterStatus === 'object' ? { masterStatus: r.masterStatus as Record<string, unknown> } : {}),
       });
     }
     return { updatedAt, self: str(j.self) ?? '', devices };

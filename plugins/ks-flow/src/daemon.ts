@@ -80,7 +80,11 @@ import { sharedBlocks } from './lib/device-backfill.js';
 import { pendingSettingsWrite, syncSharedSettings } from './lib/sharedsettings.js';
 import { pruneFired, readFired, recordFired, shouldFire, writeFired } from './lib/reminders-fired.js';
 import { CardOwners } from './lib/ownership.js';
-import { activeRun, doneSweeps, listRuns, type BackupRun } from './lib/backup-runs.js';
+import { activeRun, doneSweeps, lastSweepAt, listRuns, runStatus, type BackupRun } from './lib/backup-runs.js';
+import { createHash } from 'node:crypto';
+import { listObjects, readArchiveSettings, resolveGcsConfig, type RemoteObject } from './lib/archive-core.js';
+import { bucketRoot, unitStatuses } from './lib/transcript-archive.js';
+import { writeBackupStatus, type BackupStatusFile } from './lib/backup-status.js';
 import { notify, terminalNotifierAvailable } from './lib/notify.js';
 import { ksPluginRoot, liveRoot, rootContext } from './lib/ksroot.js';
 import { parseKsSetup } from './lib/update.js';
@@ -138,6 +142,9 @@ import {
 import { isInProject, listWorktrees, toplevel } from './lib/worktree.js';
 import { dayStr, fileDay, pruneRotations, rotateFile } from './lib/rotate.js';
 import { scheduler, type Scheduler } from './lib/schedule.js';
+import { LiveMirror, type LiveSpec } from './lib/live-mirror.js';
+import { liveSources } from './lib/live-sources.js';
+import { openErrors, recordError, resolveError } from './lib/errors-log.js';
 import { fetchLinearFacts, type LinearFacts } from './lib/linear-sync.js';
 import {
   attachInbox,
@@ -510,12 +517,18 @@ function localSharedSettings(): ReturnType<typeof sharedBlocks> {
  * store: with no meta/settings there, the daemon creates it itself.
  */
 async function checkDeviceMode(): Promise<void> {
-  let settings;
-  try {
-    settings = await devicesStore.getSettings();
-  } catch (e) {
-    if (!deviceMode) log('devices: meta/settings not readable, keeping the one-device behaviour for now:', (e as Error)?.message);
-    return;
+  let settings: SettingsDoc | null | undefined;
+  if (live) {
+    // The listener's copy (it applies each change itself); none yet: wait for it.
+    settings = live.settings.get();
+    if (settings === undefined) return;
+  } else {
+    try {
+      settings = await devicesStore.getSettings();
+    } catch (e) {
+      if (!deviceMode) log('devices: meta/settings not readable, keeping the one-device behaviour for now:', (e as Error)?.message);
+      return;
+    }
   }
   if (!settings && provider.name === 'pocketbase') {
     await devicesStore.createSettings({
@@ -533,7 +546,7 @@ async function checkDeviceMode(): Promise<void> {
     }
     return;
   }
-  applySettings(settings);
+  if (!live) applySettings(settings);
   await maybeRaiseVersion().catch((e) => log('version: raise failed (retried next minute):', (e as Error)?.message));
   if (!deviceMode) {
     deviceMode = true;
@@ -542,6 +555,115 @@ async function checkDeviceMode(): Promise<void> {
   }
 }
 
+// ── live copies of the store (lib/live-mirror.ts, lib/live-sources.ts) ──────
+// No job reads Firestore on a timer: each collection a job needs is followed by
+// one snapshot listener, and the jobs read its latest data from memory. The
+// clock's one 15 s timer calls mirror.ensure() first: a listener that stopped
+// is attached again after a backoff, a healthy one costs nothing. PocketBase (a
+// local server) has no listeners here: its jobs read it directly, as before.
+// Each problem goes to <dataDir>/errors.json (the board's Errors page) and,
+// when new, to a macOS notice.
+
+/** Problems open in errors.json (keys): a success touches the file only when one was open. */
+const openProblems = new Set<string>();
+/** A job's failures are noticed from the third in a row (one may be a blip); a listener's at once. */
+const noticeAfter = (key: string): number => (key.startsWith('job:') ? 3 : 1);
+
+function problem(key: string, title: string, message: string, retryAt: number | null = null): void {
+  try {
+    const { entry } = recordError(DATA_DIR, { key, title, message, retryAt: retryAt ? new Date(retryAt).toISOString() : null });
+    openProblems.add(key);
+    if (entry.count === noticeAfter(key)) {
+      log(`errors: ${title}: ${message}`);
+      notify(`ks-flow-problem-${key}`, `${title} is failing`, `${message}${retryAt ? ' — retrying on its own' : ''}. See the board's Errors page.`);
+    }
+  } catch (e) {
+    log('errors: errors.json not written', (e as Error)?.message);
+  }
+}
+
+function problemSolved(key: string): void {
+  if (!openProblems.has(key)) return;
+  openProblems.delete(key);
+  try {
+    const entry = resolveError(DATA_DIR, key);
+    if (entry && entry.count >= noticeAfter(key)) {
+      log(`errors: ${entry.title} works again`);
+      notify(`ks-flow-problem-${key}`, `${entry.title} works again`, `After ${entry.count} failure${entry.count === 1 ? '' : 's'} since ${new Date(entry.firstAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`);
+    }
+  } catch (e) {
+    log('errors: errors.json not written', (e as Error)?.message);
+  }
+}
+
+const mirror = new LiveMirror({
+  onFail: (s) => {
+    const at = s.retryAt ? new Date(s.retryAt).toLocaleTimeString() : '?';
+    log(`live: ${s.label} listener stopped (${s.error}); attached again at ${at}`);
+    problem(`listener:${s.name}`, `${s.label} listener`, s.error ?? 'stopped', s.retryAt);
+  },
+  onRecover: (s) => problemSolved(`listener:${s.name}`),
+  onLive: (s) => problemSolved(`listener:${s.name}`),
+});
+
+/** Pass every snapshot on to `fn` as well (the listeners whose changes act at once). */
+function tap<T>(spec: LiveSpec<T>, fn: (v: T) => void): LiveSpec<T> {
+  return {
+    ...spec,
+    attach: (onData, onError) =>
+      spec.attach((v) => {
+        onData(v);
+        try {
+          fn(v);
+        } catch (e) {
+          log(`live: ${spec.name} handler failed`, (e as Error)?.message);
+        }
+      }, onError),
+  };
+}
+
+let backupStatusKick: ReturnType<typeof setTimeout> | null = null;
+/** Run the backupStatus job soon (one-shot, 5 s: a sweep's burst of writes is one run). */
+function kickBackupStatus(): void {
+  if (backupStatusKick) return;
+  backupStatusKick = setTimeout(() => {
+    backupStatusKick = null;
+    clock?.kick('backupStatus', Date.now());
+  }, 5_000);
+  backupStatusKick.unref?.();
+}
+
+let settingsArrived: () => void = () => {};
+/** The first meta/settings snapshot (startup waits for it, at most 10 s, before the device-mode check). */
+const settingsReady = new Promise<void>((res) => (settingsArrived = res));
+
+const LIVE = liveSources(provider.docDb?.(), devicesStore, SELF.deviceId);
+const live = LIVE
+  ? {
+      settings: mirror.add(
+        tap(LIVE.settings, (s) => {
+          settingsArrived();
+          if (s) applySettings(s);
+        }),
+      ),
+      // Each change rewrites devices.json at once (peers, the board's master status).
+      devices: mirror.add(tap(LIVE.devices, (list) => saveDevicesCache(list))),
+      foreignCards: mirror.add(tap(LIVE.foreignCards, (list) => onForeignCards(list))),
+      reminders: mirror.add(LIVE.reminders),
+      openItems: mirror.add(LIVE.openItems),
+      // A run or an index entry changed: the board's backup status follows in ~5 s.
+      backupRuns: mirror.add(tap(LIVE.backupRuns, () => kickBackupStatus())),
+      backupUnits: mirror.add(tap(LIVE.backupUnits, () => kickBackupStatus())),
+      // Only on the master device (syncMasterRequestsListener).
+      masterRequests: mirror.add(
+        tap(LIVE.masterRequests, (list) => {
+          if (list.length) void masterRequests.take(list);
+        }),
+        false,
+      ),
+    }
+  : null;
+
 // ── shared settings (lib/sharedsettings.ts) ─────────────────────────────────
 // meta/settings holds the blocks every device shares; board-settings.json
 // stays the local mirror the daemon's readers (lib/boardsettings) and the
@@ -549,7 +671,6 @@ async function checkDeviceMode(): Promise<void> {
 // check, and the listener when the store has one) is mirrored into the file.
 /** meta/settings as last read; null before the backfill (or before the first read). */
 let sharedSettings: SettingsDoc | null = null;
-let settingsUnsub: (() => void) | null = null;
 let settingsSyncing: Promise<unknown> = Promise.resolve();
 
 /** A meta/settings write from this device still waiting in the offline outbox. */
@@ -582,18 +703,6 @@ function applySettings(settings: SettingsDoc): void {
     .catch((e) => log('settings: mirror failed', (e as Error)?.message));
 }
 
-/** Follow meta/settings live (Firestore); PocketBase relies on the 60 s check. */
-function watchSettings(): void {
-  if (settingsUnsub || !devicesStore.watchSettings) return;
-  try {
-    settingsUnsub = devicesStore.watchSettings((s) => {
-      if (s) applySettings(s);
-    });
-  } catch (e) {
-    log('settings: listener not started (the 60 s check still mirrors meta/settings):', (e as Error)?.message);
-  }
-}
-
 /** True once this run wrote meta/project (legacy mode): device mode deletes it again. */
 let wroteLegacyProject = false;
 
@@ -609,7 +718,6 @@ async function onDeviceModeOn(): Promise<void> {
   }
   lastDeviceSig = null;
   scheduleProjectRecompute();
-  watchSettings();
 }
 
 // ── card ownership (lib/ownership.ts) ───────────────────────────────────────
@@ -630,29 +738,29 @@ function isForeign(unitId: string): boolean {
   return !!o && o !== SELF.deviceId;
 }
 
-/** Follow the cards' owners live: a card moved here is rewritten, one moved away is left alone. */
-function watchOwners(): void {
-  if (!devicesStore.watchCardOwners) return;
-  try {
-    devicesStore.watchCardOwners((list) => {
-      let movedHere = false;
-      for (const { unitId, deviceId } of list) {
-        const before = owners.known(unitId);
-        if (before === deviceId || (before === undefined && deviceId === null)) {
-          if (before === undefined) owners.set(unitId, deviceId);
-          continue;
-        }
-        owners.set(unitId, deviceId);
-        if (deviceId === SELF.deviceId && before && before !== SELF.deviceId) {
-          lastUnitSig.delete(unitId); // its content is the other device's: write ours
-          movedHere = true;
-        }
-      }
-      if (movedHere) scheduleProjectRecompute();
-    });
-  } catch (e) {
-    log('ownership: owner listener not started (owners read per card instead):', (e as Error)?.message);
+/** The cards other devices owned at the last snapshot. */
+let foreignBefore = new Set<string>();
+
+/**
+ * The foreignCards listener: the cards other devices own. One that leaves the
+ * list was moved to this device (ks-flow card-move) or deleted: written here
+ * again when this device has its worktree. One that joins it is left alone.
+ */
+function onForeignCards(list: Array<{ unitId: string; deviceId: string }>): void {
+  const now = new Set<string>();
+  let movedHere = false;
+  for (const { unitId, deviceId } of list) {
+    now.add(unitId);
+    if (owners.known(unitId) !== deviceId) owners.set(unitId, deviceId);
   }
+  for (const unitId of foreignBefore) {
+    if (now.has(unitId)) continue;
+    owners.set(unitId, SELF.deviceId);
+    lastUnitSig.delete(unitId); // its content is the other device's: write ours
+    movedHere = true;
+  }
+  foreignBefore = now;
+  if (movedHere) scheduleProjectRecompute();
 }
 
 /** The `devices` job: device mode check, then this device's heartbeat (merge; never `name`), then its label. */
@@ -709,16 +817,27 @@ function saveDeviceFile(next: DeviceFile): void {
 
 async function refreshDeviceLabel(): Promise<void> {
   let devices: DeviceDoc[];
-  try {
-    // Offline, firebase-admin retries reads until its own deadline: don't hold the heartbeat.
-    devices = await Promise.race([
-      devicesStore.getDevices(),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timed out after 10s')), 10_000).unref()),
-    ]);
-  } catch (e) {
-    if (!labelReadFailing) log('devices: label check skipped until the devices are readable again:', (e as Error)?.message);
-    labelReadFailing = true;
-    return;
+  if (live) {
+    // The devices listener's copy: no read here.
+    const d = live.devices.get();
+    if (!d) {
+      if (!labelReadFailing) log('devices: label check waits for the devices listener');
+      labelReadFailing = true;
+      return;
+    }
+    devices = d;
+  } else {
+    try {
+      // Offline, firebase-admin retries reads until its own deadline: don't hold the heartbeat.
+      devices = await Promise.race([
+        devicesStore.getDevices(),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timed out after 10s')), 10_000).unref()),
+      ]);
+    } catch (e) {
+      if (!labelReadFailing) log('devices: label check skipped until the devices are readable again:', (e as Error)?.message);
+      labelReadFailing = true;
+      return;
+    }
   }
   labelReadFailing = false;
   const masterId = sharedSettings?.masterDeviceId ?? null;
@@ -734,14 +853,16 @@ async function refreshDeviceLabel(): Promise<void> {
   }
   saveDeviceFile({ ...SELF, label: plan.label, name: plan.name, deviceCount: plan.deviceCount });
   // The cache: the devices as just read, with this device's own write applied.
-  const merged = selfDoc
-    ? devices.map((d) => (d.deviceId === SELF.deviceId ? { ...d, ...patch } : d))
-    : devices;
+  saveDevicesCache(selfDoc ? devices.map((d) => (d.deviceId === SELF.deviceId ? { ...d, ...patch } : d)) : devices);
+}
+
+/** <dataDir>/devices.json: every device (sessions, master status) for `ks-flow peers` and the board. */
+function saveDevicesCache(devices: DeviceDoc[]): void {
   try {
     writeDevicesCache(DATA_DIR, {
       updatedAt: nowIso(),
       self: SELF.deviceId,
-      devices: listDevices(merged, SELF.deviceId, masterId, Date.now()),
+      devices: listDevices(devices, SELF.deviceId, sharedSettings?.masterDeviceId ?? null, Date.now()),
     });
   } catch (e) {
     log('devices: devices.json not written', (e as Error)?.message);
@@ -926,6 +1047,24 @@ const stopState = new Map<string, StopState>(); // sessionId → stop-nudge stat
 let armingFromStartup = true;
 /** The daemon's one clock (lib/schedule); every job interval is a multiple of it. */
 const TICK_MS = 15_000;
+/** Each job's name on the Errors page and in notices. */
+const JOB_TITLES: Record<string, string> = {
+  worktrees: 'Worktree scan',
+  liveSessions: 'Live session scan',
+  stateYaml: 'Workflow (state.yaml) scan',
+  reminders: 'Reminders',
+  backup: 'Daily backup check',
+  backupStatus: 'Backup status',
+  rotateLogs: 'Log rotation',
+  linear: 'Linear refresh',
+  inbox: 'Plannotator Inbox read',
+  briefingNotices: 'Briefing notices',
+  briefingSchedule: 'Briefing schedule',
+  master: 'Master supervisor',
+  masterStatus: 'Master status',
+  masterRequests: 'Master requests',
+  devices: 'Device heartbeat',
+};
 const REMINDER_TICK_MS = 30_000; // 2 ticks
 const LINEAR_SYNC_MS = 180_000; // 12 ticks
 // Activity newer than the stop by more than this = a genuine resume (not the
@@ -1565,6 +1704,22 @@ function reconstructStopState(): void {
 }
 
 async function reminderTick(): Promise<void> {
+  // The reminders listener's copy (Firestore); PocketBase is read directly.
+  // No data yet: this tick is skipped whole, so the startup catch-up and a
+  // wake's re-fire wait for the first snapshot instead of being used up.
+  let reminders: ReminderDoc[];
+  if (live) {
+    const r = live.reminders.get();
+    if (!r) return;
+    reminders = r;
+  } else {
+    try {
+      reminders = await writer.getReminders(projectId);
+    } catch (e) {
+      log('getReminders failed', (e as { message?: string })?.message);
+      return; // transient — retry next tick
+    }
+  }
   const settings = reminderSettings();
   const now = Date.now();
   const wake =
@@ -1572,14 +1727,6 @@ async function reminderTick(): Promise<void> {
   const startup = reminderStartup;
   reminderLastTickMs = now;
   reminderStartup = false;
-
-  let reminders: ReminderDoc[] = [];
-  try {
-    reminders = await writer.getReminders(projectId);
-  } catch (e) {
-    log('getReminders failed', (e as { message?: string })?.message);
-    return; // transient — retry next tick
-  }
   const paused = new Set(
     reminders.filter((r) => r.kind === 'pause' && r.sessionId).map((r) => r.sessionId!),
   );
@@ -1941,6 +2088,11 @@ function startWatchers(): void {
       // today's sweep has run, one small store read.
       backup: { every: 60_000, run: backupTick },
 
+      // The board's backup status (each card's chip and Restore, Activity's
+      // Backup rows): written from the listeners, the bucket listed only after
+      // a change. Nothing card-specific: a card's Refresh leaves it out.
+      backupStatus: { every: 60_000, run: backupStatusTick },
+
       // Daily log rotation: roll events.jsonl + daemon.log at the midnight
       // boundary, keeping the last 30 days of each. A minute is plenty for a day flip.
       rotateLogs: { every: 60_000, run: rotateLogsIfNewDay },
@@ -1975,13 +2127,23 @@ function startWatchers(): void {
       // This device's record (devices/{id}) and the device-mode check.
       devices: { every: DEVICE_HEARTBEAT_MS, run: deviceHeartbeat },
     },
-    (name, e) => log(`${name} failed`, (e as Error)?.message),
+    (name, e) => {
+      log(`${name} failed`, (e as Error)?.message);
+      // A card's Refresh (`name (KAR-1)`) shows its own error on the card.
+      if (!name.includes(' (')) problem(`job:${name}`, JOB_TITLES[name] ?? `The ${name} job`, (e as Error)?.message ?? String(e));
+    },
+    (name) => problemSolved(`job:${name}`),
   );
   // No tick now: startup has just scanned state.yaml (backfill) and runs its own
   // reminder pass after reconstructStopState() — a reminder tick here would come
   // before the re-arm and use up the startup catch-up. The first tick is at
   // +TICK_MS, when every job runs once.
-  setInterval(() => clock?.tick(Date.now()), TICK_MS);
+  // The daemon's one timer: listeners first (a stopped one is attached again),
+  // then every job that is due.
+  setInterval(() => {
+    mirror.ensure();
+    clock?.tick(Date.now());
+  }, TICK_MS);
 
   log('watching', dirs.length, `session dir(s) + events; one ${TICK_MS / 1000}s clock for the periodic jobs`);
 }
@@ -2015,6 +2177,14 @@ function backupScriptPath(): string {
 
 /** The backup run history; null when the store cannot be read. */
 async function backupRuns(): Promise<BackupRun[] | null> {
+  if (live) {
+    // The backupRuns listener's copy (the newest 100: today's sweep and the
+    // catch-up's 24 h are among them); none yet: the check waits for it.
+    const docs = live.backupRuns.get();
+    if (!docs) return null;
+    const ctx = { self: backupSelf() };
+    return docs.map((d) => ({ ...d, status: runStatus(d, ctx) })).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
   try {
     return await listRuns(provider.backups(), projectId, { self: backupSelf() });
   } catch {
@@ -2023,6 +2193,74 @@ async function backupRuns(): Promise<BackupRun[] | null> {
 }
 
 let backupChecking = false;
+
+// ── backup status for the board (lib/backup-status.ts) ──────────────────────
+/** The bucket as last listed, and the index/runs signature it was listed for. */
+let bucketListing: { sig: string; objects: RemoteObject[]; at: string } | null = null;
+
+/** Changes when the bucket may have: an index entry written, or a run finished (any device's). */
+function bucketSig(bucket: string, root: string, units: Array<{ uid: string }>, runs: BackupRun[]): string {
+  const h = createHash('sha1');
+  h.update(`${bucket}/${root}\n`);
+  for (const u of [...units].sort((a, b) => a.uid.localeCompare(b.uid))) h.update(JSON.stringify(u));
+  for (const r of runs) if (r.outcome) h.update(`${r.uid}:${r.outcome}:${r.endedAt ?? ''}\n`);
+  return h.digest('hex');
+}
+
+/**
+ * The `backupStatus` job (Firestore): <dataDir>/backup-status.json from the
+ * listeners and the cached bucket listing, so the board never reads the store
+ * or lists the bucket on its polls. PocketBase: the board runs the CLI as before.
+ */
+async function backupStatusTick(): Promise<void> {
+  if (!live) return;
+  const runDocs = live.backupRuns.get();
+  const unitDocs = live.backupUnits.get();
+  if (!runDocs || !unitDocs) return; // the listeners have not delivered yet
+  const self = backupSelf();
+  const lastSeen = new Map((live.devices.get() ?? []).map((d) => [d.deviceId, d.lastSeenAt ?? '']));
+  const runs = runDocs
+    .map((d) => ({ ...d, status: runStatus(d, { self, lastSeen }) }))
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const out: BackupStatusFile = {
+    updatedAt: nowIso(),
+    ok: true,
+    error: null,
+    units: [],
+    lastSweepAt: lastSweepAt(runs, self),
+    runs,
+    listedAt: bucketListing?.at ?? null,
+  };
+  const settings = readArchiveSettings();
+  if (!settings.enabled) {
+    out.disabled = true;
+    writeBackupStatus(DATA_DIR, out);
+    return;
+  }
+  const { config, missing } = resolveGcsConfig(settings);
+  if (!config) {
+    out.ok = false;
+    out.error = `GCS archive is on but misconfigured: ${missing.join('; ')}`;
+    writeBackupStatus(DATA_DIR, out);
+    return;
+  }
+  const root = bucketRoot(config);
+  const sig = bucketSig(config.bucket, root, unitDocs, runs);
+  try {
+    if (!bucketListing || bucketListing.sig !== sig) {
+      bucketListing = { sig, objects: await listObjects(config, root), at: nowIso() };
+      out.listedAt = bucketListing.at;
+    }
+    const index = { units: Object.fromEntries(unitDocs.map(({ uid: _uid, ...u }) => [u.identifier, u])) };
+    out.units = await unitStatuses(projectPath ?? null, config, null, projectId, { objects: bucketListing.objects, index });
+  } catch (e) {
+    out.ok = false;
+    out.error = `could not read the bucket: ${(e as Error)?.message ?? e}`;
+    writeBackupStatus(DATA_DIR, out);
+    throw e; // the job's problem (the Errors page)
+  }
+  writeBackupStatus(DATA_DIR, out);
+}
 
 /** Whose runs count here: this device's in device mode; before the backfill, every run (one device). */
 function backupSelf(): string | undefined {
@@ -2045,6 +2283,8 @@ async function backupTick(): Promise<void> {
   // Any sweep still going (a "Back up now", a removal) owns the bucket and the
   // index for now: wait for it rather than start a second one beside it.
   // Only this device's: each device sweeps its own worktrees.
+  // No snapshot of the runs yet: not knowing today's sweep, wait for it.
+  if (live && !runs) return;
   if (runs && activeRun(runs, backupSelf())) return;
   // Today's sweep is any full sweep of THIS device that started today and did
   // its job — the daily one or a "Back up now". One card's backup is not the
@@ -2124,7 +2364,9 @@ function saveMasterState(): void {
  * repeats a notice every minute; uids no longer open are pruned from it.
  */
 async function briefingNoticeTick(): Promise<void> {
-  const items = await briefingStore.getBriefingItems(projectId, { status: 'open' });
+  // The open items listener's copy (Firestore); none yet: next minute.
+  const items = live ? live.openItems.get() : await briefingStore.getBriefingItems(projectId, { status: 'open' });
+  if (!items) return;
   const now = new Date();
   const sent = readNotices(MASTER_DIR);
   const owed = owedNotices(items, now, sent, {
@@ -2272,7 +2514,6 @@ function masterStoreSide(): boolean {
   return deviceMode && provider.name !== 'pocketbase';
 }
 
-let masterRequestsUnsub: (() => void) | null = null;
 
 /** meta/settings named a (new) master device: start or stop being it. */
 function onMasterDeviceChanged(before: string | null, now: string): void {
@@ -2280,21 +2521,17 @@ function onMasterDeviceChanged(before: string | null, now: string): void {
   if (before !== null) log(`devices: master device is now ${now}${now === self ? ' (this device)' : ''}`);
   if (now === self) {
     if (before !== null && before !== self) log('master: this device is the master device now — the Briefing schedule and the master supervisor run here');
-    watchMasterRequests();
-  } else {
-    if (before === self) {
-      log(`master: ${now} is the master device now — the Briefing schedule and the master supervisor stop here; a master session still running on this device is left as it is`);
-    }
-    masterRequestsUnsub?.();
-    masterRequestsUnsub = null;
+  } else if (before === self) {
+    log(`master: ${now} is the master device now — the Briefing schedule and the master supervisor stop here; a master session still running on this device is left as it is`);
   }
+  syncMasterRequestsListener();
   scheduleMasterPublish();
 }
 
 /** Its name for logs and events: name ?? defaultName, else the id. */
 async function deviceLabel(deviceId: string): Promise<string> {
   try {
-    const d = await devicesStore.getDevice(deviceId);
+    const d = live ? live.devices.get()?.find((x) => x.deviceId === deviceId) : await devicesStore.getDevice(deviceId);
     return d?.name || d?.defaultName || deviceId;
   } catch {
     return deviceId;
@@ -2385,22 +2622,18 @@ async function handleMasterRequest(req: MasterRequestDoc, expired: boolean): Pro
 
 const masterRequests = new MasterRequestQueue(devicesStore, handleMasterRequest, (m) => log(m));
 
-/** Follow masterRequests live while this is the master device (Firestore). */
-function watchMasterRequests(): void {
-  if (masterRequestsUnsub || !masterStoreSide() || !masterHere() || !devicesStore.watchMasterRequests) return;
-  try {
-    masterRequestsUnsub = devicesStore.watchMasterRequests((list) => {
-      if (list.length) void masterRequests.take(list);
-    });
-  } catch (e) {
-    log('master: masterRequests listener not started (the 15 s tick still takes them):', (e as Error)?.message);
-  }
+/** The masterRequests listener runs while this is the master device (Firestore). */
+function syncMasterRequestsListener(): void {
+  live && mirror.want('masterRequests', masterStoreSide() && masterHere());
 }
 
-/** The `masterRequests` job: the listener's fallback. */
+/** The `masterRequests` job: keeps the listener on the master device only; PocketBase reads them. */
 async function masterRequestsTick(): Promise<void> {
+  if (live) {
+    syncMasterRequestsListener();
+    return;
+  }
   if (!masterStoreSide() || !masterHere()) return;
-  watchMasterRequests();
   await masterRequests.take();
 }
 
@@ -2461,13 +2694,23 @@ async function main(): Promise<void> {
         'the two fight over the cards: on the copy, ks-config unset ks.KS_DEVICE_ID and restart ks-flow.',
     );
   }
+  // The store's listeners (lib/live-mirror.ts); problems left open by the last run
+  // are resolved by the first success of each listener or job.
+  for (const e of openErrors(DATA_DIR)) openProblems.add(e.key);
+  mirror.ensure();
+  for (const key of [...openProblems]) {
+    // A listener this run doesn't keep (none on PocketBase; masterRequests off this device) can't recover.
+    if (key.startsWith('listener:') && !mirror.status().some((s) => `listener:${s.name}` === key && s.state !== 'off')) problemSolved(key);
+  }
+  if (live) {
+    await Promise.race([settingsReady, new Promise<void>((res) => setTimeout(res, 10_000).unref())]);
+  }
   await Promise.race([
     checkDeviceMode().catch((e) => log('devices: check failed', (e as Error)?.message)),
     new Promise<void>((res) => setTimeout(res, 10_000).unref()),
   ]);
   if (deviceMode) await deviceHeartbeat().catch((e) => log('devices: heartbeat failed', (e as Error)?.message));
   await seedWriteGate();
-  watchOwners();
   await backfill();
   // Backfill-only mode: ingest once, flush, exit (deterministic verification /
   // one-shot debug). No watchers, no live tailing.
@@ -2492,6 +2735,7 @@ async function main(): Promise<void> {
 }
 
 function shutdown(): void {
+  mirror.stopAll();
   checkpoints.flush();
   pbHandle?.stop();
   if (writer.close) writer.close().finally(() => process.exit(0));

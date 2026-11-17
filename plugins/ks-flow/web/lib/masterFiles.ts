@@ -8,6 +8,7 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { boardDataDir } from './boardConfig';
+import { cachedDevice } from './daemonFiles';
 import { deviceId, deviceIdentity } from './device';
 import { addMasterRequestDoc, getDeviceDoc, getSettingsDoc, serverConfig } from './serverdb';
 import type { DeviceDoc, MasterDeviceInfo, MasterHeartbeatFile, MasterRequestDoc, MasterSessionFile, MasterStatus } from './types';
@@ -230,6 +231,25 @@ export async function masterTarget(): Promise<MasterTarget> {
   return { local: false, masterDeviceId, self, device };
 }
 
+/**
+ * Where the master runs, from this device's daemon's files only (no store
+ * read): masterDeviceId from its board-settings.json mirror, the master
+ * device's published status from devices.json, which the daemon rewrites on
+ * every change of its devices listener. For GET /api/briefing/master, which
+ * every open tab polls. Actions (a press) use masterTarget(): one store read.
+ */
+export function masterTargetFromFiles(): MasterTarget {
+  if (serverConfig().dbProvider !== 'firestore') return { local: true, masterDeviceId: null };
+  const masterDeviceId = mirroredMasterDeviceId();
+  const self = deviceId(boardDataDir());
+  if (!masterDeviceId || masterDeviceId === self) return { local: true, masterDeviceId };
+  const c = cachedDevice(masterDeviceId);
+  const device = c
+    ? ({ deviceId: c.deviceId, name: c.name, lastSeenAt: c.lastSeenAt, master: c.masterStatus ?? undefined } as unknown as DeviceDoc)
+    : null;
+  return { local: false, masterDeviceId, self, device };
+}
+
 function deviceInfo(id: string, d: DeviceDoc | null, remote: boolean, now: number): MasterDeviceInfo {
   const seen = d?.lastSeenAt ? Date.parse(d.lastSeenAt) : NaN;
   return {
@@ -262,7 +282,7 @@ export function remoteMasterStatus(target: Extract<MasterTarget, { local: false 
 
 /** GET /api/briefing/master's answer, wherever the master runs. */
 export async function masterStatusAnywhere(now = Date.now()): Promise<MasterStatusResponse> {
-  const target = await masterTarget();
+  const target = masterTargetFromFiles();
   if (target.local) {
     const st = masterStatus(now);
     return target.masterDeviceId

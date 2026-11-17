@@ -86,31 +86,46 @@ export function docDeviceStore(db: DocDb): DeviceStore {
       : {}),
     ...(db.watchDoc
       ? {
-          watchSettings(onChange: (settings: SettingsDoc | null) => void): Unsubscribe {
-            return db.watchDoc!(SETTINGS_PATH, (d) => onChange(d as SettingsDoc | null));
+          watchSettings(onChange: (settings: SettingsDoc | null) => void, onError?: (e: Error) => void): Unsubscribe {
+            return db.watchDoc!(SETTINGS_PATH, (d) => onChange(d as SettingsDoc | null), onError);
           },
         }
       : {}),
     ...(db.watch
       ? {
-          watchMasterRequests(onChange: (requests: MasterRequestDoc[]) => void): Unsubscribe {
-            return db.watch!(MASTER_REQUESTS, [], (docs) =>
-              onChange(
-                docs
-                  .map((d) => ({ ...(d.data as unknown as MasterRequestDoc), uid: d.id }))
-                  .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))),
-              ),
+          watchMasterRequests(onChange: (requests: MasterRequestDoc[]) => void, onError?: (e: Error) => void): Unsubscribe {
+            return db.watch!(
+              MASTER_REQUESTS,
+              [],
+              (docs) =>
+                onChange(
+                  docs
+                    .map((d) => ({ ...(d.data as unknown as MasterRequestDoc), uid: d.id }))
+                    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))),
+                ),
+              onError,
             );
           },
-          watchCardOwners(onChange: (owners: Array<{ unitId: string; deviceId: string | null }>) => void): Unsubscribe {
-            return db.watch!(WORK_UNITS, ['deviceId'], (docs) =>
-              onChange(
-                docs.map((d) => ({
-                  unitId: d.id,
-                  deviceId: typeof d.data.deviceId === 'string' && d.data.deviceId ? d.data.deviceId : null,
-                })),
-              ),
+          watchForeignCards(
+            self: string,
+            onChange: (cards: Array<{ unitId: string; deviceId: string }>) => void,
+            onError?: (e: Error) => void,
+          ): Unsubscribe {
+            return db.watch!(
+              WORK_UNITS,
+              ['deviceId'],
+              (docs) =>
+                onChange(
+                  docs
+                    .filter((d) => typeof d.data.deviceId === 'string' && d.data.deviceId)
+                    .map((d) => ({ unitId: d.id, deviceId: d.data.deviceId as string })),
+                ),
+              onError,
+              { where: [{ field: 'deviceId', op: '!=', value: self }] },
             );
+          },
+          watchDevices(onChange: (devices: DeviceDoc[]) => void, onError?: (e: Error) => void): Unsubscribe {
+            return db.watch!(DEVICES, [], (docs) => onChange(docs.map((d) => ({ ...(d.data as unknown as DeviceDoc), deviceId: d.id }))), onError);
           },
         }
       : {}),

@@ -214,6 +214,22 @@ version_check() { # data-dir
   check ks-flow:release "$level" "$ok" "$msg" "$fix"
 }
 
+# This device's open ks-flow problems: <data-dir>/errors.json, written by the
+# daemon (a store listener that stopped, a job that keeps failing); the board's
+# Errors page (/errors) lists them.
+errors_check() { # data-dir
+  local dd="$1" f n list
+  f="$dd/errors.json"
+  if [ -z "$dd" ] || [ ! -f "$f" ]; then check ks-flow:errors info 1 "ks-flow: no problems recorded on this device"; return 0; fi
+  n="$(jq '[.entries[]? | select(.resolvedAt == null)] | length' "$f" 2>/dev/null || echo 0)"
+  if [ "${n:-0}" -gt 0 ]; then
+    list="$(jq -r '[.entries[]? | select(.resolvedAt == null) | "\(.title) (\(.count)x: \(.message | .[0:80]))"] | join("; ")' "$f" 2>/dev/null)"
+    check ks-flow:errors warn 0 "ks-flow has $n open problem(s) on this device: $list" "see the board's Errors page (ks-flow open, then the ⚠ icon); ks-flow stop && ks-flow start if it persists"
+  else
+    check ks-flow:errors info 1 "ks-flow: no open problems on this device"
+  fi
+}
+
 # The sandbox is on in any of Claude's settings files (user, the KS project's,
 # managed). Off, nothing needs excluding.
 sandbox_enabled() {
@@ -391,6 +407,7 @@ doctor() {
     else check ks-flow:daemon warn 0 "ks-flow daemon not loaded" "ks-flow start"; fi
     device_check "$flow" "$dd" "$dbp"
     version_check "$dd"
+    errors_check "$dd"
   fi
   if have tmux && { [ -d /Applications/Ghostty.app ] || [ -d /System/Applications/Utilities/Terminal.app ]; }; then
     check master info 1 "master can run (tmux + a viewer app)"

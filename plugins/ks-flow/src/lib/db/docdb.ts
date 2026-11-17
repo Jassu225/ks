@@ -5,7 +5,7 @@
 // level deep, `create` fails on an existing doc, docs are copied in and out.
 // `memory.ts` is the daemon's dry-run writer, not this.
 import type { StoreOp } from './outbox.js';
-import type { DocDb, Unsubscribe } from './types.js';
+import type { DocDb, Unsubscribe, WatchQuery } from './types.js';
 
 type Doc = Record<string, unknown>;
 
@@ -13,7 +13,7 @@ export class MemoryDocDb implements DocDb {
   docs = new Map<string, Doc>();
   /** Every write() call's ops, in order (tests count batches). */
   batches: StoreOp[][] = [];
-  private watchers: Array<{ coll: string; fields: string[]; fn: (docs: Array<{ id: string; data: Doc }>) => void }> = [];
+  private watchers: Array<{ coll: string; fields: string[]; query: WatchQuery; fn: (docs: Array<{ id: string; data: Doc }>) => void }> = [];
   private docWatchers: Array<{ path: string; fn: (data: Doc | null) => void }> = [];
 
   constructor(seed: Record<string, Doc> = {}) {
@@ -69,10 +69,16 @@ export class MemoryDocDb implements DocDb {
     return structuredClone(next);
   }
 
-  watch(coll: string, fields: string[], onChange: (docs: Array<{ id: string; data: Doc }>) => void): Unsubscribe {
-    const w = { coll, fields, fn: (docs: Array<{ id: string; data: Doc }>) => onChange(docs) };
+  watch(
+    coll: string,
+    fields: string[],
+    onChange: (docs: Array<{ id: string; data: Doc }>) => void,
+    _onError?: (e: Error) => void,
+    query: WatchQuery = {},
+  ): Unsubscribe {
+    const w = { coll, fields, query, fn: (docs: Array<{ id: string; data: Doc }>) => onChange(docs) };
     this.watchers.push(w);
-    onChange(this.listNow(coll, fields.length ? fields : undefined));
+    onChange(this.watchList(w));
     return () => {
       this.watchers = this.watchers.filter((x) => x !== w);
     };
@@ -87,9 +93,33 @@ export class MemoryDocDb implements DocDb {
     };
   }
 
+  /** A watcher's view: the filter on whole docs, then the named fields. */
+  private watchList(w: { coll: string; fields: string[]; query: WatchQuery }): Array<{ id: string; data: Doc }> {
+    const { where = [], orderBy, desc, limit } = w.query;
+    const match = (d: Doc) =>
+      where.every((f) => {
+        const v = d[f.field];
+        if (f.op === '==') return v === f.value;
+        // Firestore leaves docs without the field out of != and >= queries.
+        if (v === undefined || v === null) return false;
+        if (f.op === '!=') return v !== f.value;
+        return String(v) >= String(f.value);
+      });
+    let list = this.listNow(w.coll).filter((d) => match(d.data));
+    if (orderBy) {
+      // Like Firestore: docs without the field are left out of an ordered query.
+      list = list
+        .filter((d) => d.data[orderBy] !== undefined && d.data[orderBy] !== null)
+        .sort((a, b) => String(a.data[orderBy]).localeCompare(String(b.data[orderBy])) * (desc ? -1 : 1));
+    }
+    if (limit) list = list.slice(0, limit);
+    return list
+      .map((d) => ({ id: d.id, data: w.fields.length ? Object.fromEntries(w.fields.filter((f) => f in d.data).map((f) => [f, d.data[f]])) : d.data }));
+  }
+
   private notify(path: string): void {
     const coll = path.slice(0, path.indexOf('/'));
-    for (const w of this.watchers) if (w.coll === coll) w.fn(this.listNow(coll, w.fields.length ? w.fields : undefined));
+    for (const w of this.watchers) if (w.coll === coll) w.fn(this.watchList(w));
     for (const w of this.docWatchers)
       if (w.path === path) w.fn(this.docs.has(path) ? structuredClone(this.docs.get(path)!) : null);
   }

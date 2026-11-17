@@ -7,9 +7,12 @@
 //        progress live. A backup can take minutes on a long transcript, and a
 //        button that just sits there looks broken.
 //
-// Status comes from the CLI (`transcript-backup --status`, below), which lists
-// the bucket once per call and reads the backup index and run history from the
-// store; `lastSweepAt` is when the last sweep finished.
+// Status comes from the daemon's backup-status.json (Firestore: kept current
+// from its listeners, the bucket listed only after a backup; lib/daemonFiles.ts),
+// so the board's polls read no store and list no bucket. Without a fresh file
+// (PocketBase, the daemon down) it comes from the CLI (`transcript-backup
+// --status`, below), which lists the bucket and reads the store once per call.
+// `lastSweepAt` is when the last sweep finished.
 //
 // The work itself is delegated to dist/transcript-backup.js (the same CLI the
 // daemon's end-of-day sweep runs) so there is one implementation of the upload
@@ -21,6 +24,7 @@ import { join } from 'node:path';
 import { NextResponse } from 'next/server';
 import { streamProcess } from '@/lib/streamproc';
 import { readOnlyResponse } from '@/lib/readonly';
+import { readBackupStatusFile } from '@/lib/daemonFiles';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,6 +79,15 @@ const STATUS_TTL_MS = 30_000;
 let cache: { at: number; payload: StatusPayload } | null = null;
 
 async function readStatus(): Promise<StatusPayload> {
+  const file = readBackupStatusFile();
+  if (file) {
+    return {
+      ok: file.ok,
+      units: file.units as UnitStatus[],
+      lastSweepAt: file.lastSweepAt,
+      ...(file.error ? { error: file.error } : {}),
+    };
+  }
   if (cache && Date.now() - cache.at < STATUS_TTL_MS) return cache.payload;
 
   const script = join(dataDir(), 'daemon', 'dist', 'transcript-backup.js');

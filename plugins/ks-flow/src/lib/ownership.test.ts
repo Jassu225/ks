@@ -67,14 +67,18 @@ test('ownership: an owner the store cannot tell (offline) is not written, and as
   assert.deepEqual(await owners.decide('KAR-9'), { write: false, owner: 'dev-b' });
 });
 
-test('the store listener keeps owners current', async () => {
-  const db = new MemoryDocDb({ 'workUnits/KAR-1': { unitId: 'KAR-1', deviceId: 'dev-b', title: 't' } });
+test('the store listener follows the cards other devices own', async () => {
+  const db = new MemoryDocDb({
+    'workUnits/KAR-1': { unitId: 'KAR-1', deviceId: 'dev-b', title: 't' },
+    'workUnits/KAR-2': { unitId: 'KAR-2', deviceId: 'dev-a', title: 'mine' },
+    'workUnits/KAR-3': { unitId: 'KAR-3', title: 'legacy, no owner' },
+  });
   const store = docDeviceStore(db);
-  const seen: Array<Array<{ unitId: string; deviceId: string | null }>> = [];
-  const stop = store.watchCardOwners!((list) => seen.push(list));
+  const seen: Array<Array<{ unitId: string; deviceId: string }>> = [];
+  const stop = store.watchForeignCards!('dev-a', (list) => seen.push(list));
   await store.setWorkUnitOwner('KAR-1', 'dev-a');
   stop();
-  assert.deepEqual(seen, [[{ unitId: 'KAR-1', deviceId: 'dev-b' }], [{ unitId: 'KAR-1', deviceId: 'dev-a' }]]);
+  assert.deepEqual(seen, [[{ unitId: 'KAR-1', deviceId: 'dev-b' }], []], 'moved here: it leaves the list');
   assert.equal((await store.getWorkUnit('KAR-1'))!.title, 't', 'card-move only changes the owner');
 });
 

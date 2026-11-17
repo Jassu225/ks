@@ -36,6 +36,8 @@ export interface SharedData {
   boardVersion: string | null;
   /** The ks plugin's version on this Mac (GET /api/version `ks`). */
   ksVersion: string | null;
+  /** This device's open ks-flow problems (GET /api/errors `open`): the header's ⚠ lights up. */
+  errorCount: number;
 }
 
 const Ctx = createContext<SharedData | null>(null);
@@ -79,8 +81,14 @@ export function BoardDataProvider({ config, children }: { config: BoardConfig; c
   const [version, setVersion] = useState<VersionStatus | null>(null);
   const [boardVersion, setBoardVersion] = useState<string | null>(null);
   const [ksVersion, setKsVersion] = useState<string | null>(null);
+  // This device's open problems (the daemon's errors.json: a local file, no store read).
+  const [errorCount, setErrorCount] = useState(0);
   useEffect(() => {
     const read = (): void => {
+      fetch('/api/errors', { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d: { open?: number } | null) => d && setErrorCount(d.open ?? 0))
+        .catch(() => {});
       fetch('/api/version', { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
         .then((d: { status?: VersionStatus | null; board?: string | null; ks?: string | null } | null) => {
@@ -120,8 +128,8 @@ export function BoardDataProvider({ config, children }: { config: BoardConfig; c
   const inboxCount = useMemo(() => inboxWaiting(board.workUnits), [board.workUnits]);
 
   const value = useMemo<SharedData>(
-    () => ({ config, board, briefing, activity, master, refreshMaster, now, notesEnabled, bellCount, inboxCount, version, boardVersion, ksVersion }),
-    [config, board, briefing, activity, master, refreshMaster, now, notesEnabled, bellCount, inboxCount, version, boardVersion, ksVersion],
+    () => ({ config, board, briefing, activity, master, refreshMaster, now, notesEnabled, bellCount, inboxCount, version, boardVersion, ksVersion, errorCount }),
+    [config, board, briefing, activity, master, refreshMaster, now, notesEnabled, bellCount, inboxCount, version, boardVersion, ksVersion, errorCount],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
