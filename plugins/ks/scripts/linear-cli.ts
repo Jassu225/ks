@@ -932,6 +932,9 @@ async function updateIssue(identifier: string, options: {
     }, options);
     if (sortOrder !== undefined) updateInput.sortOrder = sortOrder;
   }
+  // A status change keeps the issue's place in the manual order, as in Linear's
+  // own UI: through the API, a new state without a sortOrder moves the issue.
+  if ('stateId' in updateInput && updateInput.sortOrder === undefined) updateInput.sortOrder = issue.sortOrder;
 
   await client.updateIssue(issue.id, updateInput);
 
@@ -1078,6 +1081,17 @@ async function bulkUpdateIssues(identifiers: string[], options: {
 
   const result = await client.updateIssueBatch(issues.map(i => i.id), input);
   if (!result.success) fail('Linear did not apply the batch update');
+  // A status change keeps each issue's place in the manual order (as Linear's
+  // UI does). One batch input can't carry each issue's own sortOrder, so put
+  // back the place of any issue the new state moved.
+  if (input.stateId !== undefined) {
+    const before = new Map(issues.map(i => [i.id, i.sortOrder]));
+    const after = await client.issues({ first: BATCH_UPDATE_MAX, filter: { id: { in: [...before.keys()] } } });
+    for (const i of after.nodes) {
+      const was = before.get(i.id);
+      if (was !== undefined && i.sortOrder !== was) await client.updateIssue(i.id, { sortOrder: was });
+    }
+  }
   if (options.json) {
     output({ success: true, ...summary }, true);
   } else {
