@@ -2,6 +2,8 @@
 
 ## 2026-11-17
 
+- **Old tickets flooded the board (ks-flow 0.8.6, fixes 0.8.5):** 0.8.5 matched a `state.yaml` with no `worktree_dir` to the worktree that held it. But every worktree carries a copy of the whole `workflow/` folder, so each worktree claimed every old ticket without a recorded path (26 in one worktree) and they showed as live cards. Now a worktree claims a ticket only when its folder is the ticket's own (`kar-13509` or `kar-13509-…`, as `create-worktree` names it). The wrongly claimed cards drop back off the board on the next write.
+
 - **A ticket whose worktree setup failed still gets its card (ks 1.3.11, ks-flow 0.8.5):**
   - **What happened:** on B, `ks-start-ticket` created KAR-13509's worktree, but `create-worktree` then failed at `pnpm install` (pnpm missing). It printed `WORKTREE_PATH=` only on its last line, so `ks-start-ticket` saw a failure, said "Failed to create worktree" and never recorded `worktree_dir`. With no worktree on record, ks-flow couldn't tie the card or its session to the folder, so the board hid the card. Any Mac whose dependency step fails would do the same; nothing earlier today changed this.
   - **`create-worktree`:** prints the path as soon as the worktree exists.

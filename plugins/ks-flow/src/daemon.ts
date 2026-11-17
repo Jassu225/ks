@@ -1493,8 +1493,8 @@ function ingestStateYaml(path: string, mtimeMs: number): void {
   const u: WorkUnitDoc = {
     ...parsed.doc,
     // No worktree_dir recorded (a ticket start that stopped after making the
-    // worktree): the worktree this state.yaml lives in.
-    worktreeDir: parsed.doc.worktreeDir ?? worktreeHolding(path, knownWorktrees, projectPath ?? null),
+    // worktree): the unit's own worktree, when this state.yaml lives in it.
+    worktreeDir: parsed.doc.worktreeDir ?? worktreeHolding(path, parsed.doc.identifier, knownWorktrees, projectPath ?? null),
     currentPhase: null,
     waiting: null,
     sessionIds: [],

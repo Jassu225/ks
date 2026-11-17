@@ -157,17 +157,27 @@ export function parseStateYaml(path: string): ParsedWorkUnit | null {
 /**
  * The worktree a state.yaml lives in, for one that says `worktree_dir: null`
  * (a start that stopped before recording it: ks-start-ticket's setup failed
- * after the worktree was made). The deepest worktree holding the file, never
- * the main checkout (its workflow/ copy belongs to no one worktree).
+ * after the worktree was made): the worktree holding the file, only when that
+ * worktree is the unit's own, its folder named after it (`kar-13509` or
+ * `kar-13509-…`, as create-worktree names it). Every worktree carries a copy of
+ * the whole workflow/ folder, so a copy of another ticket's state.yaml inside
+ * it says nothing about that ticket. Never the main checkout.
  */
-export function worktreeHolding(stateYamlPath: string, worktrees: readonly string[], mainCheckout: string | null): string | null {
+export function worktreeHolding(
+  stateYamlPath: string,
+  identifier: string,
+  worktrees: readonly string[],
+  mainCheckout: string | null,
+): string | null {
   const strip = (p: string) => p.replace(/\/+$/, '');
   const main = mainCheckout ? strip(mainCheckout) : null;
-  let best: string | null = null;
+  const id = identifier.toLowerCase();
+  if (!id) return null;
   for (const raw of worktrees) {
     const w = strip(raw);
-    if (!w || w === main) continue;
-    if (stateYamlPath.startsWith(`${w}/`) && (!best || w.length > best.length)) best = w;
+    if (!w || w === main || !stateYamlPath.startsWith(`${w}/`)) continue;
+    const name = (w.split('/').pop() ?? '').toLowerCase();
+    if (name === id || name.startsWith(`${id}-`)) return w;
   }
-  return best;
+  return null;
 }
