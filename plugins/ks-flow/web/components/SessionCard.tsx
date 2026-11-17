@@ -350,7 +350,18 @@ function NeedsYouRibbon({ unit, inbox, elsewhere }: { unit: WorkUnitDoc; inbox?:
 }
 
 /** The card's Inbox threads: what waits on you in each, linked to the thread. */
-function InboxThreads({ unit, inbox, elsewhere }: { unit: WorkUnitDoc; inbox?: InboxAddress; elsewhere?: string }) {
+function InboxThreads({
+  unit,
+  inbox,
+  elsewhere,
+  elsewhereTag,
+}: {
+  unit: WorkUnitDoc;
+  inbox?: InboxAddress;
+  /** The owning device's name (tooltips) and its short label for the row (`A`, else the name). */
+  elsewhere?: string;
+  elsewhereTag?: string;
+}) {
   const threads = unit.inbox?.threads ?? [];
   if (threads.length === 0) return null;
   const closed = !elsewhere && !!inbox?.url && !inbox.running;
@@ -377,7 +388,8 @@ function InboxThreads({ unit, inbox, elsewhere }: { unit: WorkUnitDoc; inbox?: I
         const body = (
           <>
             <span className="shrink-0">{t.stopped ? '⛔' : waits ? '✋' : '✉'}</span>
-            <span className="min-w-0">
+            {/* flex-1: the text takes the row's width, the label at the right only what is left. */}
+            <span className="min-w-0 flex-1">
               {t.stopped && <span className="font-semibold text-red-300">Stopped on you · </span>}
               <span className={waits ? 'text-slate-200' : 'text-slate-400'}>{parts.join(' · ')}</span>
               {t.holdsUp.length > 0 && (
@@ -386,7 +398,12 @@ function InboxThreads({ unit, inbox, elsewhere }: { unit: WorkUnitDoc; inbox?: I
               {t.subject && <span className="block truncate text-slate-500">{t.subject}</span>}
             </span>
             {href && <span className="ml-auto shrink-0 text-slate-500">{closed ? 'Inbox (closed)' : 'Inbox ↗'}</span>}
-            {elsewhere && <span className="ml-auto shrink-0 text-slate-600">Inbox on {elsewhere}</span>}
+            {/* Short (the device's label) and allowed to shrink: a long device name never widens the card. */}
+            {elsewhere && (
+              <span className="ml-auto min-w-0 max-w-[40%] truncate text-right text-slate-600" title={`Inbox on ${elsewhere}`}>
+                Inbox on {elsewhereTag ?? elsewhere}
+              </span>
+            )}
           </>
         );
         const cls = `flex items-start gap-1.5 rounded px-1.5 py-1 ${
@@ -588,7 +605,7 @@ export function WorkUnitCard({
         {isMine && <RemoveWorktree unit={unit} completed={done} onRemoved={onRemoved} />}
       </div>
 
-      <InboxThreads unit={unit} inbox={inbox} elsewhere={elsewhere} />
+      <InboxThreads unit={unit} inbox={inbox} elsewhere={elsewhere} elsewhereTag={isMine ? undefined : ownerDoc?.label || ownerName} />
 
       <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
         <span className="flex min-w-0 items-center gap-1.5">

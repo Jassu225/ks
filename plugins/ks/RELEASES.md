@@ -2,6 +2,8 @@
 
 ## 2026-11-17
 
+- **Another Mac's card with Inbox questions keeps its layout (ks-flow 0.5.1):** on a card owned by another device, each Inbox row ended with "Inbox on <the device's full name>", which never shrank, so a long name squeezed the row's text into a one-word column. The row now says "Inbox on A" (the device's label; the full name is in the tooltip), the label can shrink and truncate, and the text takes the row's width.
+
 - **A status change keeps the ticket's place in the manual order (ks 1.3.3):** through the API, Linear moved an issue whose state changed without a `sortOrder`, while its own UI keeps the place. `linear issue update --state` now sends the issue's current `sortOrder` with the new state, unless `--position`, `--after` or `--before` asks for a new place. `linear issue batch-update --state` (one input for every issue) puts back the place of any issue the new state moved.
 
 - **The `~/.local/bin` shims pass your input through (ks 1.3.2, shim v3):** a shim ran the command from inside its own `while read …; done < <(jq …)` loop, so the command's stdin was the shim's folder list, not your terminal or pipe. `ks-config secret` then found no terminal and read a folder path from that list as the secret (or nothing: "empty value"), and a piped value never arrived. That hit every Mac using the shims (an install); a clone with `plugins/ks/scripts` on PATH ran the scripts directly. Shims now read the list on fd 3 and close it for the command. v1 and v2 shims are rewritten at the next session start and by `ks-setup update`. `ks-config secret` with no terminal and nothing piped in now says so. **If you stored a secret through a shim before this, store it again.**
