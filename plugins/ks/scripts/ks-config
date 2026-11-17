@@ -105,13 +105,17 @@ cmd_set() {
 cmd_secret() {
   parse_ref "${1:-}"
   ksc_is_secret "$KEY" || die "$NS.$KEY is not a secret: use  ks-config set $NS.$KEY <value>"
-  local v=""
+  local v="" tty=0
   if [ -t 0 ]; then
+    tty=1
     read -rsp "$NS.$KEY (input hidden): " v; echo >&2
   else
     IFS= read -r v || true
   fi
-  [ -n "$v" ] || die "empty value: nothing saved"
+  if [ -z "$v" ]; then
+    [ "$tty" = 1 ] && die "empty value: nothing saved"
+    die "no value: its input is not a terminal, so there was nothing to ask on and nothing was piped in. Run it in a terminal, or pipe the value: pbpaste | tr -d '[:space:]' | ks-config secret $NS.$KEY"
+  fi
   write_secret "$NS" "$KEY" "$v"
   echo "saved $NS.$KEY in the Keychain (service ks.$NS)"
 }

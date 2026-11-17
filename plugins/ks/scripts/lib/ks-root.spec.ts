@@ -234,7 +234,7 @@ test('v2 shim: resolves with no claude on PATH, follows an update, exit 127 when
   f.installed('ks-zz', [{ scope: 'user', installPath: v6, version: '1.0.6' }])
   sh(`. "${LIB}"; ksr_write_shim ks-zz whereami "$1"`, [bin], f.home)
   const shim = join(bin, 'whereami')
-  assert.match(readFileSync(shim, 'utf8'), /^# ks-shim v2$/m)
+  assert.match(readFileSync(shim, 'utf8'), /^# ks-shim v3$/m)
   assert.doesNotMatch(readFileSync(shim, 'utf8'), /1\.0\.6/, 'no baked-in folder')
   const stubs = f.claude()
   const run = () => spawnSync(shim, [], { encoding: 'utf8', cwd: f.home, env: { PATH: `${stubs}:${BASE_PATH}`, HOME: f.home } })
@@ -250,7 +250,23 @@ test('v2 shim: resolves with no claude on PATH, follows an update, exit 127 when
   assert.match(r.stderr, /run \/ks:setup/)
 })
 
-test('a v2 shim resolves in under 30 ms', () => {
+test("the shim hands the caller's stdin to the command, not its folder list (ks-config secret's prompt)", () => {
+  const f = fixture()
+  const bin = f.mk('local-bin')
+  const dir = f.mk('clone', 'plugins', 'ks-zz')
+  f.plugin(dir, 'ks-zz')
+  // The command reports what it reads on stdin and whether fd 3 is still open.
+  writeFileSync(join(dir, 'bin', 'echoin'), '#!/bin/bash\nprintf "in=%s" "$(cat)"\n{ true <&3; } 2>/dev/null && printf " fd3=open"\nexit 0\n')
+  chmodSync(join(dir, 'bin', 'echoin'), 0o755)
+  f.directoryMarketplace(join(f.home, 'clone'))
+  sh(`. "${LIB}"; ksr_write_shim ks-zz echoin "$1"`, [bin], f.home)
+  const run = (input: string) =>
+    spawnSync(join(bin, 'echoin'), [], { encoding: 'utf8', input, cwd: f.home, env: { PATH: BASE_PATH, HOME: f.home } })
+  assert.equal(run('lin_api_secret\n').stdout, 'in=lin_api_secret', 'the piped value, and fd 3 closed')
+  assert.equal(run('').stdout, 'in=', 'nothing piped: nothing read (never the folder list)')
+})
+
+test('a v3 shim resolves in under 30 ms', () => {
   const f = fixture()
   const bin = f.mk('local-bin')
   const dir = f.mk('clone', 'plugins', 'ks-zz')
@@ -274,7 +290,7 @@ test('a v2 shim resolves in under 30 ms', () => {
   assert.ok(overhead < 30, `shim resolution took ${overhead.toFixed(1)} ms`)
 })
 
-test('ensure-setup.sh rewrites pre-v2 shims once (ksr_upgrade_shims)', () => {
+test('ensure-setup.sh rewrites v1 and v2 shims once (ksr_upgrade_shims)', () => {
   const f = fixture()
   const bin = f.mk('.local', 'bin')
   const old = (plug: string, cmd: string) =>
@@ -288,6 +304,8 @@ test('ensure-setup.sh rewrites pre-v2 shims once (ksr_upgrade_shims)', () => {
     )
   old('ks', 'ks-root')
   old('ks-flow', 'ks-flow')
+  // A v2 shim (the command inherited its folder list as stdin): rewritten too.
+  writeFileSync(join(bin, 'ks-config'), '#!/bin/bash\n# ks-shim v2\nn=ks c=ks-config\nwhile IFS= read -r r; do :; done < <(true)\n', { mode: 0o755 })
   writeFileSync(join(bin, 'unrelated'), '#!/bin/sh\necho mine\n', { mode: 0o755 })
   const r = spawnSync('bash', [join(SCRIPTS_DIR, 'ensure-setup.sh')], {
     encoding: 'utf8',
@@ -298,9 +316,13 @@ test('ensure-setup.sh rewrites pre-v2 shims once (ksr_upgrade_shims)', () => {
   })
   assert.equal(r.status, 0)
   const ksRootShim = readFileSync(join(bin, 'ks-root'), 'utf8')
-  assert.match(ksRootShim, /^# ks-shim v2$/m)
+  assert.match(ksRootShim, /^# ks-shim v3$/m)
   assert.match(ksRootShim, /^n=ks c=ks-root$/m)
   assert.match(readFileSync(join(bin, 'ks-flow'), 'utf8'), /^n=ks-flow c=ks-flow$/m)
+  const v2 = readFileSync(join(bin, 'ks-config'), 'utf8')
+  assert.match(v2, /^# ks-shim v3$/m)
+  assert.match(v2, /^n=ks c=ks-config$/m)
+  assert.match(v2, /done 3< <\(jq/)
   assert.equal(readFileSync(join(bin, 'unrelated'), 'utf8'), '#!/bin/sh\necho mine\n')
   // the clone this runs from is recorded as a local root
   const reg = JSON.parse(readFileSync(join(f.config, 'plugins.json'), 'utf8'))

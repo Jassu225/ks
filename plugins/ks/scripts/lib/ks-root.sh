@@ -147,8 +147,11 @@ ks_register_root() {
 # Write the ~/.local/bin shim (or <dir>/<cmd>) that runs <plugin>'s bin/<cmd>.
 # Self-contained: it resolves the folder with KSR_JQ itself on every run (no
 # baked-in root, no sibling, never `claude`), so a plugin update needs no
-# rewrite. Atomic (a running shim is never overwritten in place).
-KSR_SHIM_MARK='# ks-shim v2'
+# rewrite. Atomic (a running shim is never overwritten in place). The folder
+# list comes in on fd 3, closed for the command, so the command keeps the
+# caller's stdin (a terminal for `ks-config secret`'s hidden prompt, or a
+# pipe); v2 read it on stdin, which the command then inherited.
+KSR_SHIM_MARK='# ks-shim v3'
 ksr_write_shim() { # plugin cmd [dir]
   local plug="$1" cmd="$2" dir="${3:-$HOME/.local/bin}" f tmp
   [ -n "$plug" ] && [ -n "$cmd" ] || return 1
@@ -165,10 +168,10 @@ pd="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins" kd="${KS_CONFIG_DIR:-$HOME/.con
 km="$pd/known_marketplaces.json" ip="$pd/installed_plugins.json" rg="$kd/plugins.json" ke="$kd/ks.env"
 [ -r "$km" ] || km=/dev/null; [ -r "$ip" ] || ip=/dev/null
 [ -r "$rg" ] || rg=/dev/null; [ -r "$ke" ] || ke=/dev/null
-while IFS= read -r r; do
+while IFS= read -r r <&3; do
   r="${r#? }"
-  [ -n "$r" ] && [ -x "$r/bin/$c" ] && exec "$r/bin/$c" "$@"
-done < <(jq -nr --arg n "$n" --arg sib "" --arg cwd "$PWD" --arg proj "${KS_PROJECT_ROOT_PATH:-}" \
+  [ -n "$r" ] && [ -x "$r/bin/$c" ] && exec "$r/bin/$c" "$@" 3<&-
+done 3< <(jq -nr --arg n "$n" --arg sib "" --arg cwd "$PWD" --arg proj "${KS_PROJECT_ROOT_PATH:-}" \
   --rawfile kmr "$km" --rawfile ipr "$ip" --rawfile rgr "$rg" --rawfile kse "$ke" '
 EOF
     printf '%s' "$KSR_JQ"
@@ -180,15 +183,18 @@ EOF
   } >"$tmp" && chmod +x "$tmp" && mv "$tmp" "$f" || { rm -f "$tmp"; return 1; }
 }
 
-# Rewrite every shim in <dir> written before v2 (they fell back to a baked-in,
-# versioned folder). Returns 0 when it rewrote any.
+# Rewrite every shim in <dir> older than this version: v1 (`# ks shim`: a
+# baked-in, versioned folder) and v2 (the command inherited the folder list as
+# its stdin). Returns 0 when it rewrote any.
 ksr_upgrade_shims() { # [dir]
   local dir="${1:-$HOME/.local/bin}" f plug n=0
   for f in "$dir"/*; do
     [ -f "$f" ] || continue
     case "$f" in *.tmp.*) continue ;; esac
-    grep -q '^# ks shim' "$f" 2>/dev/null || continue
-    plug="$(sed -n 's/.*\.\["\([^"]*\)"\]\.root.*/\1/p' "$f" | head -1)"
+    grep -q '^# ks shim\|^# ks-shim v' "$f" 2>/dev/null || continue
+    grep -qxF "$KSR_SHIM_MARK" "$f" 2>/dev/null && continue
+    plug="$(sed -n 's/^n=\([^ ]*\) c=.*/\1/p' "$f" | head -1)"
+    [ -n "$plug" ] || plug="$(sed -n 's/.*\.\["\([^"]*\)"\]\.root.*/\1/p' "$f" | head -1)"
     [ -n "$plug" ] || continue
     ksr_write_shim "$plug" "$(basename "$f")" "$dir" && n=$((n + 1))
   done
