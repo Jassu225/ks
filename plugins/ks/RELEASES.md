@@ -2,6 +2,13 @@
 
 ## 2026-11-17
 
+- **Ticket worktrees get KS updates too (ks 1.3.8):** a worktree's sessions were stuck on the KS version from the day the worktree was started.
+  - **Why:** Claude writes its own install record for a worktree (in `installed_plugins.json`) when the first session starts there, at the version current then, without `auto`. Sessions there load that record.
+  - **Nothing moved it:** Claude's auto-update skips a record without `auto`. `claude plugin update --scope local`, run in the worktree, takes the first local record, which is the main checkout's, whatever the folder.
+  - **The visible symptom:** `ks-setup update` then saw "still 1.3.4 after the update" and marked every update failed, so ks-flow never rebuilt. B stayed on 0.5.2 from KAR-13509 on.
+  - **The fix:** after updating the checkout's record, `ks-setup update` brings each worktree's record level with it (the same version, install folder and commit, `auto` on), and the release check counts them. Old versions stay in the plugin cache, so a running session keeps working until it reloads, which the ks mod does at an idle moment.
+  - **Reported to Claude Code** as a bug.
+
 - **The message board: commands for another Mac (ks-flow 0.7.0, ks 1.3.7, ks-master 0.1.1):** `ks-flow device-run <device> <command> [<arg>] [--from <who>] [--wait]` asks a device's ks-flow daemon to run one command on that Mac.
   - **Commands:** `start-ticket KAR-123` (worktree plus a new session in a new window), `new-session <checkout or worktree>`, `restart-session KAR-123`, `backup [unit]`, `ping`.
   - **How it runs:** each daemon follows its own commands with one listener, takes each once, runs it and writes the outcome back (ok or failed, a one-line message, the end of the output). A bad argument refuses it; one still queued after 15 min expires.

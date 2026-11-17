@@ -619,6 +619,53 @@ ip_entries() {
   jq -c --arg id "$1@$MARKETPLACE" '.plugins[$id] // empty | if type == "array" then .[] else . end | objects' \
     "$(claude_plugins_dir)/installed_plugins.json" 2>/dev/null
 }
+# A local install entry for a linked git worktree whose main checkout has its
+# own local entry. Claude Code writes such an entry when a session first starts
+# in the worktree (the plugins are switched on there: create-worktree copies
+# .claude/settings.local.json), at the version current then and without
+# `auto`, and the sessions there load it. Neither Claude's auto-update nor
+# `claude plugin update --scope local` (it takes the first local entry, the
+# checkout's, whatever the cwd) ever moves it, so ks-setup update brings it
+# level with the checkout's (align_worktree_entry). Prints the main checkout;
+# fails when the entry is not such a worktree entry.
+shadowing_checkout() { # plugin projectPath
+  local common main here
+  [ -d "$2" ] || return 1
+  common="$(git -C "$2" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  main="$(dirname "$common")"
+  here="$(cd "$2" && pwd -P)"
+  [ -d "$main" ] && [ "$here" != "$(cd "$main" && pwd -P)" ] || return 1
+  ip_entries "$1" | jq -e -s --arg m "$main" 'any(.[]; .scope == "local" and ((.projectPath // "") | rtrimstr("/")) == $m)' >/dev/null 2>&1 || return 1
+  printf '%s\n' "$main"
+}
+
+# Bring a worktree's own local entry level with its main checkout's: the same
+# version, installPath and gitCommitSha, lastUpdated now, and `auto` on. What
+# `claude plugin update` would do if it could reach that entry. The plugin
+# cache keeps every version, so a session still running the old copy goes on
+# working until it reloads. Only installed_plugins.json changes: written to a
+# temp file beside it and renamed into place.
+align_worktree_entry() { # plugin worktree main
+  local f tmp ip now
+  f="$(claude_plugins_dir)/installed_plugins.json"
+  ip="$(ip_entries "$1" | jq -r --arg m "$3" 'select(.scope == "local" and ((.projectPath // "") | rtrimstr("/")) == $m) | .installPath // empty' 2>/dev/null | head -1)"
+  [ -n "$ip" ] && [ -d "$ip" ] || return 1
+  now="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+  tmp="$f.ks-setup.$$"
+  if jq --arg id "$1@$MARKETPLACE" --arg wt "$2" --arg m "$3" --arg now "$now" '
+      def pp: (.projectPath // "") | rtrimstr("/");
+      ([.plugins[$id][]? | select(.scope == "local" and pp == $m)] | first) as $c
+      | if $c == null then error("no checkout entry") else . end
+      | .plugins[$id] |= map(if .scope == "local" and pp == $wt
+          then . + {version: $c.version, installPath: $c.installPath, gitCommitSha: $c.gitCommitSha, lastUpdated: $now, auto: true}
+          else . end)' "$f" >"$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    mv -f "$tmp" "$f"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
 # The version of one entry (scope + projectPath) now, re-read from the file.
 ip_entry_version() { # plugin scope projectPath
   ip_entries "$1" | jq -r --arg s "$2" --arg pp "$3" 'select(.scope == $s and (.projectPath // "") == $pp) | .version // empty' 2>/dev/null | head -1
@@ -717,8 +764,12 @@ versions() {
 #     ks-flow, ks-master and ks-browser, each installed_plugins.json entry
 #     behind the marketplace: `claude plugin update <p>@karmasuite --scope
 #     <scope> --json`, run IN the entry's projectPath (`--scope local` resolves
-#     from the cwd; one entry per worktree). A worktree that is gone is skipped,
-#     a managed entry too; entries are never created.
+#     from the cwd). A worktree that is gone is skipped, a managed entry too;
+#     entries are never created. A worktree's own local entry, when its main
+#     checkout has one (shadowing_checkout), is not run through `claude plugin
+#     update` (that updates the checkout's entry, whatever the cwd): it is
+#     brought level with the checkout's entry once that one is updated
+#     (align_worktree_entry).
 #   a clone (a directory marketplace, KS_ROOT_*, --plugin-dir): only on branch
 #     main with no uncommitted changes to tracked files (else refused), then
 #     `git pull --ff-only`.
@@ -778,7 +829,7 @@ u_proj() { # plugin path scope from to ok(true|false)
 }
 
 update_marketplace() { # check(0|1)
-  local check="$1" proj out rc p latest scope pp ver orig nv dir pfrom n any=0
+  local check="$1" proj out rc p latest scope pp ver orig nv dir pfrom n any=0 main wts w cv
   proj="$(ksc_project_root 2>/dev/null || true)"
   if ! command -v "$U_CLAUDE" >/dev/null 2>&1; then
     U_STATE=refused U_REASON="claude is not on PATH"; return
@@ -791,7 +842,7 @@ update_marketplace() { # check(0|1)
   fi
   for p in "${UPD_PLUGINS[@]}"; do
     latest="$(marketplace_version "$p")"
-    pfrom="" n=0
+    pfrom="" n=0 wts=""
     while IFS=$'\037' read -r scope pp ver; do
       case "$scope" in
         managed) ulog "$p: a managed install, not updated here"; continue ;;
@@ -802,6 +853,12 @@ update_marketplace() { # check(0|1)
         *) continue ;;
       esac
       if [ -z "$latest" ]; then ulog "$p: the $MARKETPLACE marketplace doesn't offer it; skipped"; break; fi
+      # A worktree's own record: `claude plugin update` can't reach it (below,
+      # after the checkout's record is updated, it is brought level with that).
+      if [ "$scope" = local ] && main="$(shadowing_checkout "$p" "$pp")"; then
+        wts="$wts$pp"$'\037'"$main"$'\037'"$ver"$'\n'
+        continue
+      fi
       n=$((n + 1))
       if [ -z "$pfrom" ] || ver_lt "$ver" "$pfrom"; then pfrom="$ver"; fi
       if ! ver_behind "$ver" "$latest"; then u_proj "$p" "$pp" "$scope" "$ver" "$ver" true; continue; fi
@@ -828,6 +885,27 @@ update_marketplace() { # check(0|1)
         ulog "$p in $dir: the update failed (see the log)"
       fi
     done < <(ip_entries "$p" | jq -r '[.scope // "", (.projectPath // "" | rtrimstr("/")), (.version // "" | tostring)] | join("\u001f")' 2>/dev/null)
+    # Each worktree's own record, brought level with its checkout's (updated above).
+    while IFS=$'\037' read -r w main ver; do
+      [ -n "$w" ] || continue
+      cv="$(ip_entry_version "$p" local "$main")"
+      [ -n "$cv" ] || continue
+      [ "$check" = 1 ] && ver_behind "$cv" "$latest" && cv="$latest"
+      n=$((n + 1))
+      if [ -z "$pfrom" ] || ver_lt "$ver" "$pfrom"; then pfrom="$ver"; fi
+      if ! ver_behind "$ver" "$cv"; then u_proj "$p" "$w" local "$ver" "$ver" true; continue; fi
+      any=1
+      if [ "$check" = 1 ]; then ulog "$p: $ver → $cv available in $w (a worktree of $main)"; u_proj "$p" "$w" local "$ver" "$cv" false; continue; fi
+      if align_worktree_entry "$p" "$w" "$main"; then
+        ulog "$p: $ver → $cv in $w (a worktree: its own record brought level with $main's)"
+        u_proj "$p" "$w" local "$ver" "$cv" true
+        U_CHANGED=1
+      else
+        u_proj "$p" "$w" local "$ver" "$ver" false
+        u_fail "$p in $w: its record could not be brought level with $main's ($cv)"
+        ulog "$p in $w: the update failed (see the log)"
+      fi
+    done <<<"$wts"
     [ "$n" -gt 0 ] && u_plug "$p" "$pfrom" "$latest"
   done
   if [ -n "$U_FAILS" ]; then U_STATE=failed U_REASON="$U_FAILS"
