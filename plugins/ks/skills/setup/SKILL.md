@@ -95,13 +95,13 @@ why in one line, and wait for it before step 2.
   1. **The repo, once:** the user creates an empty private repo, or you run `gh repo create claude-memory --private` after a yes. Never public: memories describe their work.
   2. **On each Mac:** ask, then `ks-setup memory init <repo URL> --yes` (clones it to `~/git/claude-memory`; on the first Mac it is seeded), then `ks-setup memory link --yes` for the KarmaSuite checkout. Link moves this Mac's memories in without overwriting the repo's and merges the index, so the second Mac adds its own.
   3. **Other projects:** `ks-setup memory status` lists this Mac's memory folders still outside the repo. Ask which to share and run `ks-setup memory link <project folder>…`; leave out the ones the user wants on this Mac only.
-  4. Then `ks-setup claude-settings --yes` (the clone writable in the sandbox) and `ks-flow stop && ks-flow start`. New sessions use the repo; open ones keep the old folder until restarted.
+  4. Then `ks-setup claude-settings --yes` (the clone writable in the sandbox) and `ks-flow restart`. New sessions use the repo; open ones keep the old folder until restarted.
 - **ks-flow's store**, when they want the shared Firestore board: they copy the
   service-account key file onto the Mac themselves (never through chat or git)
   and tell you its path; then ask and run
   `ks-setup store firestore --project <gcp id> --credentials <key.json>`.
 - **ks-flow's daemon** (`ks-flow:daemon`, `ks-flow:version`): ask, then
-  `ks-flow start` (after a store change, `ks-flow stop && ks-flow start`), and
+  `ks-flow start` (after a store or config change, `ks-flow restart`), and
   `ks-flow open` for the board.
 - **Updating** (`plugins:copies`, `ks-flow:release`, a version behind, or asked
   to update): ask, then `ks-setup update`. It updates every KS plugin in the

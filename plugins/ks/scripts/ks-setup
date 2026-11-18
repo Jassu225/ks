@@ -163,7 +163,7 @@ device_check() { # flow-root data-dir store
   if [ "$(jq -r '"\(.source // "")/\(.hardwareMatches)"' <<<"$dev" 2>/dev/null)" = config/false ]; then
     check ks-flow:device-id warn 0 \
       "the stored device id $did (ks.KS_DEVICE_ID) is not this machine's own: copied from another Mac, or the logic board was replaced; if another Mac uses $did, the two overwrite each other's cards" \
-      "on the copied Mac: ks-config unset ks.KS_DEVICE_ID, then ks-flow stop && ks-flow start"
+      "on the copied Mac: ks-config unset ks.KS_DEVICE_ID, then ks-flow restart"
   fi
   if [ "$dbp" != firestore ]; then check ks-flow:device info 1 "$me"; return; fi
   [ -n "$dd" ] && [ -f "$dd/daemon/dist/store-check.js" ] \
@@ -300,7 +300,7 @@ errors_check() { # data-dir
   n="$(jq '[.entries[]? | select(.resolvedAt == null)] | length' "$f" 2>/dev/null || echo 0)"
   if [ "${n:-0}" -gt 0 ]; then
     list="$(jq -r '[.entries[]? | select(.resolvedAt == null) | "\(.title) (\(.count)x: \(.message | .[0:80]))"] | join("; ")' "$f" 2>/dev/null)"
-    check ks-flow:errors warn 0 "ks-flow has $n open problem(s) on this device: $list" "see the board's Errors page (ks-flow open, then the ⚠ icon); ks-flow stop && ks-flow start if it persists"
+    check ks-flow:errors warn 0 "ks-flow has $n open problem(s) on this device: $list" "see the board's Errors page (ks-flow open, then the ⚠ icon); ks-flow restart if it persists"
   else
     check ks-flow:errors info 1 "ks-flow: no open problems on this device"
   fi
@@ -825,7 +825,7 @@ versions() {
     if .ksFlow then
       "ks-flow daemon \(.ksFlow.daemon // "?"), store \(.ksFlow.store // "?") (data format \(.ksFlow.schema // "?")\(if .ksFlow.storeSchema and .ksFlow.storeSchema != .ksFlow.schema then " vs store \(.ksFlow.storeSchema)" else "" end))"
         + ((.plugins[] | select(.plugin == "ks-flow") | .claude.version // "") as $cv
-           | if $cv != "" and .ksFlow.daemon and $cv != .ksFlow.daemon then "  the daemon runs \(.ksFlow.daemon), Claude has \($cv) → ks-flow stop && ks-flow start" else "" end)
+           | if $cv != "" and .ksFlow.daemon and $cv != .ksFlow.daemon then "  the daemon runs \(.ksFlow.daemon), Claude has \($cv) → ks-flow restart" else "" end)
         + (if .ksFlow.behind then "  BEHIND → ks-flow update (the daemon also runs it itself, at most hourly)" else "" end)
         + (if .ksFlow.dev then "  [dev build: \(.ksFlow.devReason // "not a release")]" else "" end)
         + (if (.ksFlow.update // "") == "failed" then "  last update failed (see update.log)" else "" end)
@@ -1416,7 +1416,7 @@ store() {
       set_env_line "$dd/.env" FIRESTORE_CREDENTIALS "$cred" ;;
     *) say "usage: ks-setup store pocketbase | firestore --project <gcp id> --credentials <key.json>"; return 2 ;;
   esac
-  say "ks-flow store for $proj → $kind ($dd/.env). Restart:  ks-flow stop && ks-flow start && ks-flow open"
+  say "ks-flow store for $proj → $kind ($dd/.env). Restart:  ks-flow restart && ks-flow open"
 }
 
 # ── shared memory (optional; suggested from 2 devices) ─────────────────────
@@ -1508,7 +1508,7 @@ memory_init() {
   memory_seed "$dir" || return 1
   # Stored in the ~/ form: the same value on every machine.
   "$SCRIPT_DIR/ks-config" set ks.KS_MEMORY_DIR "$(tilde_path "$dir")" >/dev/null && say "ks.KS_MEMORY_DIR = $(tilde_path "$dir")"
-  say "Next: ks-setup memory link (moves this Mac's memories in, points the project at the repo); then ks-flow stop && ks-flow start, so ks-flow syncs it."
+  say "Next: ks-setup memory link (moves this Mac's memories in, points the project at the repo); then ks-flow restart, so ks-flow syncs it."
 }
 memory_merge_index() { # this Mac's index → the repo's: lines whose memory it doesn't list yet
   local line link

@@ -272,7 +272,7 @@ never copied into the launchd plist.
 
    It refuses to write if Firestore already holds ks-flow data, unless you pass
    `--force`.
-2. Add the four `.env` lines, then `ks-flow stop && ks-flow start` (it starts the board too; `ks-flow open` opens it in the browser).
+2. Add the four `.env` lines, then `ks-flow restart` (it brings the board back too; `ks-flow open` opens it in the browser).
    The daemon's startup backfill writes the cards and sessions.
 3. Keep `pocketbase/pb_data` as a backup for a couple of weeks.
 
@@ -334,7 +334,7 @@ local, so a PocketBase board is one device.
   and two Macs with one id overwrite each other's cards. The daemon's log and
   `ks-setup doctor` (`ks-flow:device-id`) warn when the stored id is not this
   Mac's own. On the copy: `ks-config unset ks.KS_DEVICE_ID`, then
-  `ks-flow stop && ks-flow start`.
+  `ks-flow restart`.
 - **`KS_DEVICE_ID`** in the environment (or the data dir's `.env`) overrides
   the stored id, for test daemons side by side. To keep an old id on new
   hardware, `ks-config set ks.KS_DEVICE_ID <id>` before the first start.
@@ -697,6 +697,7 @@ Settings → Devices shows each device's version, amber when it is behind.
 | `ks-flow open` | Build and open the board UI in the browser. |
 | `ks-flow close` | Stop the board UI server. |
 | `ks-flow stop` | Stop everything — board UI, daemon, and PocketBase. |
+| `ks-flow restart` | `stop`, then `start`: the daemon and the board come back and re-read their config. Run it after a `ks-config` change (the daemon reads config once, at start; `start` alone keeps a running daemon). |
 | `ks-flow update [--dry-run] [--no-fetch]` | Update this device's ks-flow to the newest release (the fetch is ks's `ks-setup update`: every KS plugin, in the KarmaSuite checkout and its worktrees; a clone: `git pull --ff-only` on a clean `main` only), rebuild, restart the daemon and the board. `--no-fetch`: rebuild and restart only. The daemon runs it on its own when the store holds a newer version or its hourly check finds a new release. See [Versioning](#versioning). |
 | `ks-flow status` | Status of all services: daemon, store (PocketBase, or Firestore with its offline outbox count), board UI. |
 | `ks-flow migrate-store` | One-off copy of the PocketBase store into Firestore. Dry run unless `--write`; `--project`, `--credentials`, `--force`. |

@@ -5,6 +5,7 @@
 #   ks-flow open              build and open the board UI in the browser
 #   ks-flow close             stop the board UI server
 #   ks-flow stop              stop everything — board UI, daemon, and PocketBase (if running)
+#   ks-flow restart           stop, then start: daemon and board re-read their config (after a ks-config change)
 #   ks-flow status            print daemon, store (PocketBase or Firestore + offline outbox) and board status
 #   ks-flow migrate-store     copy the PocketBase store into Firestore (dry run; --write, --project, --credentials)
 #   ks-flow daemon            run the ingester in the foreground (debug)
@@ -385,6 +386,14 @@ case "$cmd" in
     pkill -f "pocketbase serve" 2>/dev/null && echo "pocketbase stopped" || true
     ;;
 
+  restart)
+    # stop, then start: the daemon and the board come back with fresh config
+    # (ks-config values are read once at startup, and `start` alone keeps a
+    # running daemon unless its plist or build changed). No browser tab.
+    "$0" stop
+    exec "$0" start
+    ;;
+
   set-project)
     NEW="${2:-}"
     [ -n "$NEW" ] || { echo "usage: ks-flow set-project <path>" >&2; exit 1; }
@@ -392,7 +401,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "usage: ks-flow {start|open|close|stop|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|device-id [--json]|devices [--json] [--live]|peers [--md|--json]|device-run <device> <command> [<arg>] [--wait]|commands [--json]|inbox-check [--dry-run]|card-owner <unit> [--json]|card-move <unit> [--json]|briefing <command>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]|migrate-store [--write]|update [--dry-run] [--no-fetch]}" >&2
+    echo "usage: ks-flow {start|open|close|stop|restart|status|daemon|set-project <path>|archive <worktree>|backup-enabled|session [<unit>] [--json]|device-id [--json]|devices [--json] [--live]|peers [--md|--json]|device-run <device> <command> [<arg>] [--wait]|commands [--json]|inbox-check [--dry-run]|card-owner <unit> [--json]|card-move <unit> [--json]|briefing <command>|backfill-archive [--dry-run] [--force]|backup [--unit <id>] [--dry-run]|restore --unit <id>|migrate-archives [--dry-run]|migrate-store [--write]|update [--dry-run] [--no-fetch]}" >&2
     exit 1
     ;;
 esac

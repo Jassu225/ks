@@ -40,5 +40,5 @@ namespace. `legacy` means it still comes from the old file: suggest
 ## After a change
 
 - CLIs (`linear`, `slack`, `grain`): the next command uses it.
-- ks-flow daemon and board: `! ks-flow stop && ks-flow start && ks-flow open`.
+- ks-flow daemon and board: `! ks-flow restart` (`ks-flow open` opens the board).
 - Hooks and the session's PATH: a new Claude session.

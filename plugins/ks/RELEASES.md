@@ -2,6 +2,8 @@
 
 ## 2026-11-18
 
+- **`ks-flow restart` (ks-flow 0.9.1, ks 1.4.1):** stops, then starts the daemon and the board, so they re-read their config. Use it after a `ks-config` change, such as new GCS backup settings. `ks-flow start` alone keeps a running daemon unless its plist or build changed, and the daemon reads config only when it starts. The setup and config skills and `ks-setup`'s hints now say `ks-flow restart` instead of `ks-flow stop && ks-flow start`.
+
 - **Shared memory across Macs (ks 1.4.0, ks-flow 0.9.0; optional):**
   - **The problem:** Claude Code's auto memory is kept per Mac, and Claude Code offers no remote or synced memory. With two Macs, memories had to be copied by hand.
   - **Where it lives now:** a private GitHub repo, cloned at `~/git/claude-memory`, one folder per project. Each project points Claude at its folder with `autoMemoryDirectory` (`~/…`, so the same on every Mac whatever the user name).
