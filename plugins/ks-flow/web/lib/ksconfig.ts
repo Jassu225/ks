@@ -27,6 +27,7 @@ export const KSFLOW_KEYS: KsKey[] = [
   { namespace: 'gcs', key: 'GCS_CLIENT_EMAIL', secret: false },
   { namespace: 'gcs', key: 'GCS_PRIVATE_KEY', secret: true },
   { namespace: 'ks', key: 'KS_PROJECT_ROOT_PATH', secret: false },
+  { namespace: 'ks', key: 'KS_MEMORY_DIR', secret: false },
 ];
 
 function parseFile(file: string): Record<string, string> {
@@ -81,10 +82,21 @@ export function storeValues(env: NodeJS.ProcessEnv, opts: StoreOptions = {}): Re
     else {
       if (!files.has(k.namespace)) files.set(k.namespace, parseFile(join(dir, `${k.namespace}.env`)));
       v = files.get(k.namespace)![k.key] || undefined;
+      if (v !== undefined) v = expandHome(v);
     }
     if (v !== undefined) out[k.key] = v;
   }
   return out;
+}
+
+/**
+ * A path in the home folder may be stored as `~/…`, `$HOME/…` or `${HOME}/…`
+ * (the same on every machine whatever the user name): the home folder put in.
+ * Anything else is returned unchanged. Twin of src/lib/ksconfig.ts.
+ */
+export function expandHome(v: string, home = homedir()): string {
+  const m = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/.exec(v);
+  return m ? home + v.slice(m[0].length) : v;
 }
 
 let loaded = false;
@@ -98,5 +110,10 @@ export function loadKsLayer(): void {
     Object.assign(process.env, storeValues(process.env));
   } catch {
     // no store: nothing to add
+  }
+  // A plain value set in the real environment as ~/… or $HOME/… too.
+  for (const k of KSFLOW_KEYS) {
+    const v = process.env[k.key];
+    if (!k.secret && v) process.env[k.key] = expandHome(v);
   }
 }

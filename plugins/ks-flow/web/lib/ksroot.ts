@@ -11,6 +11,7 @@
 import { readFileSync, realpathSync, statSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { expandHome } from './ksconfig';
 
 export const KS_MARKETPLACE = 'karmasuite';
 
@@ -97,7 +98,7 @@ export function projectPathFromEnvFile(text: string | null, home: string): strin
     if (m) found = m[1].replace(/^["']|["']$/g, '');
   }
   if (!found) return null;
-  return found.startsWith('~') ? home + found.slice(1) : found;
+  return expandHome(found, home);
 }
 
 export function compareVersions(a: string, b: string): number {
@@ -206,7 +207,7 @@ export function rootContext(): RootContext {
     home,
     configDir: process.env.KS_CONFIG_DIR || join(home, '.config', 'ks'),
     cwd: process.cwd(),
-    projectPath: process.env.KS_PROJECT_ROOT_PATH || undefined,
+    projectPath: process.env.KS_PROJECT_ROOT_PATH ? expandHome(process.env.KS_PROJECT_ROOT_PATH, home) : undefined,
     claudeDir: process.env.CLAUDE_CONFIG_DIR || join(home, '.claude'),
     pluginsDir: ownPluginsDir(),
     env: process.env,

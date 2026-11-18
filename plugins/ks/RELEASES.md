@@ -1,6 +1,17 @@
 # Releases
 
-## 2026-11-17
+## 2026-11-18
+
+- **Shared memory across Macs (ks 1.4.0, ks-flow 0.9.0; optional):**
+  - **The problem:** Claude Code's auto memory is kept per Mac, and Claude Code offers no remote or synced memory. With two Macs, memories had to be copied by hand.
+  - **Where it lives now:** a private GitHub repo, cloned at `~/git/claude-memory`, one folder per project. Each project points Claude at its folder with `autoMemoryDirectory` (`~/…`, so the same on every Mac whatever the user name).
+  - **Setting it up:** `ks-setup memory init <repo URL>` and `ks-setup memory link [<project>…]`; `/ks:setup` suggests it once 2+ Macs share the board, and the doctor checks it. Linking moves this Mac's memories in without overwriting the repo's and merges the index. It then turns the old folder into a link to the repo's, so a session started before the switch, whose instructions still name the old path, also writes into the repo. Only `.md` files move, and the repo ignores Finder's `.DS_Store`.
+  - **Sync:** ks-flow watches each project's `MEMORY.md`. Each change restarts a 2-min quiet window; then one sync (commit, pull, push) runs on the daemon's 15 s clock, and the other Macs pull when they see its new commit. There is no periodic fetch.
+  - **Home paths:** written as `~/…` everywhere: when memories move in, before each commit, and by a new line in the KS rules.
+
+- **Config paths may start with `~/`, `$HOME/` or `${HOME}/` (ks 1.4.0, ks-flow 0.9.0):** a path setting such as `KS_PROJECT_ROOT_PATH` or `KS_MEMORY_DIR`, or a path in ks-flow's data `.env` (the Firestore key), can now be stored relative to the home folder, so the same value works on every Mac whatever the user name (`ks-config set ks.KS_PROJECT_ROOT_PATH '~/karmasuite/karmasuite'`, quoted so the shell leaves it as typed).
+  - **Who reads it:** every reader expands it: the shell (`ksc_get`, the plugin resolver, ks-flow's bootstrap), the CLIs, the ks mod, and ks-flow's daemon and board.
+  - **Stored as typed:** values already written as absolute paths keep working. `ks-setup memory init` stores `KS_MEMORY_DIR` as `~/…`, and `ks-setup`'s path arguments accept all three forms.
 
 - **Old tickets flooded the board (ks-flow 0.8.6, fixes 0.8.5):** 0.8.5 matched a `state.yaml` with no `worktree_dir` to the worktree that held it. But every worktree carries a copy of the whole `workflow/` folder, so each worktree claimed every old ticket without a recorded path (26 in one worktree) and they showed as live cards. Now a worktree claims a ticket only when its folder is the ticket's own (`kar-13509` or `kar-13509-…`, as `create-worktree` names it). The wrongly claimed cards drop back off the board on the next write.
 

@@ -16,6 +16,8 @@ import {
   readFileSync,
   realpathSync,
   statSync,
+  watch,
+  type FSWatcher,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -148,6 +150,8 @@ import { liveSources } from './lib/live-sources.js';
 import { openErrors, recordError, resolveError } from './lib/errors-log.js';
 import { DeviceCommandQueue, refusal, runCommand, type Step, type StepResult } from './lib/device-commands.js';
 import { fetchLinearFacts, type LinearFacts } from './lib/linear-sync.js';
+import { MemorySync, type GitRun } from './lib/memory-sync.js';
+import { expandHome } from './lib/ksconfig.js';
 import {
   attachInbox,
   InboxReader,
@@ -650,7 +654,12 @@ const live = LIVE
         }),
       ),
       // Each change rewrites devices.json at once (peers, the board's master status).
-      devices: mirror.add(tap(LIVE.devices, (list) => saveDevicesCache(list))),
+      devices: mirror.add(
+        tap(LIVE.devices, (list) => {
+          saveDevicesCache(list);
+          onDevicesMemory(list);
+        }),
+      ),
       foreignCards: mirror.add(tap(LIVE.foreignCards, (list) => onForeignCards(list))),
       reminders: mirror.add(LIVE.reminders),
       openItems: mirror.add(LIVE.openItems),
@@ -1072,6 +1081,7 @@ const JOB_TITLES: Record<string, string> = {
   masterStatus: 'Master status',
   masterRequests: 'Master requests',
   devices: 'Device heartbeat',
+  memory: 'Shared memory sync',
 };
 const REMINDER_TICK_MS = 30_000; // 2 ticks
 const LINEAR_SYNC_MS = 180_000; // 12 ticks
@@ -1994,6 +2004,101 @@ function scanStateYaml(root: string): void {
   }
 }
 
+// ── shared memory (lib/memory-sync.ts) ──────────────────────────────────────
+// ks.KS_MEMORY_DIR: the clone of the person's private memory repo, which every
+// Mac's Claude Code reads through autoMemoryDirectory (ks-setup memory). Unset
+// or not a clone: off (no watcher, the job does nothing, no field written).
+const MEMORY_DIR = expandHome(process.env.KS_MEMORY_DIR ?? '');
+/** git through the login shell, so the person's SSH agent / Keychain / gh credentials work under launchd. */
+const loginGit: GitRun = (args, cwd) =>
+  new Promise((resolve) => {
+    let out = '';
+    let child;
+    try {
+      child = spawn('/bin/zsh', ['-c', `${LOGIN_PRELUDE} exec git "$@"`, 'git', ...args], {
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      });
+    } catch (e) {
+      resolve({ code: 127, out: (e as Error).message });
+      return;
+    }
+    const timer = setTimeout(() => child.kill('SIGTERM'), 120_000);
+    timer.unref();
+    child.stdout.on('data', (b: Buffer) => (out += b.toString('utf8')));
+    child.stderr.on('data', (b: Buffer) => (out += b.toString('utf8')));
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      resolve({ code: 127, out: e.message });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? 1, out: out.trim() });
+    });
+  });
+let memory: MemorySync | null = null;
+let memoryWatcher: FSWatcher | null = null;
+/** HEAD after the last sync, and the one last written to devices/{self}. */
+let memoryHead: string | null = null;
+let memoryHeadPublished: string | null = null;
+/** Each other device's memoryHead already looked at. */
+const memoryHeadsSeen = new Map<string, string>();
+
+function startMemory(): void {
+  if (!MEMORY_DIR) return;
+  if (!existsSync(join(MEMORY_DIR, '.git'))) {
+    log(`memory: ${MEMORY_DIR} is not a git clone, shared memory off (ks-setup memory init)`);
+    return;
+  }
+  memory = new MemorySync(MEMORY_DIR, loginGit, { home: homedir(), label: SELF.defaultName });
+  watchMemory();
+  log(`memory: sharing ${MEMORY_DIR} (a sync 2 min after the last index change, and when another device pushes)`);
+}
+
+function watchMemory(): void {
+  try {
+    // One FSEvents stream for the whole clone; only `<project>/MEMORY.md` counts (MemorySync.changed).
+    memoryWatcher = watch(MEMORY_DIR, { recursive: true }, (_event, file) => {
+      if (file && memory) memory.changed(String(file), Date.now());
+    });
+    memoryWatcher.on('error', (e) => {
+      log('memory: watcher stopped', e.message);
+      memoryWatcher?.close();
+      memoryWatcher = null; // memoryTick attaches it again
+    });
+  } catch (e) {
+    log('memory: watcher not started', (e as Error).message);
+    memoryWatcher = null;
+  }
+}
+
+async function memoryTick(): Promise<void> {
+  if (!memory) return;
+  if (!memoryWatcher && existsSync(MEMORY_DIR)) watchMemory();
+  const out = await memory.tick(Date.now());
+  if (out) {
+    memoryHead = out.head;
+    if (out.committed || out.changed) log(`memory: synced, ${out.committed} file(s) of this Mac's, head ${out.head.slice(0, 8)}`);
+  }
+  if (deviceMode && memoryHead && memoryHead !== memoryHeadPublished) {
+    await devicesStore.mergeDevice(SELF.deviceId, { memoryHead, memoryAt: new Date().toISOString() });
+    memoryHeadPublished = memoryHead;
+  }
+}
+
+/** Another device pushed (its memoryHead): a sync on the next tick unless this clone has it. */
+function onDevicesMemory(list: DeviceDoc[]): void {
+  if (!memory) return;
+  for (const d of list) {
+    if (d.deviceId === SELF.deviceId || d.forgotten || !d.memoryHead) continue;
+    if (memoryHeadsSeen.get(d.deviceId) === d.memoryHead) continue;
+    memoryHeadsSeen.set(d.deviceId, d.memoryHead);
+    if (d.memoryHead === memoryHead) continue;
+    memory.seen(d.memoryHead).catch((e) => log('memory: head check failed', (e as Error)?.message));
+  }
+}
+
 // ── watchers ────────────────────────────────────────────────────────────────
 function startWatchers(): void {
   const usePoll = process.env.KS_FLOW_POLL === '1';
@@ -2143,6 +2248,11 @@ function startWatchers(): void {
 
       // This device's record (devices/{id}) and the device-mode check.
       devices: { every: DEVICE_HEARTBEAT_MS, run: deviceHeartbeat },
+
+      // Shared memory (ks.KS_MEMORY_DIR, lib/memory-sync.ts): a sync once an
+      // index change has been quiet for 2 min, or another device pushed. Each
+      // tick only looks at the clock unless one is due.
+      memory: { every: TICK_MS, run: memoryTick },
     },
     (name, e) => {
       log(`${name} failed`, (e as Error)?.message);
@@ -2813,6 +2923,7 @@ async function main(): Promise<void> {
     if (writer.close) await writer.close();
     process.exit(0);
   }
+  startMemory();
   startWatchers();
   if (!terminalNotifierAvailable()) {
     log('WARNING: terminal-notifier not found — notifications are disabled. Install: brew install terminal-notifier');

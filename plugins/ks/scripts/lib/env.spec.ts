@@ -3,11 +3,11 @@
 // real env > KS store (Keychain secrets, ~/.config/ks/<ns>.env) > legacy files.
 import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { parseEnvFile, readKeys, storeValues, type KsKey } from './env.js'
+import { expandHome, parseEnvFile, readKeys, storeValues, type KsKey } from './env.js'
 
 const KEYS: KsKey[] = [
   { namespace: 'linear', key: 'LINEAR_API_KEY', secret: true },
@@ -44,6 +44,17 @@ test('secrets come from the Keychain, plain values from <ns>.env', () => {
   writeFileSync(join(f.configDir, 'ks.env'), 'KS_PROJECT_ROOT_PATH="/repo"\n')
   const v = storeValues({}, { configDir: f.configDir, securityBin: f.securityBin, keys: KEYS })
   assert.deepEqual(v, { LINEAR_API_KEY: 'lin_kc', KS_PROJECT_ROOT_PATH: '/repo' })
+})
+
+test('a plain path stored as ~/… or $HOME/… gets the home folder', () => {
+  const f = fixture()
+  writeFileSync(join(f.configDir, 'ks.env'), 'KS_PROJECT_ROOT_PATH="~/karmasuite/karmasuite"\n')
+  const v = storeValues({}, { configDir: f.configDir, securityBin: f.securityBin, keys: KEYS })
+  assert.equal(v.KS_PROJECT_ROOT_PATH, join(homedir(), 'karmasuite', 'karmasuite'))
+  assert.equal(expandHome('$HOME/a', '/Users/x'), '/Users/x/a')
+  assert.equal(expandHome('${HOME}/a', '/Users/x'), '/Users/x/a')
+  assert.equal(expandHome('~other/a', '/Users/x'), '~other/a')
+  assert.equal(expandHome('/abs', '/Users/x'), '/abs')
 })
 
 test('the real environment wins over the store', () => {

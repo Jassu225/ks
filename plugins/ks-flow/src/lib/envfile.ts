@@ -6,7 +6,7 @@
 // present in the real environment win (so userConfig / launchd plist override
 // the file). Supports KEY=VALUE, optional quotes, and # comments.
 import { readFileSync } from 'node:fs';
-import { loadKsLayer } from './ksconfig.js';
+import { expandHome, loadKsLayer } from './ksconfig.js';
 
 export function loadEnvFile(path: string): void {
   let raw: string;
@@ -29,7 +29,7 @@ export function loadEnvFile(path: string): void {
     ) {
       val = val.slice(1, -1);
     }
-    process.env[key] = val;
+    process.env[key] = expandHome(val);
   }
 }
 

@@ -64,20 +64,33 @@ ksc_source() {
   echo unset
 }
 
-# The value of KEY by the lookup order; exit 1 when unset.
+# A path in the home folder may be stored as ~/…, $HOME/… or ${HOME}/… (the same
+# on every machine whatever the user name): expanded here. Other values unchanged.
+ksc_expand_home() {
+  case "$1" in
+    '~' | '$HOME' | '${HOME}') printf '%s' "$HOME" ;;
+    '~/'*) printf '%s/%s' "$HOME" "${1#\~/}" ;;
+    '$HOME/'*) printf '%s/%s' "$HOME" "${1#\$HOME/}" ;;
+    '${HOME}/'*) printf '%s/%s' "$HOME" "${1#\$\{HOME\}/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# The value of KEY by the lookup order (a plain value's home folder expanded:
+# ksc_expand_home); exit 1 when unset.
 ksc_get() {
   local key="$1" ns v f
-  if [ -n "${!key:-}" ]; then printf '%s' "${!key}"; return 0; fi
+  if [ -n "${!key:-}" ]; then ksc_expand_home "${!key}"; return 0; fi
   ns="$(ksc_ns "$key")"
   if [ -n "$ns" ]; then
     if ksc_is_secret "$key"; then
       v="$(ksc_keychain_value "$ns" "$key")" && [ -n "$v" ] && { printf '%s' "$v"; return 0; }
     else
-      v="$(ksc_file_value "$key" "$(ksc_dir)/$ns.env")" && { printf '%s' "$v"; return 0; }
+      v="$(ksc_file_value "$key" "$(ksc_dir)/$ns.env")" && { ksc_expand_home "$v"; return 0; }
     fi
   fi
   while read -r f; do
-    v="$(ksc_file_value "$key" "$f")" && { printf '%s' "$v"; return 0; }
+    v="$(ksc_file_value "$key" "$f")" && { ksc_expand_home "$v"; return 0; }
   done < <(ksc_legacy_files)
   return 1
 }

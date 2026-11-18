@@ -40,6 +40,18 @@ if { [ -n "$KS_REG_ROOT" ] || jq -e 'any(.[]?; .mode? == "marketplace")' "$KS_RE
     && mv "$KS_REG.tmp.$$" "$KS_REG" 2>/dev/null || rm -f "$KS_REG.tmp.$$" 2>/dev/null
 fi
 
+# A path stored as ~/…, $HOME/… or ${HOME}/… (the same on every machine): the
+# home folder put in (as lib/ks-config.sh ksc_expand_home does).
+expand_home() {
+  case "$1" in
+    '~' | '$HOME' | '${HOME}') printf '%s' "$HOME" ;;
+    '~/'*) printf '%s/%s' "$HOME" "${1#\~/}" ;;
+    '$HOME/'*) printf '%s/%s' "$HOME" "${1#\$HOME/}" ;;
+    '${HOME}/'*) printf '%s/%s' "$HOME" "${1#\$\{HOME\}/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
 # 1) project.conf ------------------------------------------------------------
 # project_path (userConfig) → KS_PROJECT_ROOT_PATH (env, ~/.config/ks/ks.env) →
 # the one project already set up here (its project.conf). Without a fallback a
@@ -47,6 +59,7 @@ fi
 if [ -z "$PROJECT_PATH" ]; then
   PROJECT_PATH="${KS_PROJECT_ROOT_PATH:-}"
   [ -n "$PROJECT_PATH" ] || PROJECT_PATH="$(sed -n 's/^[[:space:]]*KS_PROJECT_ROOT_PATH[[:space:]]*=[[:space:]]*["'"'"']\{0,1\}\([^"'"'"']*\)["'"'"']\{0,1\}[[:space:]]*$/\1/p' "${KS_CONFIG_DIR:-$HOME/.config/ks}/ks.env" 2>/dev/null | tail -1)"
+  PROJECT_PATH="$(expand_home "$PROJECT_PATH")"
   if [ -z "$PROJECT_PATH" ]; then
     confs=("$HOME"/.claude/plugins/data/ks-flow/*/project.conf)
     [ "${#confs[@]}" = 1 ] && [ -f "${confs[0]}" ] && PROJECT_PATH="$(jq -r '.projectPath // empty' "${confs[0]}" 2>/dev/null)"
@@ -268,7 +281,7 @@ fi
 # 2c) Firestore key check -----------------------------------------------------
 if [ "$DBP" = "firestore" ]; then
   FS_CRED="${CLAUDE_PLUGIN_OPTION_firestore_credentials:-$(envval FIRESTORE_CREDENTIALS)}"
-  if [ -n "$FS_CRED" ] && [ ! -r "${FS_CRED/#\~/$HOME}" ]; then
+  if [ -n "$FS_CRED" ] && [ ! -r "$(expand_home "$FS_CRED")" ]; then
     echo "[ks-flow] Firestore key $FS_CRED is not readable — the daemon can't reach the store (ks-setup store firestore ...)" >&2
   fi
 fi

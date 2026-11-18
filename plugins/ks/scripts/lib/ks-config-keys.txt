@@ -4,11 +4,14 @@
 # plain values in ~/.config/ks/<namespace>.env (KS_CONFIG_DIR overrides the
 # folder). Read by lib/ks-config.sh (shell), lib/env.ts (TS CLIs) and the
 # ks-config CLI. Namespaces are per tool so a CLI can later move into its own
-# plugin without its config moving.
-ks KS_PROJECT_ROOT_PATH plain Absolute path of the KarmaSuite repo checkout (quality hooks, launchers, ks-flow)
+# plugin without its config moving. A plain path value in the home folder may be
+# stored as ~/…, $HOME/… or ${HOME}/… (the same on every machine): every reader
+# expands it.
+ks KS_PROJECT_ROOT_PATH plain Path of the KarmaSuite repo checkout, e.g. ~/karmasuite/karmasuite (quality hooks, launchers, ks-flow)
 ks KS_DEVICE_ID plain This machine's ks-flow device id (written once by the ks-flow daemon; never copy it to another machine)
 ks KS_REMOTE_CONTROL plain 1 = sessions started with claude-ks (and the KS launchers) get Remote Control (ks-setup remote-control)
 ks KS_EXTRA_PLUGINS plain Local plugins claude-ks loads with --plugin-dir (legacy clone loading)
+ks KS_MEMORY_DIR plain Clone of the private repo that holds Claude's memory for every Mac (ks-setup memory; ks-flow syncs it). Unset = memory stays per Mac
 linear LINEAR_API_KEY secret Linear API key (linear CLI, ks-start-ticket, ks-flow Linear sync)
 slack SLACK_TOKEN secret Slack user token, xoxp- (slack CLI, ks-flow Notes and Briefing)
 grain GRAIN_API_TOKEN secret Grain personal or workspace access token

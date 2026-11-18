@@ -54,7 +54,7 @@ def ver: [(.version // "0" | tostring | splits("[.+-]") | tonumber? // 0)] + [0,
 | (if $proj != "" then $proj
    else [$kse | splits("\n") | capture("^\\s*(export\\s+)?KS_PROJECT_ROOT_PATH\\s*=\\s*(?<v>.*?)\\s*$")? | .v] | last // ""
    end | gsub("^[\"\u0027]|[\"\u0027]$"; "")
-   | if . == "~" then ($ENV.HOME // "") elif startswith("~/") then ($ENV.HOME // "") + .[1:] else . end
+   | if test("^(~|\\$HOME|\\$\\{HOME\\})(/|$)") then sub("^(~|\\$HOME|\\$\\{HOME\\})"; ($ENV.HOME // "")) else . end
    | trim) as $ks
 | ([json($kmr) | objects | .karmasuite][0]) as $mk
 | ($ENV["KS_ROOT_" + ($n | ascii_upcase | gsub("-"; "_"))] // empty | select(. != "") | "- " + .),

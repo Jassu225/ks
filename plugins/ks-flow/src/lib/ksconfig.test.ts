@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { storeValues } from './ksconfig.js';
+import { expandHome, storeValues } from './ksconfig.js';
 
 function fixture() {
   const dir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'ksflow-ksconfig-'));
@@ -39,4 +39,15 @@ test('anything already set (real env or <dataDir>/.env) wins', () => {
 
 test('no store at all is not an error', () => {
   assert.deepEqual(storeValues({}, { configDir: '/nonexistent', securityBin: '/nonexistent/security' }), {});
+});
+
+test('expandHome: ~/…, $HOME/… and ${HOME}/… get the home folder; nothing else changes', () => {
+  const h = '/Users/x';
+  assert.equal(expandHome('~', h), h);
+  assert.equal(expandHome('~/karmasuite/karmasuite', h), '/Users/x/karmasuite/karmasuite');
+  assert.equal(expandHome('$HOME/git/claude-memory', h), '/Users/x/git/claude-memory');
+  assert.equal(expandHome('${HOME}/git/ks', h), '/Users/x/git/ks');
+  assert.equal(expandHome('/abs/path', h), '/abs/path');
+  assert.equal(expandHome('~other/x', h), '~other/x');
+  assert.equal(expandHome('$HOMEDIR/x', h), '$HOMEDIR/x');
 });

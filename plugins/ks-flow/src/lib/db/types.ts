@@ -134,6 +134,12 @@ export interface DeviceDoc {
   master?: DeviceMasterStatus | null;
   /** Set by Settings → Devices' Forget: its cards show as removed cards. */
   forgotten?: boolean;
+  /**
+   * The shared memory repo's HEAD after this device's last sync (lib/memory-sync.ts):
+   * another device that lacks it pulls.
+   */
+  memoryHead?: string | null;
+  memoryAt?: string | null;
   /** The data format this device's code writes (lib/versioning.ts SCHEMA_VERSION). */
   schemaVersion?: number;
   /** A clone not on main, or with uncommitted changes (lib/build-info.ts). */

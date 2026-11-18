@@ -3,7 +3,7 @@
 // wins), then the shared KS store (Keychain + ~/.config/ks, lib/ksconfig.ts)
 // for anything still missing, so tokens are set once for every KS plugin.
 import { readFileSync } from 'node:fs';
-import { loadKsLayer } from './ksconfig';
+import { expandHome, loadKsLayer } from './ksconfig';
 
 export function loadEnvFile(path: string): void {
   let raw: string;
@@ -22,7 +22,7 @@ export function loadEnvFile(path: string): void {
     let val = t.slice(eq + 1).trim();
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
       val = val.slice(1, -1);
-    process.env[key] = val;
+    process.env[key] = expandHome(val);
   }
 }
 

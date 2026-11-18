@@ -91,6 +91,11 @@ why in one line, and wait for it before step 2.
   2. **The Inbox on the tailnet, on every Mac:** the "Over the tailnet" switch in the Inbox's Settings (or `"inboxTailscale": true` in `~/.plannotator/config.json`), then `plannotator inbox restart`. It publishes over HTTPS only to the Tailscale account that owns the Mac, never to the internet.
   3. **Link once:** on one Mac `plannotator inbox link --offer --tailscale` (prints a code, valid 10 minutes); on the other `plannotator inbox link <code>`. `plannotator inbox link --list` shows the links.
   - **How long it lasts:** the link stays until `plannotator inbox unlink <machine>`. A Mac that is asleep or offline shows as away, and answers for it wait until it is back. Keep Tailscale running and step 2 on, or the other Mac can't reach this one after a restart.
+- **Shared memory** (`memory`, `memory:project`, `memory:projects`; suggested only with 2+ Macs on the ks-flow board, optional). Claude Code keeps its memory per Mac. With this on it lives in a private GitHub repo, one folder per project, and ks-flow syncs it: a push 2 min after the last change, a pull when another Mac pushed.
+  1. **The repo, once:** the user creates an empty private repo, or you run `gh repo create claude-memory --private` after a yes. Never public: memories describe their work.
+  2. **On each Mac:** ask, then `ks-setup memory init <repo URL> --yes` (clones it to `~/git/claude-memory`; on the first Mac it is seeded), then `ks-setup memory link --yes` for the KarmaSuite checkout. Link moves this Mac's memories in without overwriting the repo's and merges the index, so the second Mac adds its own.
+  3. **Other projects:** `ks-setup memory status` lists this Mac's memory folders still outside the repo. Ask which to share and run `ks-setup memory link <project folder>…`; leave out the ones the user wants on this Mac only.
+  4. Then `ks-setup claude-settings --yes` (the clone writable in the sandbox) and `ks-flow stop && ks-flow start`. New sessions use the repo; open ones keep the old folder until restarted.
 - **ks-flow's store**, when they want the shared Firestore board: they copy the
   service-account key file onto the Mac themselves (never through chat or git)
   and tell you its path; then ask and run

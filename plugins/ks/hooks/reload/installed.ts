@@ -98,7 +98,7 @@ async function declaresName(fs: RootFs, dir: string, name: string): Promise<bool
   return (await readJson<{ name?: string }>(fs, join(dir, '.claude-plugin', 'plugin.json')))?.name === name
 }
 
-/** KS_PROJECT_ROOT_PATH from a ks.env text (last assignment wins, quotes stripped, ~ expanded). */
+/** KS_PROJECT_ROOT_PATH from a ks.env text (last assignment wins, quotes stripped, ~ / $HOME / ${HOME} expanded). */
 export function projectPathFromEnvFile(text: string | null, home: string): string | null {
   if (!text) return null
   let found: string | null = null
@@ -107,7 +107,13 @@ export function projectPathFromEnvFile(text: string | null, home: string): strin
     if (m) found = m[1] ?? null
   }
   if (!found) return null
-  return found.startsWith('~') ? home + found.slice(1) : found
+  return expandHome(found, home)
+}
+
+/** `~/…`, `$HOME/…` or `${HOME}/…` with the home folder put in; anything else unchanged. */
+export function expandHome(v: string, home: string): string {
+  const m = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/.exec(v)
+  return m ? home + v.slice(m[0].length) : v
 }
 
 /** Compare dotted versions numerically (1.0.10 > 1.0.9); non-numeric parts as text. */
@@ -184,7 +190,7 @@ export async function liveRoot(name: string, ctx: RootContext): Promise<string |
     const live: InstalledEntry[] = []
     for (const e of entries) if (e && typeof e.installPath === 'string' && e.installPath && (await fs.isDir(e.installPath))) live.push(e)
     const projectPath =
-      ctx.projectPath !== undefined ? ctx.projectPath : projectPathFromEnvFile(await fs.read(join(ctx.configDir, 'ks.env')), ctx.home)
+      ctx.projectPath !== undefined ? expandHome(ctx.projectPath, ctx.home) : projectPathFromEnvFile(await fs.read(join(ctx.configDir, 'ks.env')), ctx.home)
     const chosen = chooseInstalled(live, ctx.cwd, projectPath || null)
     if (chosen?.installPath) return chosen.installPath
   }

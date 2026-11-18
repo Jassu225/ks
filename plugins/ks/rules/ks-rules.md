@@ -158,3 +158,7 @@ To get something done on another Mac (start a ticket or a session there, restart
 - **The record:** every command and its outcome show on the board's Commands page (`ks-flow commands` in the terminal). Commands carry no free text, so a new session starts with the project-manager prompt or none.
 
 To message a peer, SendMessage `to` its Address exactly. `ks-flow peers --json` gives the same rows as data. Each Mac's daemon publishes its sessions within ~15 s of a change; a Mac whose daemon isn't running shows no sessions.
+
+## Memory
+
+In memory files, write paths in the home folder as `~/…`, never `/Users/<name>/…`. With shared memory on (`ks-setup memory`), every Mac reads the same files, and the home folder differs per Mac (ks-flow also rewrites them before it syncs).

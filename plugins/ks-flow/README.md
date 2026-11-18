@@ -534,6 +534,60 @@ On the new device:
    and the Slack token).
 8. `ks-setup doctor` shows `this device: <name> (<id>); store set up for
    devices`.
+9. **Shared memory**, if the other Macs use it: `ks-setup memory init <repo URL>`
+   and `ks-setup memory link` (below).
+
+### Shared memory
+
+Claude Code keeps its auto memory per Mac (`~/.claude/projects/<path>/memory/`),
+and its docs offer no remote or synced memory. Its `autoMemoryDirectory` setting
+can move a project's memory anywhere, so with several Macs it can live in one
+**private git repo**, cloned on every Mac at `~/git/claude-memory`, one folder
+per project. Optional: off until `ks.KS_MEMORY_DIR` is set.
+
+- **Set up** (`/ks:setup` suggests it from the second device): create an empty
+  private repo once, then on each Mac `ks-setup memory init <repo URL>` (clones
+  it, seeds an empty one, sets `ks.KS_MEMORY_DIR`) and `ks-setup memory link
+  [<project folder>…]` (default: the KarmaSuite checkout).
+- **Linking a project:**
+  - Moves this Mac's memories into `<clone>/<project>/`, never overwriting the
+    repo's, and merges `MEMORY.md`.
+  - Keeps the old folder as `memory.linked-<date>`.
+  - Sets `"autoMemoryDirectory": "~/git/claude-memory/<project>"` in the
+    project's `.claude/settings.local.json`; `ks-setup` carries it into existing
+    worktrees, and `create-worktree` copies it into new ones.
+  - Writes the setting in the `~/` form, so it is the same on every Mac whatever
+    the user name. `ks-setup memory status` lists what is and isn't linked.
+- **Sync, by the daemon** (`src/lib/memory-sync.ts`). No periodic fetch:
+  - **Push:** a watcher on the clone reacts only to a project's `MEMORY.md`, which
+    every memory save or delete updates. Each change (re)starts a 2-min quiet
+    window. Once it passes, the 15 s clock's `memory` job commits everything,
+    pulls (rebase) and pushes, and publishes the new HEAD as
+    `devices/{id}.memoryHead`. A burst of saves (a memory file, then the index,
+    often several) is one commit.
+  - **Pull:** another device's `memoryHead` that this clone lacks, seen by the
+    devices listener the daemon already holds, makes the next tick pull.
+  - **When it starts:** the daemon syncs once at start, for changes made while
+    it was down.
+  - **When it waits:** a memory edited without touching the index goes with the
+    next index change, and a push from outside ks-flow arrives at the next sync.
+- **Home paths:** every Mac reads the same files, and the home folder differs per
+  Mac. Before each commit the sync rewrites `/Users/<name>/…` to `~/…` in the
+  changed memories; `memory link` does it for the ones it moves in, and the KS
+  rules ask agents to write `~/…` in the first place.
+- **Conflicts:** memories are one fact per file, and `MEMORY.md` merges with
+  git's union driver (`.gitattributes`), so index lines added on two Macs at
+  once both stay. A real conflict (one memory changed on both Macs) aborts the
+  rebase, and the sync retries every 2 min. It reaches the Errors page after the
+  3rd failure: resolve it in the clone (`git pull --rebase`).
+- **git runs through the login shell**, as the message board's commands do, so
+  your SSH agent, Keychain or `gh` credentials work under launchd.
+- **Sandbox:** `ks-setup claude-settings` adds the clone to
+  `sandbox.filesystem.allowWrite`, so an agent can delete a stale memory there.
+- **Cloud sessions** (claude.ai/code, routines) start on a fresh machine and
+  keep nothing. To give them the memory, the environment's setup script can
+  clone the repo and set `autoMemoryDirectory`; they don't push back unless it
+  is set up to.
 
 ### Versioning
 

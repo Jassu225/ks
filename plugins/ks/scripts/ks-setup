@@ -45,6 +45,16 @@
 #                                  with Homebrew; only those, after a yes
 #   ks-setup store pocketbase | firestore --project <gcp id> --credentials <key.json>
 #                                  ks-flow's store, written to its per-project .env
+#   ks-setup memory init <git-url> [--dir <path>] [--yes]   optional, suggested once
+#                                  2+ devices share the ks-flow board: clone the private
+#                                  repo that holds Claude's memory for every Mac (default
+#                                  ~/git/claude-memory; an empty one is seeded) and set
+#                                  ks.KS_MEMORY_DIR; ks-flow keeps it in sync
+#   ks-setup memory link [<project dir>...] [--yes]   move a project's memory (default:
+#                                  the KarmaSuite checkout) into the repo, merged, home
+#                                  paths as ~/, and point the project at it
+#                                  (autoMemoryDirectory in .claude/settings.local.json)
+#   ks-setup memory status         the clone, linked projects, local memory not linked
 #
 # Without a terminal (from Claude's Bash tool) every question becomes a printed
 # `!` command to run instead.
@@ -453,7 +463,7 @@ doctor() {
     local dbp="" cred="" fmode="" gproj=""
     if [ -n "$dd" ]; then
       dbp="$(ksc_file_value DB_PROVIDER "$dd/.env" 2>/dev/null || true)"
-      cred="$(ksc_file_value FIRESTORE_CREDENTIALS "$dd/.env" 2>/dev/null || true)"
+      cred="$(ksc_expand_home "$(ksc_file_value FIRESTORE_CREDENTIALS "$dd/.env" 2>/dev/null || true)")"
       fmode="$(ksc_file_value FIRESTORE_MODE "$dd/.env" 2>/dev/null || true)"
       gproj="$(ksc_file_value FIREBASE_PROJECT_ID "$dd/.env" 2>/dev/null || true)"
     fi
@@ -480,6 +490,7 @@ doctor() {
   else check master info 0 "the master needs tmux and Ghostty or Terminal.app" "ks-setup tools --yes tmux"; fi
   plannotator_check
   machines_check "${dd:-}"
+  memory_check "${dd:-}"
   if [ "$(jq -r '.env.KS_MOD_STATUSLINE // empty' "$SETTINGS" 2>/dev/null)" = 1 ]; then check settings:statusline info 1 "statusline split for the ks mod"
   else check settings:statusline info 0 "env KS_MOD_STATUSLINE not set (only claude-ks set it)" "$(cs_fix)"; fi
   statusline_check
@@ -1198,16 +1209,18 @@ sync_worktree_plugins() {
   # The KS status line, when the checkout has it (ks-setup statusline), goes along.
   local sl; sl="$(jq -c '.statusLine // empty' "$src" 2>/dev/null)"
   [ -n "$sl" ] && ! is_ks_statusline "$(jq -r '.command // empty' <<<"$sl")" && sl=""
-  [ "$ep" != "{}" ] || [ -n "$sl" ] || return 0
+  # The shared memory folder (ks-setup memory link), so a worktree's sessions use it too.
+  local am; am="$(jq -c '.autoMemoryDirectory // empty' "$src" 2>/dev/null)"
+  [ "$ep" != "{}" ] || [ -n "$sl" ] || [ -n "$am" ] || return 0
   say "== plugins in the project's worktrees"
   while read -r wt; do
     [ -n "$wt" ] && [ "$wt" != "$proj" ] && [ -d "$wt" ] || continue
     f="$wt/.claude/settings.local.json"
     if [ ! -f "$f" ]; then mkdir -p "$wt/.claude" && echo '{}' >"$f"; fi
-    if jq -e --argjson ep "$ep" --argjson sl "${sl:-null}" \
-      '((.enabledPlugins // {}) | contains($ep)) and ($sl == null or .statusLine == $sl)' "$f" >/dev/null 2>&1; then continue; fi
-    jq --argjson ep "$ep" --argjson sl "${sl:-null}" \
-      '.enabledPlugins = ((.enabledPlugins // {}) + $ep) | if $sl == null then . else .statusLine = $sl end' "$f" >"$f.tmp" \
+    if jq -e --argjson ep "$ep" --argjson sl "${sl:-null}" --argjson am "${am:-null}" \
+      '((.enabledPlugins // {}) | contains($ep)) and ($sl == null or .statusLine == $sl) and ($am == null or .autoMemoryDirectory == $am)' "$f" >/dev/null 2>&1; then continue; fi
+    jq --argjson ep "$ep" --argjson sl "${sl:-null}" --argjson am "${am:-null}" \
+      '.enabledPlugins = ((.enabledPlugins // {}) + $ep) | (if $sl == null then . else .statusLine = $sl end) | (if $am == null then . else .autoMemoryDirectory = $am end)' "$f" >"$f.tmp" \
       && mv "$f.tmp" "$f" && n=$((n + 1)) && say "  updated $wt"
   done < <(git -C "$proj" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
   [ "$n" = 0 ] && say "  every worktree is up to date"
@@ -1316,11 +1329,17 @@ claude_settings() {
   local dwant; dwant="$(printf '%s\n' "${DENY[@]}" | jq -R . | jq -s .)"
   local dadd; dadd="$(jq --argjson w "$dwant" '$w - (.permissions.deny // [])' "$SETTINGS")"
   local envset; envset="$(jq -r '.env.KS_MOD_STATUSLINE // empty' "$SETTINGS")"
-  if [ "$(jq length <<<"$add")" = 0 ] && [ "$(jq length <<<"$dadd")" = 0 ] && [ "$envset" = 1 ]; then
+  # Shared memory on (ks-setup memory): its clone writable inside the sandbox, so
+  # an agent can remove a stale memory there.
+  local mwant='[]' mdir
+  if sandbox_enabled && mdir="$(memory_dir)"; then mwant="$(jq -nc --arg d "$mdir" '[$d]')"; fi
+  local madd; madd="$(jq --argjson w "$mwant" '$w - (.sandbox.filesystem.allowWrite // [])' "$SETTINGS")"
+  if [ "$(jq length <<<"$add")" = 0 ] && [ "$(jq length <<<"$dadd")" = 0 ] && [ "$(jq length <<<"$madd")" = 0 ] && [ "$envset" = 1 ]; then
     say "~/.claude/settings.json already has everything"; return 0
   fi
   say "To add to $SETTINGS:"
   [ "$(jq length <<<"$add")" = 0 ] || say "  sandbox.excludedCommands: $(jq -r 'join(", ")' <<<"$add")"
+  [ "$(jq length <<<"$madd")" = 0 ] || say "  sandbox.filesystem.allowWrite: $(jq -r 'join(", ")' <<<"$madd")  (the shared memory clone)"
   [ "$(jq length <<<"$dadd")" = 0 ] || say "  permissions.deny: $(jq -r 'join(", ")' <<<"$dadd")  (the agent can't read the Keychain)"
   [ "$envset" = 1 ] || say "  env.KS_MOD_STATUSLINE = \"1\""
   sandbox_enabled || say "  (sandbox off: no commands to exclude)"
@@ -1330,7 +1349,8 @@ claude_settings() {
   fi
   cp "$SETTINGS" "$SETTINGS.bak-ks"
   local tmp="$SETTINGS.tmp.$$"
-  jq --argjson a "$add" --argjson d "$dadd" '(if ($a | length) > 0 then .sandbox.excludedCommands = ((.sandbox.excludedCommands // []) + $a) else . end)
+  jq --argjson a "$add" --argjson d "$dadd" --argjson m "$madd" '(if ($a | length) > 0 then .sandbox.excludedCommands = ((.sandbox.excludedCommands // []) + $a) else . end)
+     | (if ($m | length) > 0 then .sandbox.filesystem.allowWrite = ((.sandbox.filesystem.allowWrite // []) + $m) else . end)
      | .permissions.deny = ((.permissions.deny // []) + $d)
      | .env.KS_MOD_STATUSLINE = "1"' "$SETTINGS" >"$tmp" && mv "$tmp" "$SETTINGS" \
     && say "updated (backup: $SETTINGS.bak-ks)"
@@ -1389,7 +1409,7 @@ store() {
     pocketbase) set_env_line "$dd/.env" DB_PROVIDER pocketbase ;;
     firestore)
       [ -n "$gcp" ] && [ -n "$cred" ] || { say "usage: ks-setup store firestore --project <gcp id> --credentials <key.json>"; return 2; }
-      [ -r "$cred" ] || { say "can't read $cred"; return 1; }
+      [ -r "$(ksc_expand_home "$cred")" ] || { say "can't read $cred"; return 1; }
       set_env_line "$dd/.env" DB_PROVIDER firestore
       set_env_line "$dd/.env" FIRESTORE_MODE cloud
       set_env_line "$dd/.env" FIREBASE_PROJECT_ID "$gcp"
@@ -1397,6 +1417,215 @@ store() {
     *) say "usage: ks-setup store pocketbase | firestore --project <gcp id> --credentials <key.json>"; return 2 ;;
   esac
   say "ks-flow store for $proj → $kind ($dd/.env). Restart:  ks-flow stop && ks-flow start && ks-flow open"
+}
+
+# ── shared memory (optional; suggested from 2 devices) ─────────────────────
+# Claude Code keeps auto memory per Mac (~/.claude/projects/<path slug>/memory).
+# With ks.KS_MEMORY_DIR set it lives in a private git repo instead, one folder
+# per project (named after the project's main checkout folder), which the
+# project names in autoMemoryDirectory (its .claude/settings.local.json, in the
+# ~/ form, so the same on every Mac whatever the user name). ks-flow's daemon
+# syncs the clone (src/lib/memory-sync.ts): a push 2 min after the last change
+# to a project's MEMORY.md, a pull when another Mac pushed.
+MEMORY_DEFAULT_DIR="$HOME/git/claude-memory"
+memory_dir() { # the clone (KS_MEMORY_DIR, home folder expanded by ksc_get); exit 1 when unset
+  local d; d="$(ksc_get KS_MEMORY_DIR 2>/dev/null)" && [ -n "$d" ] || return 1
+  printf '%s' "$d"
+}
+tilde_path() { case "$1" in "$HOME") echo "~" ;; "$HOME/"*) echo "~/${1#"$HOME"/}" ;; *) echo "$1" ;; esac; }
+claude_slug() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
+main_checkout() { # a folder → its repository's main checkout (a worktree's too); else the folder
+  # The folder as given when it is the main checkout itself: Claude names a
+  # project's memory folder after that path, and git returns the physical one.
+  local c m; c="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || { (cd "$1" && pwd); return; }
+  m="$(cd "$(dirname "$c")" && pwd -P)"
+  if [ "$(cd "$1" && pwd -P)" = "$m" ]; then (cd "$1" && pwd); else printf '%s\n' "$m"; fi
+}
+memory_tilde() { # stdin → stdout, the home folder written as ~ (/Users/x/a → ~/a)
+  local h; h="$(printf '%s' "$HOME" | sed 's/[]#.[\*^$]/\\&/g')"
+  sed "s#$h/#~/#g"
+}
+memory_readme() {
+  printf '%s\n' '# Claude memory' '' \
+    "Claude Code's auto memory for every Mac, one folder per project (named after the" \
+    "project's main checkout folder). Each project points at its folder with" \
+    '`autoMemoryDirectory` in its `.claude/settings.local.json` (`ks-setup memory link`),' \
+    'and ks-flow keeps this clone in sync: a push 2 min after the last change to a' \
+    "project's \`MEMORY.md\`, and a pull when another Mac pushes." '' \
+    'Home paths are written as `~/…`: the home folder differs per Mac.'
+}
+memory_push() { # clone: pull (rebase) when it has an upstream, then push
+  local d="$1"
+  if git -C "$d" rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
+    git -C "$d" pull -q --rebase --autostash || { say "git pull failed in $d: resolve it there (git status)"; return 1; }
+    git -C "$d" push -q || { say "git push failed in $d"; return 1; }
+  else
+    git -C "$d" push -q -u origin HEAD || { say "git push failed in $d"; return 1; }
+  fi
+}
+memory_commit() { # clone message: commit everything, then push
+  local d="$1"
+  git -C "$d" add -A
+  git -C "$d" diff --cached --quiet && return 0
+  git -C "$d" commit -q -m "$2" && memory_push "$d"
+}
+memory_seed() { # clone: the union merge for the indexes, and the README
+  local d="$1" ch=0
+  git -C "$d" rev-parse -q --verify HEAD >/dev/null 2>&1 || git -C "$d" symbolic-ref HEAD refs/heads/main
+  grep -qx 'MEMORY.md merge=union' "$d/.gitattributes" 2>/dev/null || { echo 'MEMORY.md merge=union' >>"$d/.gitattributes"; ch=1; }
+  [ -f "$d/README.md" ] || { memory_readme >"$d/README.md"; ch=1; }
+  # Only memories travel: Finder's .DS_Store never (and out again if one got in).
+  grep -qx '.DS_Store' "$d/.gitignore" 2>/dev/null || { echo '.DS_Store' >>"$d/.gitignore"; ch=1; }
+  if [ -n "$(git -C "$d" ls-files -- '*.DS_Store' '.DS_Store' 2>/dev/null)" ]; then
+    git -C "$d" ls-files -z -- '*.DS_Store' '.DS_Store' | xargs -0 git -C "$d" rm -q --cached --
+    ch=1
+  fi
+  [ "$ch" = 1 ] || return 0
+  memory_commit "$d" "memory: set up"
+}
+memory_init() {
+  local url="" dir="$MEMORY_DEFAULT_DIR" o
+  while [ $# -gt 0 ]; do
+    case "$1" in --yes) YES=1 ;; --dir) dir="${2:-}"; shift ;; -*) say "unknown option $1"; return 2 ;; *) url="$1" ;; esac
+    shift
+  done
+  dir="$(ksc_expand_home "$dir")"
+  if [ -d "$dir/.git" ]; then
+    o="$(git -C "$dir" remote get-url origin 2>/dev/null)"
+    if [ -n "$url" ] && [ "$o" != "$url" ]; then say "$dir is already a clone of $o, not $url"; return 1; fi
+    say "$dir is already a clone of $o"
+  else
+    [ -n "$url" ] || { say "usage: ks-setup memory init <git URL of your private repo> [--dir <path>] [--yes]"; return 2; }
+    if [ -e "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then say "$dir exists and is not empty"; return 1; fi
+    say "To clone $url into $dir and set ks.KS_MEMORY_DIR (Claude's memory, shared by your Macs)."
+    if ! ask "Apply?"; then
+      interactive || say "Once you agree:  ks-setup memory init $url$([ "$dir" != "$MEMORY_DEFAULT_DIR" ] && echo " --dir $(tilde_path "$dir")") --yes"
+      return 1
+    fi
+    mkdir -p "$(dirname "$dir")"
+    git clone -q "$url" "$dir" 2>/dev/null || { say "git clone $url failed (the repo exists, and git can reach it?)"; return 1; }
+  fi
+  memory_seed "$dir" || return 1
+  # Stored in the ~/ form: the same value on every machine.
+  "$SCRIPT_DIR/ks-config" set ks.KS_MEMORY_DIR "$(tilde_path "$dir")" >/dev/null && say "ks.KS_MEMORY_DIR = $(tilde_path "$dir")"
+  say "Next: ks-setup memory link (moves this Mac's memories in, points the project at the repo); then ks-flow stop && ks-flow start, so ks-flow syncs it."
+}
+memory_merge_index() { # this Mac's index → the repo's: lines whose memory it doesn't list yet
+  local line link
+  [ -n "$(tail -c1 "$2")" ] && echo >>"$2"
+  while IFS= read -r line; do
+    case "$line" in "- ["*) ;; *) continue ;; esac
+    link="$(printf '%s\n' "$line" | sed -E 's/^- \[[^]]*\]\(([^)]*)\).*/\1/')"
+    [ -n "$link" ] && grep -qF "($link)" "$2" && continue
+    printf '%s\n' "$line" | memory_tilde >>"$2"
+  done <"$1"
+}
+memory_link_one() { # clone main-checkout
+  local clone="$1" proj="$2" name dest src f base moved=0 kept=0 idx=new s want
+  name="$(basename "$proj")"; dest="$clone/$name"
+  src="$HOME/.claude/projects/$(claude_slug "$proj")/memory"
+  mkdir -p "$dest"
+  if [ -n "$(find "$src" -maxdepth 1 -type f -name '*.md' 2>/dev/null | head -1)" ]; then
+    while IFS= read -r f; do
+      base="$(basename "$f")"
+      if [ "$base" = MEMORY.md ] && [ -f "$dest/MEMORY.md" ]; then memory_merge_index "$f" "$dest/MEMORY.md"; idx=merged
+      elif [ -e "$dest/$base" ]; then
+        memory_tilde <"$f" | cmp -s - "$dest/$base" || { say "  $name/$base: kept the repo's (this Mac's differs and stays in the backup folder)"; kept=$((kept + 1)); }
+      else memory_tilde <"$f" >"$dest/$base"; moved=$((moved + 1)); [ "$base" = MEMORY.md ] && idx=copied; fi
+    done < <(find "$src" -maxdepth 1 -type f -name '*.md')
+    mv "$src" "$src.linked-$(date +%Y%m%d-%H%M%S)"
+  fi
+  # The old folder becomes a link to the repo's: a session started before the
+  # switch still has the old path in its instructions and writes there. Claude
+  # may have recreated it empty (or with only Finder's .DS_Store): replaced too.
+  if [ ! -L "$src" ]; then
+    if [ -d "$src" ] && [ -z "$(find "$src" -mindepth 1 ! -name .DS_Store 2>/dev/null | head -1)" ]; then rm -rf "$src"; fi
+    if [ ! -e "$src" ]; then mkdir -p "$(dirname "$src")" && ln -s "$dest" "$src" && say "  $src → $(tilde_path "$dest") (link, for sessions started before the switch)"; fi
+  fi
+  [ -f "$dest/MEMORY.md" ] || printf '# Memory Index\n' >"$dest/MEMORY.md"
+  s="$proj/.claude/settings.local.json"; want="$(tilde_path "$dest")"
+  mkdir -p "$proj/.claude"; [ -f "$s" ] || echo '{}' >"$s"
+  jq --arg d "$want" '.autoMemoryDirectory = $d' "$s" >"$s.tmp.$$" && mv "$s.tmp.$$" "$s"
+  say "  $name: $moved moved in, $kept kept, index $idx; autoMemoryDirectory = $want"
+}
+memory_link() {
+  local dirs=() a d proj src n names=""
+  for a in "$@"; do case "$a" in --yes) YES=1 ;; -*) say "unknown option $a"; return 2 ;; *) dirs+=("$(ksc_expand_home "$a")") ;; esac; done
+  local clone; clone="$(memory_dir)" && [ -d "$clone/.git" ] || { say "No shared memory clone yet: ks-setup memory init <git URL> first"; return 1; }
+  if [ ${#dirs[@]} = 0 ]; then
+    d="$(ksc_project_root 2>/dev/null)" || { say "usage: ks-setup memory link <project folder>... [--yes]"; return 2; }
+    dirs=("$d")
+  fi
+  for d in "${dirs[@]}"; do
+    [ -d "$d" ] || { say "not a folder: $d"; return 1; }
+    proj="$(main_checkout "$d")"
+    src="$HOME/.claude/projects/$(claude_slug "$proj")/memory"
+    n="$(find "$src" -maxdepth 1 -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+    say "$proj → $(tilde_path "$clone")/$(basename "$proj"): $n memory file(s) of this Mac moved in (nothing overwritten, MEMORY.md merged, home paths as ~/; the old folder kept as memory.linked-<date>), autoMemoryDirectory set in its .claude/settings.local.json"
+  done
+  if ! ask "Apply?"; then
+    interactive || say "Once you agree:  ks-setup memory link$(printf ' %q' "${dirs[@]}") --yes"
+    return 1
+  fi
+  git -C "$clone" pull -q --rebase --autostash 2>/dev/null || true
+  for d in "${dirs[@]}"; do
+    proj="$(main_checkout "$d")"
+    memory_link_one "$clone" "$proj" || return 1
+    names="${names:+$names, }$(basename "$proj")"
+  done
+  memory_commit "$clone" "memory: link $names from $(hostname -s)" || return 1
+  sync_worktree_plugins
+  say "Applies to new Claude sessions in those projects."
+}
+memory_unlinked() { # this Mac's per-project memory folders that still hold files
+  local d n
+  for d in "$HOME"/.claude/projects/-Users-*/memory; do
+    [ -d "$d" ] && [ ! -L "$d" ] || continue
+    n="$(find "$d" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ')"
+    [ "$n" -gt 0 ] && printf '%s (%s file(s))\n' "$(basename "$(dirname "$d")")" "$n"
+  done
+  return 0
+}
+memory_status() {
+  local clone p; clone="$(memory_dir)" || { say "Shared memory is off (ks.KS_MEMORY_DIR unset): ks-setup memory init <git URL>"; return 0; }
+  say "clone: $clone ($(git -C "$clone" remote get-url origin 2>/dev/null || echo 'no remote'))"
+  say "  commits not pushed: $(git -C "$clone" rev-list --count '@{u}..HEAD' 2>/dev/null || echo '? (no upstream)'), files not committed: $(git -C "$clone" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+  say "projects in the repo:"
+  for p in "$clone"/*/; do [ -d "$p" ] && say "  $(basename "$p"): $(find "$p" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ') file(s)"; done
+  say "memory on this Mac only:"
+  memory_unlinked | sed 's/^/  /'
+}
+memory_check() { # ks-flow data dir (or "")
+  local dd="$1" n clone ahead proj s want un
+  n="$( [ -n "$dd" ] && jq -r '.deviceCount // 0' "$dd/device.json" 2>/dev/null || echo 0)"
+  if ! clone="$(memory_dir)"; then
+    if [ "${n:-0}" -ge 2 ] 2>/dev/null; then
+      check memory info 0 "Claude's memory is kept per Mac; with $n Macs on the board, a private git repo can hold one memory for all of them (optional)" \
+        "in Claude: /ks:setup, step Shared memory (create a private repo, then ks-setup memory init <url> and ks-setup memory link)"
+    fi
+    return 0
+  fi
+  if [ ! -d "$clone/.git" ]; then check memory warn 0 "ks.KS_MEMORY_DIR is $clone, not a git clone" "ks-setup memory init <git URL> --dir $(tilde_path "$clone")"; return 0; fi
+  ahead="$(git -C "$clone" rev-list --count '@{u}..HEAD' 2>/dev/null || echo x)"
+  if [ "$ahead" = x ]; then check memory warn 0 "the shared memory clone $clone has no upstream" "cd $clone && git push -u origin HEAD"
+  elif [ "$ahead" != 0 ]; then check memory warn 0 "the shared memory clone has $ahead commit(s) not pushed (ks-flow pushes 2 min after the last change; the board's Errors page says why if this stays)" "cd $clone && git pull --rebase && git push"
+  else check memory info 1 "shared memory: $(tilde_path "$clone") ($(git -C "$clone" remote get-url origin 2>/dev/null))"; fi
+  if proj="$(ksc_project_root 2>/dev/null)"; then
+    s="$proj/.claude/settings.local.json"; want="$(tilde_path "$clone")/$(basename "$proj")"
+    if [ "$(jq -r '.autoMemoryDirectory // empty' "$s" 2>/dev/null)" = "$want" ]; then check memory:project info 1 "the KarmaSuite checkout keeps its memory in $want"
+    else check memory:project warn 0 "the KarmaSuite checkout's memory is not in the shared repo" "ks-setup memory link"; fi
+  fi
+  un="$(memory_unlinked | paste -sd ';' - | sed 's/;/; /g')"
+  [ -z "$un" ] || check memory:projects info 0 "memory kept on this Mac only: $un" "ks-setup memory link <that project's folder> (only the projects you want on every Mac)"
+}
+memory_cmd() {
+  local sub="${1:-status}"; [ $# -gt 0 ] && shift
+  case "$sub" in
+    init) memory_init "$@" ;;
+    link) memory_link "$@" ;;
+    status) memory_status ;;
+    *) say "usage: ks-setup memory init <git URL> [--dir <path>] | link [<project folder>...] | status"; return 2 ;;
+  esac
 }
 
 sub="${1:-doctor}"; [ $# -gt 0 ] && shift
@@ -1412,6 +1641,7 @@ case "$sub" in
   update) update_cmd "$@" ;;
   shims) shims_refresh ;;
   deps) deps_cmd "$@" ;;
+  memory) memory_cmd "$@" ;;
   -h|--help|help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0" ;;
   *) echo "ks-setup: unknown command $sub (try: ks-setup help)" >&2; exit 2 ;;
 # `exit` on the same line as `esac`: `ks-setup update` may rewrite this file

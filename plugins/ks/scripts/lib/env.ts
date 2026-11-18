@@ -87,10 +87,21 @@ export function storeValues(env: NodeJS.ProcessEnv, opts: StoreOptions = {}): Re
     } else {
       if (!files.has(k.namespace)) files.set(k.namespace, parseEnvFile(path.join(configDir, `${k.namespace}.env`)));
       v = files.get(k.namespace)![k.key] || undefined;
+      if (v !== undefined) v = expandHome(v);
     }
     if (v !== undefined) out[k.key] = v;
   }
   return out;
+}
+
+/**
+ * A path in the home folder may be stored as `~/…`, `$HOME/…` or `${HOME}/…`
+ * (the same on every machine whatever the user name): the home folder put in.
+ * Anything else is returned unchanged.
+ */
+export function expandHome(v: string, home = homedir()): string {
+  const m = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/.exec(v);
+  return m ? home + v.slice(m[0].length) : v;
 }
 
 /**
@@ -102,6 +113,11 @@ export function storeValues(env: NodeJS.ProcessEnv, opts: StoreOptions = {}): Re
 export function loadEnv(): void {
   try {
     Object.assign(process.env, storeValues(process.env));
+    // A plain value set in the real environment as ~/… or $HOME/… too.
+    for (const k of readKeys()) {
+      const v = process.env[k.key];
+      if (!k.secret && v) process.env[k.key] = expandHome(v);
+    }
   } catch {
     // No key list or no store: the legacy files below still apply.
   }
