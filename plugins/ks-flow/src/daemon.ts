@@ -2053,12 +2053,12 @@ function startMemory(): void {
   }
   memory = new MemorySync(MEMORY_DIR, loginGit, { home: homedir(), label: SELF.defaultName });
   watchMemory();
-  log(`memory: sharing ${MEMORY_DIR} (a sync 2 min after the last index change, and when another device pushes)`);
+  log(`memory: sharing ${MEMORY_DIR} (a sync 2 min after the last change in it, and when another device pushes)`);
 }
 
 function watchMemory(): void {
   try {
-    // One FSEvents stream for the whole clone; only `<project>/MEMORY.md` counts (MemorySync.changed).
+    // One FSEvents stream for the whole clone; every file counts but `.git/` and `.DS_Store` (MemorySync.changed).
     memoryWatcher = watch(MEMORY_DIR, { recursive: true }, (_event, file) => {
       if (file && memory) memory.changed(String(file), Date.now());
     });

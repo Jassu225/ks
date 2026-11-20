@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { changedFiles, homeToTilde, isIndexPath, MemorySync, plainGit, QUIET_MS, RETRY_MS, whatToDo } from './memory-sync.js';
+import { changedFiles, homeToTilde, isMemoryPath, MemorySync, plainGit, QUIET_MS, RETRY_MS, whatToDo } from './memory-sync.js';
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, env: ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
@@ -32,11 +32,16 @@ function setup(): { remote: string; a: string; b: string; home: string } {
 
 const sync = (dir: string, home: string, label = 'A') => new MemorySync(dir, plainGit, { home, label });
 
-test('isIndexPath: only a project folder MEMORY.md', () => {
-  assert.equal(isIndexPath('ks/MEMORY.md'), true);
-  assert.equal(isIndexPath('ks/feedback_x.md'), false);
-  assert.equal(isIndexPath('MEMORY.md'), false);
-  assert.equal(isIndexPath('ks/sub/MEMORY.md'), false);
+test('isMemoryPath: any file in the clone but git’s own and Finder’s', () => {
+  assert.equal(isMemoryPath('ks/MEMORY.md'), true);
+  assert.equal(isMemoryPath('ks/feedback_x.md'), true);
+  assert.equal(isMemoryPath('README.md'), true);
+  assert.equal(isMemoryPath('ks/sub/note.md'), true);
+  assert.equal(isMemoryPath('.git/index'), false);
+  assert.equal(isMemoryPath('.git'), false);
+  assert.equal(isMemoryPath('.git/refs/heads/main'), false);
+  assert.equal(isMemoryPath('ks/.DS_Store'), false);
+  assert.equal(isMemoryPath(''), false);
 });
 
 test('homeToTilde: the home folder, never a longer name that starts with it', () => {
@@ -58,14 +63,28 @@ test('whatToDo: the quiet window, a wanted pull, the retry wait', () => {
   assert.equal(whatToDo({ dirtySince: null, pullWanted: false, retryAt: 0 }, 9e12), null);
 });
 
-test('changed: an index change (re)starts the window; another file alone does not', () => {
+test('changed: any memory file (re)starts the window; git’s own files do not', () => {
   const m = sync('/nowhere', '/h');
   m.state.pullWanted = false;
-  m.changed('ks/feedback_x.md', 10);
+  m.changed('.git/index', 5);
   assert.equal(m.state.dirtySince, null);
-  m.changed('ks/MEMORY.md', 10);
+  m.changed('ks/feedback_x.md', 10);
+  assert.equal(m.state.dirtySince, 10);
   m.changed('ks/MEMORY.md', 50);
   assert.equal(m.state.dirtySince, 50);
+});
+
+test('sync: a memory edited without touching the index is pushed', async () => {
+  const { a, home } = setup();
+  writeFileSync(join(a, 'ks', 'feedback_y.md'), 'one fact\n');
+  const ma = sync(a, home);
+  ma.state.pullWanted = false;
+  ma.changed('ks/feedback_y.md', 0);
+  const out = await ma.tick(QUIET_MS);
+  assert.ok(out && out.committed === 1 && out.changed);
+  // The sync's own writes come back through the watcher: a clean tree, no second commit.
+  ma.changed('ks/feedback_y.md', QUIET_MS);
+  assert.equal(await ma.tick(2 * QUIET_MS), null);
 });
 
 test('sync: A pushes its memory (home path as ~), B pulls it on seeing A’s head', async () => {

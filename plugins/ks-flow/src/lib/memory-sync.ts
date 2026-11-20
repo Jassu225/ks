@@ -3,11 +3,13 @@
  * project, that every Mac's Claude Code reads through `autoMemoryDirectory`
  * (`ks-setup memory init|link`). This keeps it in sync, with no periodic fetch:
  *
- * - push: a change to a project's index (`<project>/MEMORY.md`, which every
- *   memory save or delete updates) marks the repo dirty; each further change
- *   restarts a 2-min quiet window; once it passes, the daemon's 15 s clock runs
- *   one sync (commit everything, pull --rebase, push) and publishes the new
- *   HEAD as devices/{self}.memoryHead.
+ * - push: a change to any file in the clone (a memory, a project's index, the
+ *   README; not git's own `.git/` or Finder's `.DS_Store`) marks the repo dirty;
+ *   each further change restarts a 2-min quiet window; once it passes, the
+ *   daemon's 15 s clock runs one sync (commit everything, pull --rebase, push)
+ *   and publishes the new HEAD as devices/{self}.memoryHead. The sync's own
+ *   pull and commit touch files too: the next window then finds a clean tree
+ *   and stops at `git status`, with no network.
  * - pull: another device's memoryHead that this clone doesn't have yet (seen
  *   through the devices listener the daemon already holds) asks for a sync.
  * - the daemon's start asks for one too (changes made while it was down).
@@ -20,7 +22,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** Quiet time after the last index change before a sync. */
+/** Quiet time after the last change before a sync. */
 export const QUIET_MS = 120_000;
 /** A failed sync is tried again this much later. */
 export const RETRY_MS = 120_000;
@@ -41,9 +43,11 @@ export const plainGit: GitRun = (args, cwd) =>
     });
   });
 
-/** A watched path (relative to the clone) that marks the repo dirty: a project's index. */
-export function isIndexPath(rel: string): boolean {
-  return /^[^/\\]+[/\\]MEMORY\.md$/.test(rel);
+/** A watched path (relative to the clone) that marks the repo dirty: any file but git's own and Finder's. */
+export function isMemoryPath(rel: string): boolean {
+  const parts = rel.split(/[/\\]/).filter(Boolean);
+  if (!parts.length || parts[0] === '.git') return false;
+  return parts[parts.length - 1] !== '.DS_Store';
 }
 
 /** The home folder written as `~`: `/Users/x/git/ks` → `~/git/ks`. */
@@ -54,7 +58,7 @@ export function homeToTilde(text: string, home: string): string {
 }
 
 export interface SyncState {
-  /** The first index change not yet synced; reset by each further change. */
+  /** The first change not yet synced; reset by each further change. */
   dirtySince: number | null;
   /** A full sync (pull included) is wanted: daemon start, or another device pushed. */
   pullWanted: boolean;
@@ -89,9 +93,9 @@ export class MemorySync {
     private readonly opts: { home: string; label: string },
   ) {}
 
-  /** The watcher saw `rel` change: an index change (re)starts the quiet window. */
+  /** The watcher saw `rel` change: a change to a memory file (re)starts the quiet window. */
   changed(rel: string, now: number): void {
-    if (isIndexPath(rel)) this.state.dirtySince = now;
+    if (isMemoryPath(rel)) this.state.dirtySince = now;
   }
 
   /** Another device published `head`; a sync is wanted unless this clone already has it. */

@@ -2,6 +2,8 @@
 
 ## 2026-11-20
 
+- **Shared memory syncs on any file change (ks-flow 0.9.2):** the daemon's watcher on the memory clone now reacts to every file in it, not only each project's `MEMORY.md`, so a memory edited without touching the index is pushed 2 min later instead of waiting for the next index change. git's own `.git/` and Finder's `.DS_Store` are ignored. The sync's own pull and commit start a window too, which finds a clean tree and stops at `git status`, with no network.
+
 - **Workflow pulls ks-docs before using it (ks 1.4.2):** Phase 1 (`/ks:user-context-generator`) and Phase 10's "Update ks-docs" step now start with `git -C ~/git/ks-docs pull --ff-only origin main`, so they see concepts pushed from other Macs. If the pull fails, Phase 1 carries on with the local copy; the docs step stops and asks, so the writer never works on a stale clone. The docs step also commits and pushes its ks-docs changes itself now, with the user's go-ahead and before Phase 10 closes (only the `content/` files it wrote, by path), and records the commit as `docs.commit` in `state.yaml`.
 
 ## 2026-11-18

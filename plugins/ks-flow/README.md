@@ -559,9 +559,9 @@ per project. Optional: off until `ks.KS_MEMORY_DIR` is set.
   - Writes the setting in the `~/` form, so it is the same on every Mac whatever
     the user name. `ks-setup memory status` lists what is and isn't linked.
 - **Sync, by the daemon** (`src/lib/memory-sync.ts`). No periodic fetch:
-  - **Push:** a watcher on the clone reacts only to a project's `MEMORY.md`, which
-    every memory save or delete updates. Each change (re)starts a 2-min quiet
-    window. Once it passes, the 15 s clock's `memory` job commits everything,
+  - **Push:** a watcher on the whole clone reacts to any file in it (a memory, a
+    project's `MEMORY.md`, the README), never to git's own `.git/` or Finder's
+    `.DS_Store`. Each change (re)starts a 2-min quiet window. Once it passes, the 15 s clock's `memory` job commits everything,
     pulls (rebase) and pushes, and publishes the new HEAD as
     `devices/{id}.memoryHead`. A burst of saves (a memory file, then the index,
     often several) is one commit.
@@ -569,8 +569,9 @@ per project. Optional: off until `ks.KS_MEMORY_DIR` is set.
     devices listener the daemon already holds, makes the next tick pull.
   - **When it starts:** the daemon syncs once at start, for changes made while
     it was down.
-  - **When it waits:** a memory edited without touching the index goes with the
-    next index change, and a push from outside ks-flow arrives at the next sync.
+  - **When it waits:** a push from outside ks-flow arrives at the next sync. The
+    sync's own pull and commit touch files too; the window they start finds a
+    clean tree and stops at `git status`, with no network.
 - **Home paths:** every Mac reads the same files, and the home folder differs per
   Mac. Before each commit the sync rewrites `/Users/<name>/…` to `~/…` in the
   changed memories; `memory link` does it for the ones it moves in, and the KS
