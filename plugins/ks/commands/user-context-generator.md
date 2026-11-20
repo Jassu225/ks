@@ -18,6 +18,8 @@ Example: `workflow/jaswanth/basic-egl-optimisation` → `workflow/jaswanth/basic
 
 Follow these steps in order. **Each step is iterative** - keep asking clarifying questions until the user explicitly says they are satisfied or asks to move to the next step.
 
+**Pull the knowledge base first:** before Step 1, if `~/git/ks-docs` exists, run `git -C ~/git/ks-docs pull --ff-only origin main` as its own Bash command, so the concepts pushed from other devices are here. It runs inside the sandbox (`-C` skips the `git` exclusion), which works through the checkout's write grant for `~/git/ks-docs`. If it fails (offline, not on `main`, can't fast-forward, or `Operation not permitted`: that grant is missing), tell the user in one line, with `! git -C ~/git/ks-docs pull --ff-only origin main` to run themselves, and carry on with the local copy.
+
 **Business context:** when the user names a feature, page, term, rule or integration, look it up in the knowledge base (grep `~/git/ks-docs/content/`, read the matching concepts; `content/domain/terminology.md` has the acronyms). Use it to understand what they mean and ask sharper questions, for example who uses the page or which rule applies. The document records what the user says: don't copy concepts into it, and ask rather than assume when a concept and the user disagree.
 
 ### Step 1: Gather Customer Problem

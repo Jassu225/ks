@@ -5,6 +5,15 @@ Ideas agreed on but not scheduled. Newest first. Remove an entry when it ships
 
 ## ks-flow
 
+- **Keep each Mac's ks-docs clone current.** Nothing pulls `~/git/ks-docs`
+  today, so docs committed on one Mac stay invisible to the other Mac's agents
+  until someone pulls there by hand. Add a `docs` job on the daemon's 15 s
+  clock (about every 30 minutes, and once at start) that runs
+  `git pull --ff-only` only when the clone is on `main` with a clean tree. With
+  a docs writer's changes waiting for review, it skips that round. It never
+  commits or pushes. A pull that can't fast-forward goes to the Errors page
+  after its 3rd failure. It can reuse `memory-sync.ts`'s git runner
+  (`LOGIN_PRELUDE`, so SSH and `gh` credentials work under launchd).
 - **Board tabs share one set of Firestore listeners.** Today every open board
   tab's live stream (`/api/store/live`) attaches its own listeners (about 11
   queries across the board, Briefing and Activity scopes). Firestore bills per
@@ -35,6 +44,20 @@ Ideas agreed on but not scheduled. Newest first. Remove an entry when it ships
   on the 8443 link door).
 
 ## ks
+
+- **Load ks-docs' `CLAUDE.md` for agents that work in ks-docs.** Docs writers
+  skip it, even though the writer's prompt says to read it first. Claude Code
+  loads a nested `CLAUDE.md` only under the session's working directory, and
+  `~/git/ks-docs` lies outside the karmasuite checkout, so it is never loaded
+  on its own (a `content/CLAUDE.md` would not load either). Two options:
+  - **A ks hook (preferred):** the first time an agent reads, greps or edits
+    under `~/git/ks-docs` (tracked per agent id), add the rulebook to its
+    context. It acts like the native nested load, reaches subagents and plain
+    `claude` sessions, and costs nothing in sessions that never touch ks-docs.
+  - **`claude-ks` launcher:** `--add-dir ~/git/ks-docs` with
+    `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`. Built-in, but it loads
+    the rulebook into every karmasuite session at start, and only in
+    `claude-ks` sessions.
 
 - **Try `linear issue batch-update --state` on real tickets.** The single-ticket
   fix that keeps an issue's place in the manual order is verified (KAR-13002);

@@ -31,7 +31,7 @@ You are the **orchestrator**. You delegate deep analysis and heavy reading to su
 **Output:**
 - Implemented code changes in the KarmaSuite codebase
 - Updated plan (`implementation-plan-{NN}.md`) with completed checkboxes
-- Knowledge-base updates in `~/git/ks-docs/content/` once the change is released (uncommitted, for the user to review), recorded as `docs` on Phase 10's iteration in `state.yaml`. See [Update ks-docs](#update-ks-docs)
+- Knowledge-base updates in `~/git/ks-docs/content/` once the change is released (offered to the user for review, then committed and pushed before Phase 10 closes), recorded as `docs` on Phase 10's iteration in `state.yaml`. See [Update ks-docs](#update-ks-docs)
 
 Example invocation:
 ```
@@ -371,7 +371,8 @@ KarmaSuite's shared knowledge base is `~/git/ks-docs`, a bundle in the Open Know
 0. **Check it's released.** The user's word is the trigger: a merged PR alone may not be deployed yet. Confirm each PR of this iteration is merged (`gh pr view <number> --json state,mergedAt`, `state` = `MERGED`). If one isn't, tell the user and wait; don't write anything. Then `git fetch origin`: the released code is `origin/main`.
 1. **Check it's there and clear.**
    - If `~/git/ks-docs/content/index.md` doesn't exist, skip the step and record `status: "unavailable"` (step 4).
-   - Run `git status --porcelain -- content` in `~/git/ks-docs` (only `content/` counts: the user's own edits to the tooling don't block). If it prints anything (modified, staged or untracked files), earlier changes are still waiting for the user's review, and ks-docs' `CLAUDE.md` ("Before writing: no unreviewed changes") forbids new writes. Don't spawn the writer. List those files for the user, ask them to review, mark verified and commit, and record `status: "skipped"` with `note: "ks-docs has unreviewed changes"`. Re-run this step once they've committed.
+   - Run `git status --porcelain -- content` in `~/git/ks-docs` (only `content/` counts: the user's own edits to the tooling don't block). If it prints anything (modified, staged or untracked files), earlier changes are still waiting for the user's review, and ks-docs' `CLAUDE.md` ("Before writing: no unreviewed changes") forbids new writes. Don't spawn the writer. List those files for the user and ask whether to commit and push them as they are (step 3's rules) or wait for their review. If they wait, record `status: "skipped"` with `note: "ks-docs has unreviewed changes"` and re-run this step once the files are committed.
+   - Pull the latest: `git -C ~/git/ks-docs pull --ff-only origin main`, as its own Bash command, so the writer works on top of what other devices and people pushed (and step 3's push isn't rejected). It runs inside the sandbox (`-C` skips the `git` exclusion), which works through the checkout's write grant for `~/git/ks-docs`. If it fails (offline, not on `main`, can't fast-forward, or `Operation not permitted`: that grant is missing, see step 3), don't spawn the writer: show the user the error and `! git -C ~/git/ks-docs pull --ff-only origin main` to run themselves, then go on once they have, or once they say to use the local copy.
 2. **Spawn the docs writer.** Fill in the paths, the PR numbers and URLs from `state.yaml` `prs[]` (for a project, the final PR to `main`):
 
 ```
@@ -379,7 +380,7 @@ Agent(
   subagent_type: "general-purpose",
   name: "ks-docs-writer",
   description: "Update ks-docs from this work",
-  prompt: "Update KarmaSuite's knowledge base at ~/git/ks-docs with what this change taught. Read ~/git/ks-docs/CLAUDE.md fully first and follow it exactly; it is the rulebook (concept format, frontmatter, never set `verified`, timestamps from `date -u`, index.md and log.md updates, never commit).
+  prompt: "Update KarmaSuite's knowledge base at ~/git/ks-docs with what this change taught. Read ~/git/ks-docs/CLAUDE.md fully first and follow it exactly; it is the rulebook (concept format, frontmatter, never set `verified`, timestamps from `date -u`, index.md and log.md updates). Do not commit: the orchestrator commits and pushes after the user's go-ahead.
 
 INPUTS
 - Implementation plan: {project-directory-path}/resources/implementation-plan-{NN}.md
@@ -403,7 +404,11 @@ Either a list of every file you created, updated or deprecated under content/ (p
 )
 ```
 
-3. **Hand the review to the user.** Show the report and say the changes are in `~/git/ks-docs`, uncommitted: they review them (`git status` and `git diff` in `~/git/ks-docs`), mark the concepts they checked `verified: { by: human:<name>, at: ... }`, and commit. For a strict second opinion before committing, they can run `/ks-master:docs-review` in the master session. Never commit or push in ks-docs yourself.
+3. **Offer the review, then commit and push before Phase 10 closes.** Show the report and offer the user a review of the changes in `~/git/ks-docs` (`git status` and `git diff`); they may mark the concepts they checked `verified: { by: human:<name>, at: ... }`, and can run `/ks-master:docs-review` in the master session for a strict second opinion. Then, with the user's go-ahead, commit and push them yourself, also when the user does not review now: a concept without `verified` already tells every reader it is unchecked.
+   - Stage only the `content/` files this step created or changed, by path (never `git add .` or `-A`), so the user's own edits to the tooling stay out.
+   - Commit message: `docs: (KAR-XXXX) <what was added or updated>`, ending with the session's attribution lines.
+   - Push with `git -C ~/git/ks-docs push origin main`, as its own Bash command.
+   - Never set `verified` yourself, and never commit while the user has said to hold the changes: then leave them uncommitted and say so in the `docs` note.
    - If the writer reports a write was refused (`Operation not permitted`), the checkout's `.claude/settings.local.json` lacks the sandbox grant (`"sandbox": { "filesystem": { "allowWrite": ["~/git/ks-docs"] } }`). Tell the user; don't work around it. Record `status: "skipped"` with that reason.
    - The user may also say to skip the step: record `status: "skipped"`.
 4. **Record it in state.yaml**, on Phase 10's current (last) iteration entry:
@@ -419,6 +424,7 @@ Either a list of every file you created, updated or deprecated under content/ (p
         files:                   # content/-relative paths; omit when none
           - "codebase/allocation-engine.md"
         note: "Refunds now re-run allocation; added gotcha"   # one line: the writer's reason or the skip reason
+        commit: "bdeee34"        # the pushed ks-docs commit; omit when nothing was committed
         at: "2026-01-28T13:55:00Z"
 ```
 

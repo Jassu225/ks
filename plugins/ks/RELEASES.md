@@ -1,5 +1,9 @@
 # Releases
 
+## 2026-11-20
+
+- **Workflow pulls ks-docs before using it (ks 1.4.2):** Phase 1 (`/ks:user-context-generator`) and Phase 10's "Update ks-docs" step now start with `git -C ~/git/ks-docs pull --ff-only origin main`, so they see concepts pushed from other Macs. If the pull fails, Phase 1 carries on with the local copy; the docs step stops and asks, so the writer never works on a stale clone. The docs step also commits and pushes its ks-docs changes itself now, with the user's go-ahead and before Phase 10 closes (only the `content/` files it wrote, by path), and records the commit as `docs.commit` in `state.yaml`.
+
 ## 2026-11-18
 
 - **`ks-flow restart` (ks-flow 0.9.1, ks 1.4.1):** stops, then starts the daemon and the board, so they re-read their config. Use it after a `ks-config` change, such as new GCS backup settings. `ks-flow start` alone keeps a running daemon unless its plist or build changed, and the daemon reads config only when it starts. The setup and config skills and `ks-setup`'s hints now say `ks-flow restart` instead of `ks-flow stop && ks-flow start`.

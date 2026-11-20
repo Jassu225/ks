@@ -65,6 +65,7 @@ Show the update body to the user and ask for confirmation before posting. Use th
 If the user says no, or the dry run fails (not in tmux, or ks-flow not running), give the manual command instead: `cd {cwd} && claude-ks "/ks:project-manager Let's work on ./{project-directory-path}/ project"`. Rules: ks-rules.md, "New sessions and Remote Control".
 
 #### Phase 1: Context Creation
+- **Pull ks-docs first:** `/ks:user-context-generator` starts with `git -C ~/git/ks-docs pull --ff-only origin main`, so it reads the concepts other devices and people pushed since this clone was last pulled.
 - **Post-completion:** Phase 2 (Codebase Research) starts a fresh session — see **Starting the fresh session** above.
 
 #### Phase 2: Codebase Research
@@ -82,8 +83,8 @@ If the user says no, or the dry run fails (not in tmux, or ks-flow not running),
 
 #### Phase 10: Implementation
 - Supports **iteration** — see Phase 9-10 Iteration below
-- **Release, then Update ks-docs (last substeps):** after the PR and its code review, `/ks:implement-plan` waits for the user to merge and deploy the change (it never merges or deploys), recording `docs: { status: "awaiting-release" }` on Phase 10's current iteration; Phase 10 stays `IN_PROGRESS`. Only when the user says it's released does it write what the work taught into the knowledge base `~/git/ks-docs` (uncommitted, for the user to review) and record the outcome as `docs` (`status: updated | none-needed | skipped | unavailable`). See its "Wait for the release" and "Update ks-docs" sections. Neither is a separate phase.
-- **Post-command bookkeeping:** Phase 10 is complete only when its current iteration's `docs` has a final status (not `awaiting-release`). When resuming a workflow whose Phase 10 is waiting (`awaiting-release`, or no `docs` entry with the PR already created): show the PR and its state (`gh pr view <number> --json state,mergedAt`) and ask whether it's released. If the user says yes, run the "Update ks-docs" section of `/ks:implement-plan`; if not, leave it waiting. Once the docs step is done, mark phase 10 as `COMPLETED` in `state.yaml` and run `/ks:create_handoff`
+- **Release, then Update ks-docs (last substeps):** after the PR and its code review, `/ks:implement-plan` waits for the user to merge and deploy the change (it never merges or deploys), recording `docs: { status: "awaiting-release" }` on Phase 10's current iteration; Phase 10 stays `IN_PROGRESS`. Only when the user says it's released does it pull `~/git/ks-docs`'s `main` (so it writes on top of the latest concepts), then write what the work taught into that knowledge base (offered to the user for review, then committed and pushed) and record the outcome as `docs` (`status: updated | none-needed | skipped | unavailable`). See its "Wait for the release" and "Update ks-docs" sections. Neither is a separate phase.
+- **Post-command bookkeeping:** Phase 10 is complete only when its current iteration's `docs` has a final status (not `awaiting-release`). When resuming a workflow whose Phase 10 is waiting (`awaiting-release`, or no `docs` entry with the PR already created): show the PR and its state (`gh pr view <number> --json state,mergedAt`) and ask whether it's released. If the user says yes, run the "Update ks-docs" section of `/ks:implement-plan`; if not, leave it waiting. Once the docs step is done and its ks-docs changes are committed and pushed (or the user said to hold them), mark phase 10 as `COMPLETED` in `state.yaml` and run `/ks:create_handoff`
 
 ---
 
